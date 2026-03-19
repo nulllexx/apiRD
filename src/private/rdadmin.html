@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RainDrippy Studios - Admin Dashboard</title>
+    <link rel="icon" href="/raindrippy/rd.png">
+    <link rel="stylesheet" href="https://bakosmp.go.ro/raindrippy/index.css">
+    <link rel="stylesheet" href="https://bakosmp.go.ro/cookie.css">
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 10px; border: 1px solid #ccc; text-align: left; }
+        th { background: #eee; }
+        button { padding: 5px 10px; margin-right: 5px; }
+        
+        /* Overlay styles */
+        #overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        #overlayContent {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            max-width: 500px;
+            width: 90%;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+        
+        #overlayContent h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        
+        #overlayContent p {
+            margin: 15px 0;
+            word-break: break-all;
+        }
+        
+        #overlayContent button {
+            margin-top: 10px;
+            padding: 10px 20px;
+            cursor: pointer;
+        }
+        
+        .copyBtn {
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+        }
+        
+        .copyBtn:hover {
+            background: #0056b3;
+        }
+        
+        .closeBtn {
+            background: #6c757d;
+            color: white;
+            border: none;
+            border-radius: 4px;
+        }
+        
+        .closeBtn:hover {
+            background: #545b62;
+        }
+    </style>
+</head>
+<body>
+
+<div id="topbar">
+    <img src="rd.png" alt="RainDrippy" class="logo" onclick="window.location.href='index.html'">
+    <span class="tpbar-txt" style="margin-left: 20px;">Admin Panel</span>
+    <a class="tpbar-txt" href="profile.html" style="margin-left: 2em;">Profile</a>
+</div>
+
+<div id="content">
+    <h1>Manage User Accounts</h1>
+
+    <input type="text" id="searchUser" placeholder="Search username..." />
+
+    <table id="userTable">
+        <thead>
+            <tr>
+                <th>Username</th>
+                <th>Status</th>
+                <th>Admin</th>
+                <th>Member</th>
+                <th>RD Projects Access</th>
+                <th>Plex Access</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            <!-- user rows dynamically inserted here -->
+        </tbody>
+    </table>
+
+    <div id="pagination" style="margin-top: 10px; display: flex; justify-content: center;">
+        <button id="prevPageBtn" disabled>Previous</button>
+        <span id="currentPageSpan" style="margin: 0 10px;">Page 1</span>
+        <button id="nextPageBtn">Next</button>
+    </div>
+
+    <div id="moderationPanel" style="margin: 20px; padding: 15px; border: 1px solid #ccc; border-radius: 8px;">
+        <h2>Moderation Panel</h2>
+
+        <div>
+            <label for="modUsername">Username:</label><br>
+            <input type="text" id="modUsername" placeholder="Enter username...">
+        </div>
+
+        <div>
+            <label for="banType">Ban Type:</label><br>
+            <select id="banType">
+            <option value="1d">1 Day</option>
+            <option value="3d">3 Days</option>
+            <option value="7d">7 Days</option>
+            <option value="perm">Permanent</option>
+            <option value="poison">Poison</option>
+            </select>
+        </div>
+
+        <div>
+            <label for="modNote">Reason / Moderator Note:</label><br>
+            <textarea id="modNote" placeholder="Reason for ban..." rows="3" cols="40"></textarea>
+        </div>
+
+        <div id="incriminatorySection">
+            <h3>Incriminatory Content</h3>
+            <div id="incriminatoryList"></div>
+            <button type="button" id="addIncriminatory">+ Add Evidence</button>
+        </div>
+
+        <button id="applyBan" style="margin-top: 15px;">Apply Moderation</button>
+    </div>
+</div>
+
+<!-- Overlay for messages -->
+<div id="overlay">
+    <div id="overlayContent">
+        <h3 id="overlayTitle">Message</h3>
+        <p id="overlayMessage"></p>
+        <div id="overlayButtons"></div>
+    </div>
+</div>
+
+<script>
+    const userTableBody = document.querySelector('#userTable tbody');
+    const searchUser = document.getElementById('searchUser');
+    const overlay = document.getElementById('overlay');
+    const overlayTitle = document.getElementById('overlayTitle');
+    const overlayMessage = document.getElementById('overlayMessage');
+    const overlayButtons = document.getElementById('overlayButtons');
+    let evidenceFields = [];
+    let currentPage = 1;
+
+    // Overlay functions
+    function showOverlay(title, message, buttons = []) {
+        overlayTitle.textContent = title;
+        overlayMessage.innerHTML = message;
+        overlayButtons.innerHTML = '';
+        
+        if (buttons.length === 0) {
+            buttons.push({
+                text: 'Close',
+                class: 'closeBtn',
+                onClick: hideOverlay
+            });
+        }
+        
+        buttons.forEach(btn => {
+            const button = document.createElement('button');
+            button.textContent = btn.text;
+            button.className = btn.class || 'closeBtn';
+            button.onclick = btn.onClick;
+            overlayButtons.appendChild(button);
+        });
+        
+        overlay.style.display = 'flex';
+    }
+
+    function hideOverlay() {
+        overlay.style.display = 'none';
+    }
+
+    // Add evidence field functionality
+    document.getElementById('addIncriminatory').addEventListener('click', function() {
+        const incriminatoryList = document.getElementById('incriminatoryList');
+        const evidenceDiv = document.createElement('div');
+        evidenceDiv.innerHTML = `
+            <div style="margin: 10px 0; padding: 10px; border: 1px solid #ddd;">
+                <input type="text" placeholder="Reason (e.g. Spam, Harassment, etc.)" style="width: 100%; margin: 5px 0;">
+                <textarea placeholder="Content/Evidence (URLs, screenshots, descriptions, etc.)" style="width: 100%; margin: 5px 0; height: 60px;"></textarea>
+                <button type="button" onclick="this.parentNode.remove()">Remove Evidence</button>
+            </div>
+        `;
+        incriminatoryList.appendChild(evidenceDiv);
+    });
+
+    // Apply moderation functionality
+    document.getElementById('applyBan').addEventListener('click', async function() {
+        const username = document.getElementById('modUsername').value.trim();
+        const type = document.getElementById('banType').value;
+        const modNote = document.getElementById('modNote').value.trim();
+        
+        // Collect evidence
+        const evidenceDivs = document.querySelectorAll('#incriminatoryList > div');
+        const incriminatory = [];
+        evidenceDivs.forEach(div => {
+            const reasonInput = div.querySelector('input');
+            const contentTextarea = div.querySelector('textarea');
+            if (reasonInput && contentTextarea && reasonInput.value.trim() && contentTextarea.value.trim()) {
+                incriminatory.push({
+                    reason: reasonInput.value.trim(),
+                    content: contentTextarea.value.trim()
+                });
+            }
+        });
+
+        if (!username) {
+            showOverlay('Error', 'Please enter a username');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/admin/moderate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    username,
+                    type,
+                    modNote,
+                    incriminatory: incriminatory.length > 0 ? incriminatory : null,
+                    poisonHWID: null,
+                    makeAdmin: false
+                })
+            });
+
+            const data = await response.json();
+            
+            if (response.ok) {
+                showOverlay('Success', 'Moderation applied: ' + data.message);
+                // Clear form
+                document.getElementById('modUsername').value = '';
+                document.getElementById('modNote').value = '';
+                document.getElementById('incriminatoryList').innerHTML = '';
+                // Refresh users
+                fetchUsers(searchUser.value);
+            } else {
+                showOverlay('Error', data.error || data.message);
+            }
+        } catch (err) {
+            console.error('Error:', err);
+            showOverlay('Error', 'Server error occurred');
+        }
+    });
+
+    async function fetchUsers(query = '', page = currentPage) {
+        try {
+            const response = await fetch('/api/admin/list-users?search=' + encodeURIComponent(query) + '&page=' + page, { credentials: 'include' });
+            const users = await response.json();
+
+            userTableBody.innerHTML = '';
+            users.forEach(user => {
+                const tr = document.createElement('tr');
+
+                tr.innerHTML = `
+                    <td>${user.username}</td>
+                    <td>${user.accountStatus || 'ok'}</td>
+                    <td>
+                        <input type="checkbox" class="adminToggle" data-username="${user.username}" ${user.isAdmin ? 'checked' : ''}>
+                    </td>
+                    <td>
+                        <input type="checkbox" class="memberToggle" data-username="${user.username}" ${user.isMember ? 'checked' : ''}>
+                    </td>
+                    <td>
+                        <input type="checkbox" class="projToggle" data-username="${user.username}" ${user.isProjAllowed ? 'checked' : ''}> 
+                    </td>
+                    <td>
+                        <input type="checkbox" class="plexToggle" data-username="${user.username}" ${user.isPlexAllowed ? 'checked' : ''}>
+                    </td>
+                    <td>
+                        <button class="unbanBtn" data-username="${user.username}">Unban / Clear Moderation</button>
+                        <button class="deleteBtn" data-username="${user.username}">Delete Account</button>
+                        <button class="genPWDreset" data-username="${user.username}">Generate Password Reset</button>
+                    </td>
+                `;
+                userTableBody.appendChild(tr);
+            });
+
+            document.getElementById('currentPageSpan').textContent = `Page ${page}`;
+            document.getElementById('prevPageBtn').disabled = page === 1;
+            document.getElementById('nextPageBtn').disabled = users.length < 10;
+
+            attachEvents();
+        } catch (err) {
+            console.error('Error fetching users:', err);
+        }
+    }
+
+    function attachEvents() {
+        document.querySelectorAll('.unbanBtn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const username = btn.dataset.username;
+                try {
+                    const response = await fetch('/api/admin/unban', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({ username })
+                    });
+                    const data = await response.json();
+                    showOverlay('Success', data.message || 'User unbanned successfully');
+                    fetchUsers(searchUser.value);
+                } catch (err) {
+                    console.error(err);
+                    showOverlay('Error', 'Server error occurred');
+                }
+            });
+        });
+
+        document.querySelectorAll('.deleteBtn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const username = btn.dataset.username;
+                if (!confirm(`Are you sure you want to delete the account "${username}"? This action cannot be undone.`)) {
+                    return;
+                }
+                try {
+                    const response = await fetch('/api/admin/delete-user', {
+                        method: 'DELETE',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({ username })
+                    });
+                    const data = await response.json();
+                    showOverlay('Success', data.message || 'User deleted successfully');
+                    fetchUsers(searchUser.value);
+                } catch (err) {
+                    console.error(err);
+                    showOverlay('Error', 'Server error occurred');
+                }
+            });
+        });
+
+        document.querySelectorAll('.genPWDreset').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const username = btn.dataset.username;
+                try {
+                    const response = await fetch('/api/admin/gen-pwd-reset', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({ username })
+                    });
+                    const data = await response.json();
+                    
+                    if (response.ok && data.resetSession) {
+                        const resetLink = `https://bakosmp.go.ro/reset-pwd?session=${data.resetSession}`;
+                        const expiresAt = data.expiresAt ? new Date(data.expiresAt).toLocaleString() : 'N/A';
+                        
+                        showOverlay(
+                            'Password Reset Link Generated',
+                            `<strong>Message:</strong> ${data.message}<br><br>
+                             <strong>Reset Link:</strong><br>
+                             <input type="text" id="resetLinkInput" value="${resetLink}" readonly style="width: 100%; padding: 8px; margin: 10px 0; font-size: 12px;">
+                             <br><strong>Expires At:</strong> ${expiresAt}`,
+                            [
+                                {
+                                    text: 'Copy Link',
+                                    class: 'copyBtn',
+                                    onClick: () => {
+                                        const input = document.getElementById('resetLinkInput');
+                                        input.select();
+                                        document.execCommand('copy');
+                                        showOverlay('Success', 'Link copied to clipboard!');
+                                    }
+                                },
+                                {
+                                    text: 'Close',
+                                    class: 'closeBtn',
+                                    onClick: hideOverlay
+                                }
+                            ]
+                        );
+                    } else {
+                        showOverlay('Error', data.error || data.message || 'Failed to generate reset link');
+                    }
+                } catch (err) {
+                    console.error(err);
+                    showOverlay('Error', 'Server error occurred');
+                }
+            });
+        });
+
+        document.querySelectorAll('.adminToggle').forEach(chk => {
+            chk.addEventListener('change', async () => {
+                const username = chk.dataset.username;
+                const isAdmin = chk.checked;
+                try {
+                    const response = await fetch('/api/update-admin-status', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({ username, isAdmin })
+                    });
+                    const data = await response.json();
+                    fetchUsers(searchUser.value);
+                } catch (err) {
+                    console.error(err);
+                }
+            });
+        });
+
+        document.querySelectorAll('.memberToggle').forEach(chk => {
+            chk.addEventListener('change', async () => {
+                const username = chk.dataset.username;
+                const isMember = chk.checked;
+                try {
+                    const response = await fetch('/api/admin/update-member-status', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({ username, isMember })
+                    });
+                    const data = await response.json();
+                    fetchUsers(searchUser.value);
+                } catch (err) {
+                    console.error(err);
+                }
+            });
+        });
+        document.querySelectorAll('.projToggle').forEach(chk => {
+            chk.addEventListener('change', async () => {
+                const username = chk.dataset.username;
+                const isAllowed = chk.checked;
+                try {
+                    const response = await fetch('/api/admin/update-proj-status', {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            credentials: 'include',
+                            body: JSON.stringify({ username, isAllowed })
+                    });
+                    const data = await response.json();
+                    fetchUsers(searchUser.value);
+                } catch (err) {
+                    console.error(err);
+                }
+            });
+        });
+        document.querySelectorAll('.plexToggle').forEach(chk => {
+            chk.addEventListener('change', async () => {
+                const username = chk.dataset.username;
+                const isAllowed = chk.checked;
+                try {
+                    const response = await fetch('/api/admin/update-plex-status', {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            credentials: 'include',
+                            body: JSON.stringify({ username, isAllowed })
+                    });
+                    const data = await response.json();
+                    fetchUsers(searchUser.value);
+                } catch (err) {
+                    console.error(err);
+                }
+            });
+        });
+    }
+    let SearchTimer;
+    searchUser.addEventListener('input', () => {
+        clearTimeout(SearchTimer);
+        SearchTimer = setTimeout(() => {
+            currentPage = 1;
+            fetchUsers(searchUser.value, currentPage);
+        }, 500);
+    });
+
+    document.getElementById('prevPageBtn').addEventListener('click', () => {
+        if (currentPage > 1) {
+            currentPage--;
+            fetchUsers(searchUser.value, currentPage);
+        }
+    });
+
+    document.getElementById('nextPageBtn').addEventListener('click', () => {
+        currentPage++;
+        fetchUsers(searchUser.value, currentPage);
+    });
+
+    // Close overlay when clicking outside
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) {
+            hideOverlay();
+        }
+    });
+
+    // initial fetch
+    fetchUsers();
+</script>
+
+<script src="https://bakosmp.go.ro/js/topbar-show.js"></script>
+
+</body>
+</html>
