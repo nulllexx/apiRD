@@ -4,3 +4,7 @@ frontend-status/
 C:/
 data/
 src/content/
+.claude
+rust-src/target/
+rust-src/target/doc/
+rust-src/target/debug/
