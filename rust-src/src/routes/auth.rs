@@ -2136,7 +2136,8 @@ pub async fn serve_dashboard(
         return resp;
     }
 
-    match std::fs::read_to_string("src/private/dashboard.html") {
+    let path = format!("{}/dashboard.html", state.config.private_dir);
+    match std::fs::read_to_string(&path) {
         Ok(content) => HttpResponse::Ok()
             .content_type("text/html; charset=utf-8")
             .body(content),
@@ -2155,7 +2156,8 @@ pub async fn serve_rdadmin(
         return resp;
     }
 
-    match std::fs::read_to_string("src/private/rdadmin.html") {
+    let path = format!("{}/rdadmin.html", state.config.private_dir);
+    match std::fs::read_to_string(&path) {
         Ok(content) => HttpResponse::Ok()
             .content_type("text/html; charset=utf-8")
             .body(content),

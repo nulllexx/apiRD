@@ -21,6 +21,7 @@ pub struct AppConfig {
     pub seasons_path: String,
     pub media_path: String,
     pub cors_origin: String,
+    pub private_dir: String,
 }
 
 impl AppConfig {
@@ -64,6 +65,8 @@ impl AppConfig {
                 .unwrap_or_else(|_| "C:/server/media".to_string()),
             cors_origin: env::var("CORS_ORIGIN")
                 .unwrap_or_else(|_| "https://bakosmp.go.ro".to_string()),
+            private_dir: env::var("PRIVATE_DIR")
+                .unwrap_or_else(|_| "private".to_string()),
         }
     }
 
