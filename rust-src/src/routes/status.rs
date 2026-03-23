@@ -43,7 +43,7 @@ async fn incident_with_history(
     incident: &Incident,
 ) -> Result<serde_json::Value, AppError> {
     let history: Vec<IncidentStatusHistory> = sqlx::query_as(
-        "SELECT id, incident_id, status, status_text, status_updated_at \
+        "SELECT id, incident_id, status, status_text, CAST(status_updated_at AS CHAR) AS status_updated_at \
          FROM incident_status_history \
          WHERE incident_id = ? \
          ORDER BY status_updated_at ASC",
@@ -86,13 +86,13 @@ fn now_formatted() -> String {
 
 async fn get_status(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
     let components: Vec<Component> =
-        sqlx::query_as("SELECT id, name, status, last_updated FROM components")
+        sqlx::query_as("SELECT id, name, status, CAST(last_updated AS CHAR) AS last_updated FROM components")
             .fetch_all(&state.pool)
             .await?;
 
     let incidents: Vec<Incident> = sqlx::query_as(
-        "SELECT id, title, impact, status, status_text, status_updated_at, \
-         started_at, ended_at, created_by, created_at \
+        "SELECT id, title, impact, status, status_text, CAST(status_updated_at AS CHAR) AS status_updated_at, \
+         CAST(started_at AS CHAR) AS started_at, CAST(ended_at AS CHAR) AS ended_at, created_by, CAST(created_at AS CHAR) AS created_at \
          FROM incidents WHERE status != 'resolved' ORDER BY started_at DESC",
     )
     .fetch_all(&state.pool)
@@ -129,8 +129,8 @@ async fn get_status(state: web::Data<AppState>) -> Result<HttpResponse, AppError
 
 async fn list_incidents(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
     let incidents: Vec<Incident> = sqlx::query_as(
-        "SELECT id, title, impact, status, status_text, status_updated_at, \
-         started_at, ended_at, created_by, created_at \
+        "SELECT id, title, impact, status, status_text, CAST(status_updated_at AS CHAR) AS status_updated_at, \
+         CAST(started_at AS CHAR) AS started_at, CAST(ended_at AS CHAR) AS ended_at, created_by, CAST(created_at AS CHAR) AS created_at \
          FROM incidents ORDER BY started_at DESC",
     )
     .fetch_all(&state.pool)
@@ -155,8 +155,8 @@ async fn get_incident(
     let id = path.into_inner();
 
     let incident: Option<Incident> = sqlx::query_as(
-        "SELECT id, title, impact, status, status_text, status_updated_at, \
-         started_at, ended_at, created_by, created_at \
+        "SELECT id, title, impact, status, status_text, CAST(status_updated_at AS CHAR) AS status_updated_at, \
+         CAST(started_at AS CHAR) AS started_at, CAST(ended_at AS CHAR) AS ended_at, created_by, CAST(created_at AS CHAR) AS created_at \
          FROM incidents WHERE id = ?",
     )
     .bind(&id)
@@ -167,7 +167,7 @@ async fn get_incident(
     let incident_val = incident_with_history(&state.pool, &incident).await?;
 
     let updates: Vec<IncidentUpdate> = sqlx::query_as(
-        "SELECT id, incident_id, time, body, author \
+        "SELECT id, incident_id, CAST(time AS CHAR) AS time, body, author \
          FROM incident_updates WHERE incident_id = ? ORDER BY time ASC",
     )
     .bind(&id)
@@ -186,8 +186,8 @@ async fn get_incident(
 
 async fn list_resolved_incidents(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
     let incidents: Vec<Incident> = sqlx::query_as(
-        "SELECT id, title, impact, status, status_text, status_updated_at, \
-         started_at, ended_at, created_by, created_at \
+        "SELECT id, title, impact, status, status_text, CAST(status_updated_at AS CHAR) AS status_updated_at, \
+         CAST(started_at AS CHAR) AS started_at, CAST(ended_at AS CHAR) AS ended_at, created_by, CAST(created_at AS CHAR) AS created_at \
          FROM incidents WHERE status = 'resolved' ORDER BY started_at DESC",
     )
     .fetch_all(&state.pool)
@@ -207,24 +207,24 @@ async fn list_resolved_incidents(state: web::Data<AppState>) -> Result<HttpRespo
 
 async fn debug_database(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
     let components: Vec<Component> =
-        sqlx::query_as("SELECT id, name, status, last_updated FROM components")
+        sqlx::query_as("SELECT id, name, status, CAST(last_updated AS CHAR) AS last_updated FROM components")
             .fetch_all(&state.pool)
             .await?;
 
     let incidents: Vec<Incident> = sqlx::query_as(
-        "SELECT id, title, impact, status, status_text, status_updated_at, \
-         started_at, ended_at, created_by, created_at FROM incidents",
+        "SELECT id, title, impact, status, status_text, CAST(status_updated_at AS CHAR) AS status_updated_at, \
+         CAST(started_at AS CHAR) AS started_at, CAST(ended_at AS CHAR) AS ended_at, created_by, CAST(created_at AS CHAR) AS created_at FROM incidents",
     )
     .fetch_all(&state.pool)
     .await?;
 
     let updates: Vec<IncidentUpdate> =
-        sqlx::query_as("SELECT id, incident_id, time, body, author FROM incident_updates")
+        sqlx::query_as("SELECT id, incident_id, CAST(time AS CHAR) AS time, body, author FROM incident_updates")
             .fetch_all(&state.pool)
             .await?;
 
     let status_history: Vec<IncidentStatusHistory> = sqlx::query_as(
-        "SELECT id, incident_id, status, status_text, status_updated_at FROM incident_status_history",
+        "SELECT id, incident_id, status, status_text, CAST(status_updated_at AS CHAR) AS status_updated_at FROM incident_status_history",
     )
     .fetch_all(&state.pool)
     .await?;

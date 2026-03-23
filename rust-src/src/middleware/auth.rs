@@ -12,6 +12,7 @@ pub struct JwtClaims {
     pub username: String,
     pub id: String,
     #[serde(rename = "isAdmin")]
+    #[serde(default)]
     pub is_admin: bool,
     pub exp: Option<usize>,
     pub iat: Option<usize>,

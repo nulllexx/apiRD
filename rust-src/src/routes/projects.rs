@@ -229,7 +229,7 @@ async fn list_projects(
     let user = get_user_by_req(&state.pool, &auth).await?;
 
     let rows: Vec<crate::models::project::Project> = sqlx::query_as(
-        "SELECT id, user_id, name, description, created_at FROM projects WHERE user_id = ? ORDER BY created_at DESC",
+        "SELECT id, user_id, name, description, CAST(created_at AS CHAR) AS created_at FROM projects WHERE user_id = ? ORDER BY created_at DESC",
     )
     .bind(&user.id)
     .fetch_all(&state.pool)
@@ -269,7 +269,7 @@ async fn get_project(
     let project_id = path.into_inner();
 
     let project: Option<crate::models::project::Project> = sqlx::query_as(
-        "SELECT id, user_id, name, description, created_at FROM projects WHERE id = ? AND user_id = ?",
+        "SELECT id, user_id, name, description, CAST(created_at AS CHAR) AS created_at FROM projects WHERE id = ? AND user_id = ?",
     )
     .bind(&project_id)
     .bind(&user.id)
@@ -279,7 +279,7 @@ async fn get_project(
     let project = project.ok_or_else(|| AppError::NotFound("Project not found".to_string()))?;
 
     let files: Vec<crate::models::project::ProjectFile> = sqlx::query_as(
-        "SELECT id, project_id, filename, original_name, mime, size, path, uploaded_at FROM project_files WHERE project_id = ? ORDER BY uploaded_at DESC",
+        "SELECT id, project_id, filename, original_name, mime, size, path, CAST(uploaded_at AS CHAR) AS uploaded_at FROM project_files WHERE project_id = ? ORDER BY uploaded_at DESC",
     )
     .bind(&project_id)
     .fetch_all(&state.pool)
@@ -539,7 +539,7 @@ async fn list_files(
     }
 
     let files: Vec<crate::models::project::ProjectFile> = sqlx::query_as(
-        "SELECT id, project_id, filename, original_name, mime, size, path, uploaded_at FROM project_files WHERE project_id = ? ORDER BY uploaded_at DESC",
+        "SELECT id, project_id, filename, original_name, mime, size, path, CAST(uploaded_at AS CHAR) AS uploaded_at FROM project_files WHERE project_id = ? ORDER BY uploaded_at DESC",
     )
     .bind(&project_id)
     .fetch_all(&state.pool)
@@ -574,7 +574,7 @@ async fn download_file(
     let (_project_id, file_id) = path.into_inner();
 
     let file: Option<crate::models::project::ProjectFile> = sqlx::query_as(
-        "SELECT f.id, f.project_id, f.filename, f.original_name, f.mime, f.size, f.path, f.uploaded_at FROM project_files f JOIN projects p ON f.project_id = p.id WHERE f.id = ? AND p.user_id = ?",
+        "SELECT f.id, f.project_id, f.filename, f.original_name, f.mime, f.size, f.path, CAST(f.uploaded_at AS CHAR) AS uploaded_at FROM project_files f JOIN projects p ON f.project_id = p.id WHERE f.id = ? AND p.user_id = ?",
     )
     .bind(&file_id)
     .bind(&user.id)

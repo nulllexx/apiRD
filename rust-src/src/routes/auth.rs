@@ -586,7 +586,7 @@ async fn account_status(
     }
 
     let moderation: Option<ModerationRow> = sqlx::query_as(
-        "SELECT type, moderated_at, mod_note, incriminatory FROM user_moderation WHERE user_id = ? ORDER BY moderated_at DESC LIMIT 1",
+            "SELECT type, CAST(moderated_at AS CHAR) AS moderated_at, mod_note, incriminatory FROM user_moderation WHERE user_id = ? ORDER BY moderated_at DESC LIMIT 1",
     )
     .bind(&user_id)
     .fetch_optional(&state.pool)
@@ -662,7 +662,7 @@ async fn account_data(
     }
 
     let user: Option<UserRow> = sqlx::query_as(
-        "SELECT id, username, is_admin, is_member, created_at, apiKeyId FROM users WHERE username = ?",
+            "SELECT id, username, is_admin, is_member, CAST(created_at AS CHAR) AS created_at, apiKeyId FROM users WHERE username = ?",
     )
     .bind(&auth.username)
     .fetch_optional(&state.pool)
@@ -749,7 +749,7 @@ async fn accstatus_cuser(
     }
 
     let ban: Option<BanRow> = sqlx::query_as(
-        "SELECT type, moderated_at, mod_note, incriminatory FROM user_moderation WHERE user_id = ? ORDER BY moderated_at DESC LIMIT 1",
+            "SELECT type, CAST(moderated_at AS CHAR) AS moderated_at, mod_note, incriminatory FROM user_moderation WHERE user_id = ? ORDER BY moderated_at DESC LIMIT 1",
     )
     .bind(&user_id)
     .fetch_optional(&state.pool)
@@ -1730,7 +1730,7 @@ async fn moderation_list(
             u.username,
             m.type,
             m.mod_note,
-            m.moderated_at,
+                CAST(m.moderated_at AS CHAR) AS moderated_at,
             m.created_by
         FROM user_moderation m
         JOIN users u ON m.user_id = u.id
@@ -2078,7 +2078,7 @@ async fn forgot_password(
     }
 
     let session: Option<SessionRow> = sqlx::query_as(
-        "SELECT username, expires_at FROM password_reset_sessions WHERE session_token = ?",
+            "SELECT username, CAST(expires_at AS CHAR) AS expires_at FROM password_reset_sessions WHERE session_token = ?",
     )
     .bind(reset_session)
     .fetch_optional(&state.pool)
