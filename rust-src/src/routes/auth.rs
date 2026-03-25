@@ -11,6 +11,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::io::{Read as _, Write as _};
 use std::path::Path;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::error::AppError;
@@ -141,6 +142,14 @@ pub struct UploadLogEntry {
     pub file: String,
 }
 
+#[derive(Serialize)]
+pub struct GameDetails {
+    pub title: String,
+    pub description: String,
+    pub image: String,
+    pub file: String,       // URL to the .zip file
+    pub executable: String, // The exact name of the .exe inside the zip (e.g., "Game.exe")
+}
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const SEVEN_DAYS_SECS: u64 = 7 * 24 * 60 * 60;
@@ -2050,6 +2059,82 @@ async fn reset_password(
     Ok(HttpResponse::Ok().json(json!({ "message": "Password reset successfully" })))
 }
 
+/// GET /getGames
+/// GET /getGames
+async fn get_games(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    limiter: web::Data<RateLimiter>,
+) -> Result<HttpResponse, AppError> {
+    check_rate_limit(&req, &limiter)?;
+
+    let mut game_map = HashMap::new();
+    
+    // Get paths from environment variables (fallback to common defaults)
+    let local_games_dir = std::env::var("GAMES_DIR")
+        .unwrap_or_else(|_| "/home/useradmin/api/mainapi/games".to_string());
+    
+    let nginx_base_url = std::env::var("GAMES_URL")
+        .unwrap_or_else(|_| "https://bakosmp.go.ro/games".to_string());
+
+    // Iterate through the games directory
+    if let Ok(entries) = std::fs::read_dir(&local_games_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            
+            if path.is_dir() {
+                if let Some(folder_name) = path.file_name().and_then(|n| n.to_str()) {
+                    
+                    // 1. Read DESCRIPTION.txt
+                    let desc_path = path.join("DESCRIPTION.txt");
+                    let description = std::fs::read_to_string(desc_path)
+                        .unwrap_or_else(|_| "No description provided.".to_string());
+                    
+                    // 2. Detect the .zip file
+                    let mut zip_filename = format!("{}.zip", folder_name); 
+                    if let Ok(dir_files) = std::fs::read_dir(&path) {
+                        for file in dir_files.flatten() {
+                            let fname = file.file_name().to_string_lossy().to_string();
+                            if fname.to_lowercase().ends_with(".zip") {
+                                zip_filename = fname;
+                                break; 
+                            }
+                        }
+                    }
+
+                    // 3. Metadata Heuristics
+                    let title = folder_name.replace("_", " ");
+                    let executable = format!("{}.exe", folder_name); 
+                    
+                    // Check for icon.png, otherwise default to a root-level default
+                    let icon_name = if path.join("icon.png").exists() {
+                        "icon.png"
+                    } else {
+                        "default.png"
+                    };
+
+                    // 4. Build the GameDetails object
+                    game_map.insert(
+                        folder_name.to_string(),
+                        GameDetails {
+                            title,
+                            description: description.trim().to_string(),
+                            image: format!("{}/{}/{}", nginx_base_url, folder_name, icon_name),
+                            file: format!("{}/{}/{}", nginx_base_url, folder_name, zip_filename),
+                            executable,
+                        },
+                    );
+                }
+            }
+        }
+    } else {
+        log::error!("Could not read games directory at: {}", local_games_dir);
+    }
+
+    // Returns [ { "game_id": { ...details } } ]
+    Ok(HttpResponse::Ok().json(vec![game_map]))
+}
+
 /// POST /forgot-password
 async fn forgot_password(
     req: HttpRequest,
@@ -2187,6 +2272,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .route("/api-usage", web::get().to(api_usage))
         .route("/logged-in", web::get().to(logged_in))
         .route("/proj/allowed", web::get().to(proj_allowed))
+        .route("/getGames", web::get().to(get_games))
         .route("/plex/allowed", web::get().to(plex_allowed))
         .route("/refresh-token", web::post().to(refresh_token))
         .route("/logout", web::post().to(logout))

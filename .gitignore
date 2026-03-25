@@ -8,3 +8,4 @@ src/content/
 rust-src/target/
 rust-src/target/doc/
 rust-src/target/debug/
+rust-src/src/games/*
