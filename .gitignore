@@ -2,13 +2,12 @@
 .env
 node_modules/
 frontend-status/
-C:/
+# FULL DRIVE IGNORE OF SHAME
+#C:/ what?? who's the idiot that ignored the C drive?
 data/
 src/content/
 .claude
 rust-src/target/
-rust-src/target/doc/
-rust-src/target/debug/
 rust-src/src/games/*
 #Secrets (we mustn't leak these or snotty skids will yeet us)
 *.pub
