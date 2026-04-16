@@ -1,5 +1,4 @@
 #Clutter
-.env
 node_modules/
 frontend-status/
 # FULL DRIVE IGNORE OF SHAME
@@ -10,5 +9,6 @@ src/content/
 rust-src/target/
 rust-src/src/games/*
 #Secrets (we mustn't leak these or snotty skids will yeet us)
+.env
 *.pub
 id_github_actions
