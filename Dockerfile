@@ -23,7 +23,7 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/api-rd /usr/local/bin/
 COPY src/private /home/useradmin/api/mainapi/src/private
-COPY rust-src/src/content /home/useradmin/api/mainapi/src/content
+RUN mkdir -p /home/useradmin/api/mainapi/src/content
 WORKDIR /home/useradmin/api/mainapi
 EXPOSE 5000
 CMD ["api-rd"]
