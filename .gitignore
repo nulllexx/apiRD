@@ -1,3 +1,4 @@
+#Clutter
 .env
 node_modules/
 frontend-status/
@@ -9,3 +10,6 @@ rust-src/target/
 rust-src/target/doc/
 rust-src/target/debug/
 rust-src/src/games/*
+#Secrets (we mustn't leak these or snotty skids will yeet us)
+*.pub
+id_github_actions
