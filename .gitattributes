@@ -1,0 +1,4 @@
+* text=auto
+* text eol=lf
+
+# Reminder: Update this when we support Windows to use CRLF for windows files
