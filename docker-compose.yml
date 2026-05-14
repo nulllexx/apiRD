@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  api:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/apird:latest
+    container_name: api
+    env_file:
+      - /home/useradmin/api/mainapi/.env
+    environment:
+      - PRIVATE_DIR=/home/useradmin/api/mainapi/src/private
+      - CONTENT_PATH=/home/useradmin/api/mainapi/rust-src/src/content
+      - SEASONS_PATH=/usr/share/nginx/html/raindrippy/content
+      - GAMES_DIR=/home/useradmin/api/mainapi/rust-src/src/games
+    ports:
+      - "5000:5000"
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    volumes:
+      - /home/useradmin/mcserver:/mcserver
+      - /home/useradmin/mcserver:/home/useradmin/mcserver
+      - /home/useradmin/api/mainapi/data:/home/useradmin/api/mainapi/data
+      - /home/useradmin/api:/home/useradmin/api
+      - /usr/share/nginx/html/raindrippy/content:/usr/share/nginx/html/raindrippy/content:ro
+      - /usr/share/nginx/html/raindrippy/projects/public:/usr/share/nginx/html/raindrippy/projects/public:rw
+    network_mode: "host"
+
+  minecraft:
+    image: itzg/minecraft-server:java21-jdk
+    container_name: minecraft
+    ports:
+      - "29704:29704"
+      - "29705:29705"
+      - "29706:29706"
+      - "29707:29707"
+      - "29708:29708"
+      - "29709:29709"
+      - "29710:29710"
+      - "29875:29875"
+    environment:
+      EULA: "TRUE"
+      MEMORY: "4G"
+      JVM_OPTS: >
+        -Xms4G -Xmx4G -XX:+UseG1GC -XX:+ParallelRefProcEnabled
+        -XX:MaxGCPauseMillis=200 -XX:+UnlockExperimentalVMOptions
+        -XX:+DisableExplicitGC -XX:+AlwaysPreTouch -XX:G1NewSizePercent=20
+        -XX:G1ReservePercent=20 -XX:G1HeapRegionSize=16M
+        -XX:InitiatingHeapOccupancyPercent=15 -XX:G1MixedGCCountTarget=4
+        -XX:SurvivorRatio=32
+      ENABLE_RCON: "true"
+      RCON_PASSWORD: "${RCON_PASSWORD}"
+      RCON_PORT: 29875
+    volumes:
+      - /home/useradmin/mcserver:/data
+    working_dir: /data
+    entrypoint: ["/bin/bash", "/data/start.sh"]
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
