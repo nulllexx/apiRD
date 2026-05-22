@@ -218,6 +218,60 @@ async fn fix_database_schema(pool: &MySqlPool) -> Result<(), sqlx::Error> {
         log::info!("Column is_member added successfully");
     }
 
+    // Add email column if missing (used by Google OAuth + auto-link)
+    if !column_names.contains(&"email") {
+        log::info!("Adding email column...");
+        sqlx::query("ALTER TABLE users ADD email VARCHAR(255) NULL")
+            .execute(pool)
+            .await?;
+        log::info!("Column email added successfully");
+    }
+
+    // Add oauth_provider column if missing
+    if !column_names.contains(&"oauth_provider") {
+        log::info!("Adding oauth_provider column...");
+        sqlx::query("ALTER TABLE users ADD oauth_provider VARCHAR(50) NULL")
+            .execute(pool)
+            .await?;
+        log::info!("Column oauth_provider added successfully");
+    }
+
+    // Add oauth_subject column if missing
+    if !column_names.contains(&"oauth_subject") {
+        log::info!("Adding oauth_subject column...");
+        sqlx::query("ALTER TABLE users ADD oauth_subject VARCHAR(255) NULL")
+            .execute(pool)
+            .await?;
+        log::info!("Column oauth_subject added successfully");
+    }
+
+    // Add unique indexes if missing. Check INFORMATION_SCHEMA.STATISTICS;
+    // MariaDB allows multiple NULLs in a unique index, which is what we want
+    // because existing rows have NULL email / oauth_subject.
+    let index_names: Vec<(String,)> = sqlx::query_as(
+        r#"SELECT DISTINCT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS
+           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users'"#,
+    )
+    .fetch_all(pool)
+    .await?;
+    let index_names: Vec<&str> = index_names.iter().map(|(n,)| n.as_str()).collect();
+
+    if !index_names.contains(&"idx_users_email") {
+        log::info!("Adding unique index idx_users_email...");
+        sqlx::query("CREATE UNIQUE INDEX idx_users_email ON users (email)")
+            .execute(pool)
+            .await?;
+        log::info!("Index idx_users_email added successfully");
+    }
+
+    if !index_names.contains(&"idx_users_oauth") {
+        log::info!("Adding unique index idx_users_oauth...");
+        sqlx::query("CREATE UNIQUE INDEX idx_users_oauth ON users (oauth_provider, oauth_subject)")
+            .execute(pool)
+            .await?;
+        log::info!("Index idx_users_oauth added successfully");
+    }
+
     Ok(())
 }
 

@@ -13,6 +13,9 @@ pub struct User {
     pub is_member: bool,
     pub is_projallowed: bool,
     pub is_plexallowed: bool,
+    pub email: Option<String>,
+    pub oauth_provider: Option<String>,
+    pub oauth_subject: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

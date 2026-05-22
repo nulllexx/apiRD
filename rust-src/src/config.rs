@@ -22,6 +22,11 @@ pub struct AppConfig {
     pub media_path: String,
     pub cors_origin: String,
     pub private_dir: String,
+    pub google_client_id: String,
+    pub google_client_secret: String,
+    pub google_redirect_uri: String,
+    pub oauth_signup_redirect: String,
+    pub oauth_success_redirect: String,
 }
 
 impl AppConfig {
@@ -67,6 +72,13 @@ impl AppConfig {
                 .unwrap_or_else(|_| "https://bakosmp.go.ro".to_string()),
             private_dir: env::var("PRIVATE_DIR")
                 .unwrap_or_else(|_| "private".to_string()),
+            google_client_id: env::var("GOOGLE_CLIENT_ID").unwrap_or_default(),
+            google_client_secret: env::var("GOOGLE_CLIENT_SECRET").unwrap_or_default(),
+            google_redirect_uri: env::var("GOOGLE_REDIRECT_URI").unwrap_or_default(),
+            oauth_signup_redirect: env::var("OAUTH_SIGNUP_REDIRECT")
+                .unwrap_or_else(|_| "https://bakosmp.go.ro/finish-signup".to_string()),
+            oauth_success_redirect: env::var("OAUTH_SUCCESS_REDIRECT")
+                .unwrap_or_else(|_| "https://bakosmp.go.ro/dashboard".to_string()),
         }
     }
 

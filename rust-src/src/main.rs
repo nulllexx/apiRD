@@ -90,7 +90,8 @@ async fn main() -> std::io::Result<()> {
                     .configure(routes::status::configure)
                     .configure(routes::projects::configure)
                     .configure(routes::api_keys::configure)
-                    .configure(routes::api::configure),
+                    .configure(routes::api::configure)
+                    .configure(routes::oauth_google::configure),
             )
             .route(
                 "/dashboard.html",
