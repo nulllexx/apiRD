@@ -9,8 +9,6 @@ services:
       - CONTENT_PATH=/home/useradmin/api/mainapi/rust-src/src/content
       - SEASONS_PATH=/usr/share/nginx/html/raindrippy/content
       - GAMES_DIR=/home/useradmin/api/mainapi/rust-src/src/games
-      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
-      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
     ports:
       - "5000:5000"
     stdin_open: true
