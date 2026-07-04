@@ -131,7 +131,7 @@ pub struct ForgotPasswordBody {
 #[derive(Debug, Deserialize)]
 pub struct HistoryWikiEditBody {
     pub slug: Option<String>,
-    pub content: Option<String>,
+    pub edited_content: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -14,6 +14,9 @@ pub struct JwtClaims {
     #[serde(rename = "isAdmin")]
     #[serde(default)]
     pub is_admin: bool,
+    #[serde(rename = "isOG")]
+    #[serde(default)]
+    pub is_og: bool,
     pub exp: Option<usize>,
     pub iat: Option<usize>,
 }
@@ -24,6 +27,7 @@ pub struct AuthUser {
     pub username: String,
     pub id: String,
     pub is_admin: bool,
+    pub is_og: bool,
 }
 
 impl FromRequest for AuthUser {
