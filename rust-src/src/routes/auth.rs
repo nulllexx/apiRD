@@ -2336,7 +2336,7 @@ async fn history_wiki_edit(
         .filter(|s| !s.is_empty())
         .ok_or_else(|| AppError::BadRequest("Missing edited_content field".to_string()))?;
     // Update the content in the db
-    sqlx::query("UPDATE history_wiki SET content = ? WHERE id = 1")
+    sqlx::query("UPDATE history_wiki SET content = ? WHERE slug = 'main'")
         .bind(edited_content)
         .execute(&state.pool)
         .await?;
@@ -2351,7 +2351,7 @@ async fn history_wiki_view(
 ) -> Result<HttpResponse, AppError> {
     check_rate_limit(&req, &limiter)?;
     // Get the content from the db
-    let row: Option<(String, chrono::NaiveDateTime)> = sqlx::query_as("SELECT content, updated_at FROM history_wiki WHERE id = 1")
+    let row: Option<(String, chrono::NaiveDateTime)> = sqlx::query_as("SELECT content, updated_at FROM history_wiki WHERE slug = 'main'")
         .fetch_optional(&state.pool)
         .await?;
     let (content, updated_at) = row.ok_or_else(|| AppError::NotFound("Content not found".to_string()))?;

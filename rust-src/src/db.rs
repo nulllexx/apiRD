@@ -19,6 +19,7 @@ pub async fn init_database(pool: &MySqlPool) -> Result<(), sqlx::Error> {
     fix_database_schema(pool).await?;
     create_api_keys_table(pool).await?;
     seed_components(pool).await?;
+    seed_history_wiki(pool).await?;
     Ok(())
 }
 
@@ -325,6 +326,27 @@ async fn seed_components(pool: &MySqlPool) -> Result<(), sqlx::Error> {
         log::info!("Seeded database with initial components");
     } else {
         log::info!("Components already exist, skipping seeding");
+    }
+
+    Ok(())
+}
+
+async fn seed_history_wiki(pool: &MySqlPool) -> Result<(), sqlx::Error> {
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM history_wiki")
+        .fetch_one(pool)
+        .await?;
+
+    if count.0 == 0 {
+        sqlx::query(
+            "INSERT INTO history_wiki (slug, content) VALUES (?, ?)",
+        )
+        .bind("main")
+        .bind("Welcome to the wiki!")
+        .execute(pool)
+        .await?;
+        log::info!("Seeded database with initial history wiki page");
+    } else {
+        log::info!("History wiki page already exists, skipping seeding");
     }
 
     Ok(())
