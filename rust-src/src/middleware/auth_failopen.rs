@@ -25,6 +25,7 @@ impl FromRequest for OptionalAuthUser {
                             username: claims.username,
                             id: claims.id,
                             is_admin: claims.is_admin,
+                            is_og: claims.is_og,
                         }),
                         Err(_) => None,
                     }

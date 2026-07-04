@@ -64,6 +64,7 @@ impl FromRequest for AuthUser {
                 username: claims.username,
                 id: claims.id,
                 is_admin: claims.is_admin,
+                is_og: claims.is_og,
             })
         })
     }
@@ -88,6 +89,7 @@ pub fn create_jwt(
     username: &str,
     id: &str,
     is_admin: bool,
+    is_og: bool,
     secret: &str,
     expires_in_secs: u64,
 ) -> Result<String, jsonwebtoken::errors::Error> {
@@ -98,6 +100,7 @@ pub fn create_jwt(
         username: username.to_string(),
         id: id.to_string(),
         is_admin,
+        is_og,
         iat: Some(now),
         exp: Some(now + expires_in_secs as usize),
     };

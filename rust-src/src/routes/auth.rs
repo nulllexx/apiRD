@@ -374,7 +374,7 @@ async fn register(
         .execute(&state.pool)
         .await?;
 
-    let token = create_jwt(username, &user_id, false, &state.config.jwt_secret, SEVEN_DAYS_SECS)
+    let token = create_jwt(username, &user_id, false, false, &state.config.jwt_secret, SEVEN_DAYS_SECS)
         .map_err(|e| AppError::Internal(format!("JWT error: {}", e)))?;
 
     let cookie = build_user_token_cookie(&token);
@@ -428,6 +428,7 @@ async fn login(
         username,
         &user.id,
         user.is_admin,
+        user.is_og,
         &state.config.jwt_secret,
         SEVEN_DAYS_SECS,
     )
@@ -2302,9 +2303,9 @@ async fn history_wiki_view(
     let row: Option<(String, chrono::NaiveDateTime)> = sqlx::query_as("SELECT content, updated_at FROM history_wiki WHERE id = 1")
         .fetch_optional(&state.pool)
         .await?;
-    let content = row.ok_or_else(|| AppError::NotFound("Content not found".to_string()))?.0;
-    let updated_at = row.ok_or_else(|| AppError::NotFound("updated_at not found".to_string()))?.1;
-    let iso = updated_at.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let (content, updated_at) = row.ok_or_else(|| AppError::NotFound("Content not found".to_string()))?;
+    
+    let iso = updated_at.and_utc().to_rfc3339();
     let response = json!({
         "content": content,
         "updated_at": iso   
