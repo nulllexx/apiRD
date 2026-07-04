@@ -573,15 +573,15 @@ async fn account_status(
     let hwid_cookie = req.cookie("hwid").map(|c| c.value().to_string());
 
     // Lookup user
-    let user: Option<(String,)> =
-        sqlx::query_as("SELECT id FROM users WHERE username = ?")
+    let user: Option<(String, bool, bool)> =
+        sqlx::query_as("SELECT id, is_og, is_admin FROM users WHERE username = ?")
             .bind(&claims.username)
             .fetch_optional(&state.pool)
             .await?;
 
-    let (user_id,) = match user {
+    let (user_id, is_og, is_admin) = match user {
         Some(u) => u,
-        None => return Ok(HttpResponse::Ok().json(json!({ "accountStatus": null }))),
+        None => return Ok(HttpResponse::Ok().json(json!({ "accountStatus": null, "is_og": false, "is_admin": false }))),
     };
 
     // Check moderation
@@ -603,7 +603,7 @@ async fn account_status(
 
     let moderation = match moderation {
         Some(m) => m,
-        None => return Ok(HttpResponse::Ok().json(json!({ "accountStatus": "ok" }))),
+        None => return Ok(HttpResponse::Ok().json(json!({ "accountStatus": "ok", "is_og": is_og, "is_admin": is_admin }))),
     };
 
     // Need hwid cookie for poison check
@@ -645,7 +645,9 @@ async fn account_status(
             "type": moderation.mod_type,
             "moderatedTimePDT": moderation.moderated_at,
             "modNote": moderation.mod_note,
-            "incriminatory": incriminatory_val
+            "incriminatory": incriminatory_val,
+            "is_og": is_og,
+            "is_admin": is_admin
         }
     })))
 }
@@ -1781,11 +1783,12 @@ async fn admin_list_users(
         is_member: bool,
         is_projallowed: bool,
         is_plexallowed: bool,
+        is_og: bool,
         moderation_type: Option<String>,
     }
 
     let users: Vec<UserListRow> = sqlx::query_as(
-        r#"SELECT u.id, u.username, u.is_admin, u.is_member, u.is_projallowed, u.is_plexallowed,
+        r#"SELECT u.id, u.username, u.is_admin, u.is_member, u.is_projallowed, u.is_plexallowed, u.is_og,
             m.type AS moderation_type
         FROM users u
         LEFT JOIN (
@@ -1816,7 +1819,8 @@ async fn admin_list_users(
                 "isAdmin": u.is_admin,
                 "isMember": u.is_member,
                 "isProjAllowed": u.is_projallowed,
-                "isPlexAllowed": u.is_plexallowed
+                "isPlexAllowed": u.is_plexallowed,
+                "isOG": u.is_og
             })
         })
         .collect();
@@ -2253,6 +2257,54 @@ pub async fn serve_rdadmin(
     }
 }
 
+/// PATCH /history/wiki/edit
+async fn history_wiki_edit(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    limiter: web::Data<RateLimiter>,
+    auth: AuthUser,
+    body: web::Json<HistoryWikiEditBody>,
+) -> Result<HttpResponse, AppError> {
+    check_rate_limit(&req, &limiter)?;
+    // Check if the user is an OG / admin
+    if !auth.is_og && !auth.is_admin {
+        return Err(AppError::Forbidden("Access denied".to_string()));
+    }
+    // Check if it contains the edited_content field
+    let edited_content = body
+        .edited_content
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| AppError::BadRequest("Missing edited_content field".to_string()))?;
+    // Update the content in the db
+    sqlx::query("UPDATE history_wiki SET content = ? WHERE id = 1")
+        .bind(edited_content)
+        .execute(&state.pool)
+        .await?;
+    Ok(HttpResponse::Ok().body("Content updated successfully"))
+}
+
+/// GET /history/wiki/view
+async fn history_wiki_view(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    limiter: web::Data<RateLimiter>,
+) -> Result<HttpResponse, AppError> {
+    check_rate_limit(&req, &limiter)?;
+    // Get the content from the db
+    let row: Option<(String, String)> = sqlx::query_as("SELECT content, updated_at FROM history_wiki WHERE id = 1")
+        .fetch_optional(&state.pool)
+        .await?;
+    let content = row.ok_or_else(|| AppError::NotFound("Content not found".to_string()))?.0;
+    let updated_at = row.ok_or_else(|| AppError::NotFound("updated_at not found".to_string()))?.1;
+    let iso = updated_at.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let response = json!({
+        "content": content,
+        "updated_at": iso   
+    });
+    Ok(HttpResponse::Ok().json(response))
+}
+
 // ─── Route configuration ─────────────────────────────────────────────────────
 
 pub fn configure(cfg: &mut web::ServiceConfig) {
@@ -2302,4 +2354,6 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .route("/admin/gen-pwd-reset", web::post().to(admin_gen_pwd_reset))
         .route("/reset-password", web::post().to(reset_password))
         .route("/forgot-password", web::post().to(forgot_password));
+        .route("/history/wiki/edit", web::patch().to(history_wiki_edit));
+        .route("/history/wiki/view", web::get().to(history_wiki_view));
 }

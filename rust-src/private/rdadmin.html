@@ -98,6 +98,7 @@
                 <th>Member</th>
                 <th>RD Projects Access</th>
                 <th>Plex Access</th>
+                <th>OG</th>
                 <th>Actions</th>
             </tr>
         </thead>
@@ -290,6 +291,9 @@
                     </td>
                     <td>
                         <input type="checkbox" class="plexToggle" data-username="${user.username}" ${user.isPlexAllowed ? 'checked' : ''}>
+                    </td>
+                    <td>
+                        <input type="checkbox" class="ogToggle" data-username="${user.username}" ${user.isOG ? 'checked' : ''}>
                     </td>
                     <td>
                         <button class="unbanBtn" data-username="${user.username}">Unban / Clear Moderation</button>

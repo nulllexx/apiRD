@@ -39,7 +39,8 @@ async fn setup_database(pool: &MySqlPool) -> Result<(), sqlx::Error> {
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             is_member BOOLEAN DEFAULT FALSE,
             is_projallowed BOOLEAN DEFAULT FALSE,
-            is_plexallowed BOOLEAN DEFAULT FALSE
+            is_plexallowed BOOLEAN DEFAULT FALSE,
+            is_og BOOLEAN DEFAULT FALSE
         ) ENGINE=InnoDB"#,
         r#"CREATE TABLE IF NOT EXISTS password_reset_sessions (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -125,6 +126,15 @@ async fn setup_database(pool: &MySqlPool) -> Result<(), sqlx::Error> {
             `key` VARCHAR(255) PRIMARY KEY,
             `value` TEXT
         ) ENGINE=InnoDB"#,
+        r#"CREATE TABLE IF NOT EXISTS history_wiki (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            slug VARCHAR(191) NOT NULL UNIQUE,
+            content LONGTEXT NOT NULL,
+            content_size INT UNSIGNED GENERATED ALWAYS AS (CHAR_LENGTH(content)) STORED,
+            version INT UNSIGNED NOT NULL DEFAULT 1,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;"#,
     ];
 
     for create_table in &tables {
@@ -216,6 +226,15 @@ async fn fix_database_schema(pool: &MySqlPool) -> Result<(), sqlx::Error> {
             .execute(pool)
             .await?;
         log::info!("Column is_member added successfully");
+    }
+
+    // Add is_og column if missing
+    if !column_names.contains(&"is_og") {
+        log::info!("Adding is_og column...");
+        sqlx::query("ALTER TABLE users ADD is_og BOOLEAN DEFAULT FALSE")
+            .execute(pool)
+            .await?;
+        log::info!("Column is_og added successfully");
     }
 
     // Add email column if missing (used by Google OAuth + auto-link)
