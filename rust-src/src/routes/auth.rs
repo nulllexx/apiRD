@@ -107,6 +107,13 @@ pub struct UpdatePlexStatusBody {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct UpdateOgStatusBody {
+    pub username: Option<String>,
+    #[serde(rename = "isOG")]
+    pub is_og: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct GenPwdResetBody {
     pub username: Option<String>,
 }
@@ -1964,6 +1971,48 @@ async fn admin_update_plex_status(
     Ok(HttpResponse::Ok().json(json!({ "message": "User Plex status updated successfully" })))
 }
 
+/// PATCH /admin/update-og-status
+async fn admin_update_og_status(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    limiter: web::Data<RateLimiter>,
+    auth: AuthUser,
+    body: web::Json<UpdateOgStatusBody>,
+) -> Result<HttpResponse, AppError> {
+    check_rate_limit(&req, &limiter)?;
+
+    if !auth.is_admin {
+        return Err(AppError::Forbidden("Access denied".to_string()));
+    }
+
+    let username = body
+        .username
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            AppError::BadRequest(
+                "Invalid request body. Username and isOG are required.".to_string(),
+            )
+        })?;
+    let is_og = body.is_og.ok_or_else(|| {
+        AppError::BadRequest(
+            "Invalid request body. Username and isOG are required.".to_string(),
+        )
+    })?;
+
+    let result = sqlx::query("UPDATE users SET is_og = ? WHERE username = ?")
+        .bind(is_og)
+        .bind(username)
+        .execute(&state.pool)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound("User not found".to_string()));
+    }
+
+    Ok(HttpResponse::Ok().json(json!({ "message": "User OG status updated successfully" })))
+}
+
 /// POST /admin/gen-pwd-reset
 async fn admin_gen_pwd_reset(
     req: HttpRequest,
@@ -2360,6 +2409,10 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .route(
             "/admin/update-plex-status",
             web::patch().to(admin_update_plex_status),
+        )
+        .route(
+            "/admin/update-og-status",
+            web::patch().to(admin_update_og_status),
         )
         .route("/admin/gen-pwd-reset", web::post().to(admin_gen_pwd_reset))
         .route("/reset-password", web::post().to(reset_password))

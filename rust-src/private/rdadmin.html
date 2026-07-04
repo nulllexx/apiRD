@@ -481,6 +481,25 @@
                 }
             });
         });
+
+        document.querySelectorAll('.ogToggle').forEach(chk => {
+            chk.addEventListener('change', async () => {
+                const username = chk.dataset.username;
+                const isOG = chk.checked;
+                try {
+                    const response = await fetch('/api/admin/update-og-status', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({ username, isOG })
+                    });
+                    const data = await response.json();
+                    fetchUsers(searchUser.value);
+                } catch (err) {
+                    console.error(err);
+                }
+            });
+        });
     }
     let SearchTimer;
     searchUser.addEventListener('input', () => {
