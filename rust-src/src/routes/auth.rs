@@ -129,6 +129,12 @@ pub struct ForgotPasswordBody {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct HistoryWikiEditBody {
+    pub slug: Option<String>,
+    pub content: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct SkinDeleteBody {
     pub username: Option<String>,
     pub password: Option<String>,
@@ -150,6 +156,7 @@ pub struct GameDetails {
     pub file: String,       // URL to the .zip file
     pub executable: String, // The exact name of the .exe inside the zip (e.g., "Game.exe")
 }
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const SEVEN_DAYS_SECS: u64 = 7 * 24 * 60 * 60;
