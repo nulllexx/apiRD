@@ -348,8 +348,8 @@ async fn callback(
         .ok_or_else(|| AppError::Unauthorized("Google did not return an email".to_string()))?;
 
     // 1) Returning Google user — looked up by (provider, sub).
-    let by_sub: Option<(String, String, bool)> = sqlx::query_as(
-        "SELECT id, username, is_admin FROM users
+    let by_sub: Option<(String, String, bool, bool)> = sqlx::query_as(
+        "SELECT id, username, is_admin, is_og FROM users
          WHERE oauth_provider = ? AND oauth_subject = ?",
     )
     .bind(PROVIDER)
@@ -357,8 +357,8 @@ async fn callback(
     .fetch_optional(&state.pool)
     .await?;
 
-    if let Some((user_id, username, is_admin)) = by_sub {
-        let session = issue_session(&state, &user_id, &username, is_admin).await?;
+    if let Some((user_id, username, is_admin, is_og)) = by_sub {
+        let session = issue_session(&state, &user_id, &username, is_admin, is_og).await?;
         return Ok(HttpResponse::Found()
             .append_header(("Location", state.config.oauth_success_redirect.as_str()))
             .cookie(session)

@@ -409,10 +409,11 @@ async fn login(
         id: String,
         password_hash: String,
         is_admin: bool,
+        is_og: bool,
     }
 
     let user: Option<UserRow> =
-        sqlx::query_as("SELECT id, password_hash, is_admin FROM users WHERE username = ?")
+        sqlx::query_as("SELECT id, password_hash, is_admin, is_og FROM users WHERE username = ?")
             .bind(username)
             .fetch_optional(&state.pool)
             .await?;
@@ -1122,6 +1123,7 @@ async fn refresh_token(
         &decoded.username,
         &decoded.id,
         decoded.is_admin,
+        decoded.is_og,
         &state.config.jwt_secret,
         15 * 60, // 15 minutes
     )
