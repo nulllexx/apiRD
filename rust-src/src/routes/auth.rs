@@ -2353,7 +2353,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         )
         .route("/admin/gen-pwd-reset", web::post().to(admin_gen_pwd_reset))
         .route("/reset-password", web::post().to(reset_password))
-        .route("/forgot-password", web::post().to(forgot_password));
-        .route("/history/wiki/edit", web::patch().to(history_wiki_edit));
+        .route("/forgot-password", web::post().to(forgot_password))
+        .route("/history/wiki/edit", web::patch().to(history_wiki_edit))
         .route("/history/wiki/view", web::get().to(history_wiki_view));
 }
