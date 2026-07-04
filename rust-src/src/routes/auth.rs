@@ -2351,15 +2351,15 @@ async fn history_wiki_view(
 ) -> Result<HttpResponse, AppError> {
     check_rate_limit(&req, &limiter)?;
     // Get the content from the db
-    let row: Option<(String, chrono::NaiveDateTime)> = sqlx::query_as("SELECT content, updated_at FROM history_wiki WHERE slug = 'main'")
+    let row: Option<(String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as("SELECT content, updated_at FROM history_wiki WHERE slug = 'main'")
         .fetch_optional(&state.pool)
         .await?;
     let (content, updated_at) = row.ok_or_else(|| AppError::NotFound("Content not found".to_string()))?;
     
-    let iso = updated_at.and_utc().to_rfc3339();
+    let iso = updated_at.to_rfc3339();
     let response = json!({
         "content": content,
-        "updated_at": iso   
+        "updated_at": iso
     });
     Ok(HttpResponse::Ok().json(response))
 }
