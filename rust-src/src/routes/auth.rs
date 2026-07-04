@@ -2299,7 +2299,7 @@ async fn history_wiki_view(
 ) -> Result<HttpResponse, AppError> {
     check_rate_limit(&req, &limiter)?;
     // Get the content from the db
-    let row: Option<(String, String)> = sqlx::query_as("SELECT content, updated_at FROM history_wiki WHERE id = 1")
+    let row: Option<(String, chrono::NaiveDateTime)> = sqlx::query_as("SELECT content, updated_at FROM history_wiki WHERE id = 1")
         .fetch_optional(&state.pool)
         .await?;
     let content = row.ok_or_else(|| AppError::NotFound("Content not found".to_string()))?.0;
