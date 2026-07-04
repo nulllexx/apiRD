@@ -68,7 +68,7 @@ async fn main() -> std::io::Result<()> {
 
     log::info!("Server is running on port {}", port);
 
-    let rate_limiter = web::Data::new(middleware::rate_limit::RateLimiter::new(50, 60));
+    let rate_limiter = web::Data::new(middleware::rate_limit::RateLimiter::new(500, 60));
 
     HttpServer::new(move || {
         let cors = Cors::default()
