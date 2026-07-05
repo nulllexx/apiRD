@@ -607,7 +607,7 @@ async fn account_status(
         mod_type: String,
         moderated_at: String,
         mod_note: Option<String>,
-        incriminatory: Option<String>,
+        incriminatory: Option<serde_json::Value>,
     }
 
     let moderation: Option<ModerationRow> = sqlx::query_as(
@@ -650,10 +650,7 @@ async fn account_status(
         }
     }
 
-    let incriminatory_val: Option<serde_json::Value> =
-        moderation.incriminatory.as_deref().and_then(|s| {
-            serde_json::from_str(s).ok()
-        });
+    let incriminatory_val = moderation.incriminatory;
 
     Ok(HttpResponse::Forbidden().json(json!({
         "accountStatus": "moderated",
@@ -772,7 +769,7 @@ async fn accstatus_cuser(
         ban_type: String,
         moderated_at: String,
         mod_note: Option<String>,
-        incriminatory: Option<String>,
+        incriminatory: Option<serde_json::Value>,
     }
 
     let ban: Option<BanRow> = sqlx::query_as(
@@ -809,10 +806,7 @@ async fn accstatus_cuser(
             // Format moderated time (simple ISO-like representation)
             let moderated_time_pdt = &ban.moderated_at;
 
-            let incriminatory_val: Option<serde_json::Value> =
-                ban.incriminatory.as_deref().and_then(|s| {
-                    serde_json::from_str(s).ok()
-                });
+            let incriminatory_val = ban.incriminatory;
 
             let ban_info = json!({
                 "type": ban.ban_type,
