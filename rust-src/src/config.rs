@@ -32,14 +32,14 @@ pub struct AppConfig {
 impl AppConfig {
     pub fn from_env() -> Self {
         Self {
-            db_host: env::var("DB_HOST").unwrap_or_else(|_| "192.168.0.149".to_string()),
+            db_host: env::var("DB_HOST").expect("DB_HOST must be set"),
             db_port: env::var("DB_PORT")
                 .ok()
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(3306),
-            db_user: env::var("DB_USER").unwrap_or_else(|_| "status_user".to_string()),
-            db_password: env::var("DB_PASSWORD").unwrap_or_else(|_| "api_status_pwd".to_string()),
-            db_name: env::var("DB_NAME").unwrap_or_else(|_| "status_db".to_string()),
+            db_user: env::var("DB_USER").expect("DB_USER must be set"),
+            db_password: env::var("DB_PASSWORD").expect("DB_PASSWORD must be set"),
+            db_name: env::var("DB_NAME").expect("DB_NAME must be set"),
             jwt_secret: env::var("JWT_SECRET").expect("JWT_SECRET must be set"),
             port: env::var("PORT")
                 .ok()

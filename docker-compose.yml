@@ -9,6 +9,14 @@ services:
       - CONTENT_PATH=/home/useradmin/api/mainapi/rust-src/src/content
       - SEASONS_PATH=/usr/share/nginx/html/raindrippy/content
       - GAMES_DIR=/home/useradmin/api/mainapi/rust-src/src/games
+      # Secrets injected at deploy time from GitHub Actions (see .github/workflows/deploy.yml).
+      # These override any values in the env_file above.
+      - DB_HOST=${DB_HOST}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
     ports:
       - "5000:5000"
     stdin_open: true

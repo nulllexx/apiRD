@@ -425,7 +425,8 @@ async fn upload_file(
     let mut mime_type: Option<String> = None;
     let mut temp_path: Option<PathBuf> = None;
 
-    while let Some(Ok(mut field)) = payload.next().await {
+    // Only process the first file field
+    if let Some(Ok(mut field)) = payload.next().await {
         let filename = field
             .content_disposition()
             .and_then(|cd| cd.get_filename().map(|s| s.to_string()))
@@ -441,22 +442,16 @@ async fn upload_file(
         let tmp_name = format!("{}-{}", Uuid::new_v4(), sanitize_filename::sanitize(&filename));
         let tmp_file = tmp_dir.join(&tmp_name);
 
-        let mut bytes_written: usize = 0;
         let mut file_data = Vec::new();
         while let Some(chunk) = field.next().await {
             let chunk = chunk.map_err(|e| {
                 AppError::Internal(format!("Multipart read error: {}", e))
             })?;
-            bytes_written += chunk.len();
             file_data.extend_from_slice(&chunk);
         }
 
         tokio::fs::write(&tmp_file, &file_data).await?;
         temp_path = Some(tmp_file);
-
-        // Only process the first file
-        let _ = bytes_written;
-        break;
     }
 
     let temp_path = match temp_path {
@@ -640,7 +635,8 @@ async fn replace_file(
     let mut mime_type: Option<String> = None;
     let mut temp_path: Option<PathBuf> = None;
 
-    while let Some(Ok(mut field)) = payload.next().await {
+    // Only process the first file field
+    if let Some(Ok(mut field)) = payload.next().await {
         let filename = field
             .content_disposition()
             .and_then(|cd| cd.get_filename().map(|s| s.to_string()))
@@ -665,7 +661,6 @@ async fn replace_file(
 
         tokio::fs::write(&tmp_file, &file_data).await?;
         temp_path = Some(tmp_file);
-        break;
     }
 
     let temp_path = match temp_path {

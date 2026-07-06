@@ -4,11 +4,11 @@ const path = require('path');
 
 // Create a connection pool
 const pool = mariadb.createPool({
-    host: process.env.DB_HOST || '192.168.0.149', // Docker host's default bridge network IP
+    host: process.env.DB_HOST, // Docker host's default bridge network IP
     port: process.env.DB_PORT || 3306,
-    user: process.env.DB_USER || 'status_user',
-    password: process.env.DB_PASSWORD || 'api_status_pwd',
-    database: process.env.DB_NAME || 'status_db',
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
     connectionLimit: 5,
     connectTimeout: 20000,        // 20 seconds
     acquireTimeout: 20000,        // 20 seconds

@@ -73,7 +73,7 @@ async fn upload_file(
     let media_path = &state.config.media_path;
     tokio::fs::create_dir_all(media_path).await?;
 
-    while let Some(item) = payload.next().await {
+    if let Some(item) = payload.next().await {
         let mut field = item.map_err(|e| AppError::BadRequest(e.to_string()))?;
 
         let filename = field
