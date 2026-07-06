@@ -69,29 +69,21 @@ jobs:
 
       - name: Deploy to Linux machine via SSH
         uses: appleboy/ssh-action@v1.0.3
-        env:
-          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
-          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-          DB_HOST: ${{ secrets.DB_HOST }}
-          DB_USER: ${{ secrets.DB_USER }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          DB_NAME: ${{ secrets.DB_NAME }}
         with:
           host: ${{ secrets.REMOTE_HOST }}
           username: ${{ secrets.REMOTE_USER }}
           key: ${{ secrets.REMOTE_SSH_KEY }}
           port: 2222
-          envs: GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,DB_HOST,DB_USER,DB_PASSWORD,DB_NAME
           script: |
             cd /home/useradmin/docker/
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             export GITHUB_REPOSITORY_OWNER=${{ github.repository_owner }}
-            export GOOGLE_CLIENT_ID
-            export GOOGLE_CLIENT_SECRET
-            export DB_HOST
-            export DB_USER
-            export DB_PASSWORD
-            export DB_NAME
+            export DB_HOST="${{ secrets.DB_HOST }}"
+            export DB_USER="${{ secrets.DB_USER }}"
+            export DB_PASSWORD="${{ secrets.DB_PASSWORD }}"
+            export DB_NAME="${{ secrets.DB_NAME }}"
+            export GOOGLE_CLIENT_ID="${{ secrets.GOOGLE_CLIENT_ID }}"
+            export GOOGLE_CLIENT_SECRET="${{ secrets.GOOGLE_CLIENT_SECRET }}"
             docker-compose pull api
             docker-compose up -d api
             docker logout ghcr.io
