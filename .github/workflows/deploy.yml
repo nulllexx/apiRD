@@ -77,20 +77,20 @@ jobs:
           script: |
             cd /home/useradmin/docker/
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            export GITHUB_REPOSITORY_OWNER=${{ github.repository_owner }}
-            export DB_HOST="${{ secrets.DB_HOST }}"
-            export DB_USER="${{ secrets.DB_USER }}"
-            export DB_PASSWORD="${{ secrets.DB_PASSWORD }}"
-            export DB_NAME="${{ secrets.DB_NAME }}"
-            export GOOGLE_CLIENT_ID="${{ secrets.GOOGLE_CLIENT_ID }}"
-            export GOOGLE_CLIENT_SECRET="${{ secrets.GOOGLE_CLIENT_SECRET }}"
 
-            # Fail fast if any required DB secret is missing/empty. Because the
-            # compose `environment:` block overrides `env_file`, deploying with a
-            # blank secret would overwrite a good value and crash-loop the API.
+            DB_HOST="${{ secrets.DB_HOST }}"
+            DB_USER="${{ secrets.DB_USER }}"
+            DB_PASSWORD="${{ secrets.DB_PASSWORD }}"
+            DB_NAME="${{ secrets.DB_NAME }}"
+
+            # Fail fast if any required DB secret is missing/empty. The compose
+            # `environment:` block interpolates these values at every `up`, so a
+            # blank value would recreate the API container with DB_HOST="" and
+            # crash it with Configuration(EmptyHost).
             missing=""
             for v in DB_HOST DB_USER DB_PASSWORD DB_NAME; do
-              if [ -z "${!v}" ]; then missing="$missing $v"; fi
+              eval "val=\$$v"
+              if [ -z "$val" ]; then missing="$missing $v"; fi
             done
             if [ -n "$missing" ]; then
               echo "::error::Refusing to deploy — empty GitHub secret(s):$missing"
@@ -99,6 +99,30 @@ jobs:
               exit 1
             fi
 
+            # Persist the interpolation values to a .env in the compose project
+            # directory. Docker Compose auto-reads this file for ${...} variables,
+            # so ANY `docker-compose up` here (CI, cron, or a human on the box)
+            # resolves them durably — not just during this SSH session.
+            umask 077
+            cat > /home/useradmin/docker/.env <<EOF
+            GITHUB_REPOSITORY_OWNER=${{ github.repository_owner }}
+            DB_HOST=$DB_HOST
+            DB_USER=$DB_USER
+            DB_PASSWORD=$DB_PASSWORD
+            DB_NAME=$DB_NAME
+            GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+            GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+            EOF
+
             docker-compose pull api
             docker-compose up -d api
+
+            # Verify the container actually came up with a non-empty DB_HOST.
+            actual_host="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' api | grep '^DB_HOST=' | cut -d= -f2-)"
+            if [ -z "$actual_host" ]; then
+              echo "::error::api container started with an empty DB_HOST — check the compose .env interpolation."
+              docker logout ghcr.io
+              exit 1
+            fi
+
             docker logout ghcr.io
