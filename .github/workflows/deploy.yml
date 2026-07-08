@@ -84,6 +84,21 @@ jobs:
             export DB_NAME="${{ secrets.DB_NAME }}"
             export GOOGLE_CLIENT_ID="${{ secrets.GOOGLE_CLIENT_ID }}"
             export GOOGLE_CLIENT_SECRET="${{ secrets.GOOGLE_CLIENT_SECRET }}"
+
+            # Fail fast if any required DB secret is missing/empty. Because the
+            # compose `environment:` block overrides `env_file`, deploying with a
+            # blank secret would overwrite a good value and crash-loop the API.
+            missing=""
+            for v in DB_HOST DB_USER DB_PASSWORD DB_NAME; do
+              if [ -z "${!v}" ]; then missing="$missing $v"; fi
+            done
+            if [ -n "$missing" ]; then
+              echo "::error::Refusing to deploy — empty GitHub secret(s):$missing"
+              echo "Set them as *repository* secrets (Settings > Secrets and variables > Actions)."
+              docker logout ghcr.io
+              exit 1
+            fi
+
             docker-compose pull api
             docker-compose up -d api
             docker logout ghcr.io
