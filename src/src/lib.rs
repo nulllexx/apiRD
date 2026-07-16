@@ -1,0 +1,54 @@
+//! Library crate for apiRD.
+//!
+//! The HTTP routing and shared state live here (rather than in `main.rs`) so
+//! integration tests in `tests/` can mount the *exact same* routes the
+//! production server serves. `main.rs` is a thin binary that wires up the
+//! database, background tasks, and the HTTP server around this crate.
+
+use actix_web::web;
+use sqlx::MySqlPool;
+use std::sync::{Arc, RwLock};
+
+pub mod config;
+pub mod db;
+pub mod error;
+pub mod middleware;
+pub mod models;
+pub mod routes;
+
+use config::AppConfig;
+
+#[derive(Clone)]
+pub struct AppState {
+    pub pool: MySqlPool,
+    pub config: AppConfig,
+    pub player_count: Arc<RwLock<u32>>,
+    pub max_players: Arc<RwLock<u32>>,
+}
+
+/// Registers every HTTP route the server exposes (the `/api` scope plus the
+/// dashboard pages) onto an actix `ServiceConfig`.
+///
+/// Keeping this separate from `main` means both the production server and the
+/// integration tests build their routing from one source of truth — a route
+/// that stops compiling or gets dropped here fails the tests before it ships.
+///
+/// Note: the static `/content` file service is intentionally NOT registered
+/// here because it needs a runtime-resolved filesystem path; `main.rs` mounts
+/// it directly.
+pub fn configure_api(cfg: &mut web::ServiceConfig) {
+    cfg.service(
+        web::scope("/api")
+            .configure(routes::auth::configure)
+            .configure(routes::util::configure_util)
+            .configure(routes::status::configure)
+            .configure(routes::projects::configure)
+            .configure(routes::api_keys::configure)
+            .configure(routes::api::configure)
+            .configure(routes::oauth_google::configure),
+    )
+    .route("/dashboard.html", web::get().to(routes::auth::serve_dashboard))
+    .route("/dashboard", web::get().to(routes::auth::serve_dashboard))
+    .route("/rdadmin.html", web::get().to(routes::auth::serve_rdadmin))
+    .route("/rdadmin", web::get().to(routes::auth::serve_rdadmin));
+}

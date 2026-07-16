@@ -4,22 +4,8 @@ use sqlx::MySqlPool;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-mod config;
-mod db;
-mod error;
-mod middleware;
-mod models;
-mod routes;
-
-use config::AppConfig;
-
-#[derive(Clone)]
-pub struct AppState {
-    pub pool: MySqlPool,
-    pub config: AppConfig,
-    pub player_count: Arc<RwLock<u32>>,
-    pub max_players: Arc<RwLock<u32>>,
-}
+use api_rd::config::AppConfig;
+use api_rd::{configure_api, db, middleware, AppState};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -83,32 +69,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(rate_limiter.clone())
             .wrap(cors)
             .wrap(actix_middleware::NormalizePath::trim())
-            .service(
-                web::scope("/api")
-                    .configure(routes::auth::configure)
-                    .configure(routes::util::configure_util)
-                    .configure(routes::status::configure)
-                    .configure(routes::projects::configure)
-                    .configure(routes::api_keys::configure)
-                    .configure(routes::api::configure)
-                    .configure(routes::oauth_google::configure),
-            )
-            .route(
-                "/dashboard.html",
-                web::get().to(routes::auth::serve_dashboard),
-            )
-            .route(
-                "/dashboard",
-                web::get().to(routes::auth::serve_dashboard),
-            )
-            .route(
-                "/rdadmin.html",
-                web::get().to(routes::auth::serve_rdadmin),
-            )
-            .route(
-                "/rdadmin",
-                web::get().to(routes::auth::serve_rdadmin),
-            )
+            .configure(configure_api)
             .service(
                 actix_files::Files::new("/content", &config.content_path)
                     .show_files_listing(),
