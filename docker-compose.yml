@@ -6,9 +6,9 @@ services:
       - /home/useradmin/api/mainapi/.env
     environment:
       - PRIVATE_DIR=/home/useradmin/api/mainapi/src/private
-      - CONTENT_PATH=/home/useradmin/api/mainapi/rust-src/src/content
+      - CONTENT_PATH=/home/useradmin/api/mainapi/src/src/content
       - SEASONS_PATH=/usr/share/nginx/html/raindrippy/content
-      - GAMES_DIR=/home/useradmin/api/mainapi/rust-src/src/games
+      - GAMES_DIR=/home/useradmin/api/mainapi/src/src/games
       # Secrets injected at deploy time from GitHub Actions (see .github/workflows/deploy.yml).
       # These override any values in the env_file above.
       - DB_HOST=${DB_HOST}

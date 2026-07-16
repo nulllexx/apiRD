@@ -1,13 +1,11 @@
 #Clutter
 node_modules/
 frontend-status/
-# FULL DRIVE IGNORE OF SHAME
-#C:/ what?? who's the idiot that ignored the C drive?
 data/
-src/content/
+src/src/content/
 .claude
-rust-src/target/
-rust-src/src/games/*
+src/target/
+src/src/games/*
 #Secrets (we mustn't leak these or snotty skids will yeet us)
 .env
 *.pub
