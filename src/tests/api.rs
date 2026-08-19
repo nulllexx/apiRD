@@ -226,12 +226,26 @@ async fn status_endpoint_returns_seeded_components() {
     let req = test::TestRequest::get()
         .uri("/api/status/status")
         .to_request();
-    let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+    let resp = test::call_service(&app, req).await;
+
+    // Assert on the status code first and print the body when it is not 2xx.
+    // Every query in this handler maps failure to a generic 500 {"error": ...},
+    // so checking only for a missing "components" key reports a schema mismatch
+    // in the test database as an inscrutable "key not present".
+    let status = resp.status();
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert!(
+        status.is_success(),
+        "GET /api/status/status returned {status}; body: {body}
+Hint: a stale TEST_DATABASE_URL schema is the usual cause. init_database
+uses CREATE TABLE IF NOT EXISTS, so it will not reshape an existing table.
+Drop and recreate the test database."
+    );
 
     let components = body
         .get("components")
         .and_then(|c| c.as_array())
-        .expect("components array present in status response");
+        .unwrap_or_else(|| panic!("no components array in status response; body: {body}"));
     // init_database seeds 6 baseline components.
     assert!(
         components.len() >= 6,
@@ -260,9 +274,13 @@ async fn incidents_endpoint_returns_json_array() {
         .uri("/api/status/incidents")
         .to_request();
     let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), StatusCode::OK);
-
+    let status = resp.status();
     let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "GET /api/status/incidents returned {status}; body: {body}"
+    );
     assert!(body.is_array(), "incidents endpoint should return a JSON array");
 }
 
