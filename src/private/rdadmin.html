@@ -3,157 +3,468 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0e1116">
     <title>RainDrippy Studios - Admin Dashboard</title>
     <link rel="icon" href="/raindrippy/rd.png">
     <link rel="stylesheet" href="https://bakosmp.go.ro/raindrippy/index.css">
     <link rel="stylesheet" href="https://bakosmp.go.ro/cookie.css">
     <style>
-        body { font-family: Arial, sans-serif; padding: 20px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        th, td { padding: 10px; border: 1px solid #ccc; text-align: left; }
-        th { background: #eee; }
-        button { padding: 5px 10px; margin-right: 5px; }
-        
-        /* Overlay styles */
-        #overlay {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.7);
-            z-index: 1000;
-            justify-content: center;
-            align-items: center;
-        }
-        
-        #overlayContent {
-            background: white;
-            padding: 30px;
-            border-radius: 8px;
-            max-width: 500px;
-            width: 90%;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-        }
-        
-        #overlayContent h3 {
-            margin-top: 0;
-            color: #333;
-        }
-        
-        #overlayContent p {
-            margin: 15px 0;
-            word-break: break-all;
-        }
-        
-        #overlayContent button {
-            margin-top: 10px;
-            padding: 10px 20px;
-            cursor: pointer;
-        }
-        
-        .copyBtn {
-            background: #007bff;
-            color: white;
-            border: none;
-            border-radius: 4px;
-        }
-        
-        .copyBtn:hover {
-            background: #0056b3;
-        }
-        
-        .closeBtn {
-            background: #6c757d;
-            color: white;
-            border: none;
-            border-radius: 4px;
-        }
-        
-        .closeBtn:hover {
-            background: #545b62;
+        :root {
+            /* ---- palette: dark ops console, RainDrippy accent ---- */
+            --bg: #0e1116;
+            --bg-raised: #151922;
+            --bg-panel: #1a1f2b;
+            --bg-input: #10141c;
+            --line: #262c3a;
+            --line-soft: #1e2330;
+
+            --text: #e7ebf3;
+            --text-muted: #8891a3;
+            --text-faint: #5b6478;
+
+            --accent: #4fd1ff;       /* rain-drop blue */
+            --accent-dim: #2f7fa8;
+            --accent-soft: rgba(79, 209, 255, 0.12);
+
+            --ok: #34d399;
+            --ok-soft: rgba(52, 211, 153, 0.14);
+            --warn: #f0c674;
+            --warn-soft: rgba(240, 198, 116, 0.14);
+            --danger: #ff6b6b;
+            --danger-soft: rgba(255, 107, 107, 0.14);
+
+            --radius: 10px;
+            --radius-sm: 6px;
+            --shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
         }
 
-        /* Tabs — same markup contract as dashboard.html (.tab[data-tab] / .tab-content) */
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: "Inter", "Segoe UI", Arial, sans-serif;
+            background: var(--bg);
+            background-image:
+                radial-gradient(ellipse 900px 500px at 15% -10%, rgba(79, 209, 255, 0.07), transparent 60%),
+                radial-gradient(ellipse 700px 400px at 100% 0%, rgba(79, 209, 255, 0.05), transparent 55%);
+            background-attachment: fixed;
+            color: var(--text);
+            margin: 0;
+            padding: 0;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        h1, h2, h3 {
+            font-family: "Space Grotesk", "Inter", Arial, sans-serif;
+            letter-spacing: -0.01em;
+            color: var(--text);
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            margin: 0 0 4px;
+        }
+
+        h2 { font-size: 1.15rem; margin: 0 0 14px; }
+        h3 { font-size: 0.95rem; margin: 0 0 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+
+        a { color: var(--accent); }
+
+        /* ---------------------------------------------------------- Topbar */
+
+        #topbar {
+            position: sticky;
+            top: 0;
+            z-index: 900;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 12px 20px;
+            background: rgba(14, 17, 22, 0.85);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--line);
+        }
+
+        /* the "rain drip" signature: a faint streak that runs the width of
+           the topbar and pulses very slowly, echoing the studio name
+           without shouting about it */
+        #topbar::after {
+            content: "";
+            position: absolute;
+            left: 0; right: 0; bottom: -1px;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--accent) 20%, transparent 60%);
+            opacity: 0.5;
+            animation: drip 6s ease-in-out infinite;
+        }
+
+        @keyframes drip {
+            0%, 100% { transform: translateX(-30%); opacity: 0.15; }
+            50% { transform: translateX(30%); opacity: 0.55; }
+        }
+
+        #topbar img.logo {
+            height: 32px;
+            width: 32px;
+            border-radius: 8px;
+            cursor: pointer;
+            object-fit: cover;
+        }
+
+        .tpbar-txt {
+            color: var(--text);
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        #topbar a.tpbar-txt {
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        #topbar a.tpbar-txt:hover { color: var(--accent); }
+
+        /* ---------------------------------------------------------- Content */
+
+        #content {
+            max-width: 1080px;
+            margin: 0 auto;
+            padding: 24px 20px 60px;
+        }
+
+        p.subtle, .page-hint {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            margin: 0 0 20px;
+        }
+
+        /* ---------------------------------------------------------- Tabs */
+
         .tab-container {
             display: flex;
             gap: 4px;
-            border-bottom: 2px solid #ccc;
-            margin-bottom: 20px;
+            border-bottom: 1px solid var(--line);
+            margin-bottom: 22px;
         }
 
         .tab {
-            padding: 10px 18px;
+            padding: 10px 16px;
             cursor: pointer;
             border: 1px solid transparent;
             border-bottom: none;
-            border-radius: 6px 6px 0 0;
+            border-radius: 8px 8px 0 0;
             user-select: none;
+            color: var(--text-muted);
+            font-weight: 500;
+            font-size: 0.92rem;
+            transition: color 0.15s ease, background 0.15s ease;
         }
 
-        .tab:hover { background: #f0f0f0; }
+        .tab:hover { background: var(--bg-raised); color: var(--text); }
 
         .tab.active {
-            background: #fff;
-            border-color: #ccc;
-            font-weight: bold;
-            margin-bottom: -2px;
-            border-bottom: 2px solid #fff;
+            background: var(--bg-panel);
+            border-color: var(--line);
+            color: var(--accent);
+            font-weight: 600;
+            margin-bottom: -1px;
+            border-bottom: 1px solid var(--bg-panel);
         }
 
         .tab-content { display: none; }
         .tab-content.active { display: block; }
 
-        /* Console */
+        /* ---------------------------------------------------------- Panels */
+
+        #userTable, #moderationPanel {
+            background: var(--bg-panel);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+        }
+
+        #userTable { border-collapse: collapse; overflow: hidden; }
+
+        /* ---------------------------------------------------------- Search */
+
+        #searchUser {
+            width: 100%;
+            max-width: 360px;
+            display: block;
+            margin-bottom: 16px;
+        }
+
+        input[type="text"], input[type="search"], textarea, select {
+            background: var(--bg-input);
+            border: 1px solid var(--line);
+            color: var(--text);
+            border-radius: var(--radius-sm);
+            padding: 10px 12px;
+            font-size: 0.92rem;
+            font-family: inherit;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        input[type="text"]:focus, input[type="search"]:focus, textarea:focus, select:focus,
+        button:focus-visible, .tab:focus-visible {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-soft);
+        }
+
+        input::placeholder, textarea::placeholder { color: var(--text-faint); }
+
+        /* ---------------------------------------------------------- Table */
+
+        table { width: 100%; border-collapse: collapse; }
+
+        th, td {
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--line-soft);
+            text-align: left;
+            font-size: 0.88rem;
+            vertical-align: middle;
+        }
+
+        thead th {
+            background: var(--bg-raised);
+            color: var(--text-muted);
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            font-weight: 600;
+            border-bottom: 1px solid var(--line);
+        }
+
+        tbody tr:last-child td { border-bottom: none; }
+        tbody tr:hover { background: rgba(79, 209, 255, 0.035); }
+
+        td:first-child, th:first-child { padding-left: 18px; }
+        td:last-child, th:last-child { padding-right: 18px; }
+
+        input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            accent-color: var(--accent);
+            cursor: pointer;
+        }
+
+        #pagination {
+            margin-top: 14px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 4px;
+        }
+
+        #currentPageSpan { color: var(--text-muted); font-size: 0.85rem; margin: 0 6px; }
+
+        /* ---------------------------------------------------------- Buttons */
+
+        button {
+            padding: 8px 14px;
+            margin-right: 6px;
+            border: 1px solid var(--line);
+            background: var(--bg-raised);
+            color: var(--text);
+            border-radius: var(--radius-sm);
+            font-family: inherit;
+            font-size: 0.85rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: border-color 0.15s ease, background 0.15s ease, transform 0.05s ease;
+        }
+
+        button:hover { border-color: var(--accent-dim); background: #1c2230; }
+        button:active { transform: translateY(1px); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        #applyBan, .genPWDreset {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #06222c;
+            font-weight: 600;
+        }
+        #applyBan:hover, .genPWDreset:hover { background: #6adcff; }
+
+        .deleteBtn {
+            background: transparent;
+            border-color: rgba(255, 107, 107, 0.4);
+            color: var(--danger);
+        }
+        .deleteBtn:hover { background: var(--danger-soft); border-color: var(--danger); }
+
+        .unbanBtn { color: var(--text-muted); }
+
+        td .unbanBtn, td .deleteBtn, td .genPWDreset {
+            margin: 2px 4px 2px 0;
+            font-size: 0.78rem;
+            padding: 6px 10px;
+        }
+
+        /* ---------------------------------------------------------- Moderation panel */
+
+        #moderationPanel {
+            margin: 28px 0 0;
+            padding: 20px;
+        }
+
+        #moderationPanel > div { margin-bottom: 14px; }
+
+        #moderationPanel label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        #modUsername, #banType, #modNote { width: 100%; max-width: 420px; }
+        #modNote { resize: vertical; min-height: 70px; }
+
+        #incriminatorySection {
+            border-top: 1px dashed var(--line);
+            padding-top: 16px;
+            margin-top: 16px;
+        }
+
+        #incriminatoryList > div {
+            background: var(--bg-raised) !important;
+            border: 1px solid var(--line) !important;
+            border-radius: var(--radius-sm);
+            padding: 12px !important;
+            margin: 10px 0 !important;
+        }
+
+        #incriminatoryList input, #incriminatoryList textarea {
+            width: 100%;
+            max-width: none !important;
+            margin: 5px 0 !important;
+        }
+
+        #incriminatoryList button {
+            background: transparent;
+            border-color: rgba(255, 107, 107, 0.35);
+            color: var(--danger);
+            font-size: 0.78rem;
+            padding: 5px 10px;
+        }
+
+        #addIncriminatory {
+            border-style: dashed;
+            color: var(--text-muted);
+        }
+
+        #applyBan { margin-top: 4px; padding: 10px 20px; }
+
+        /* ---------------------------------------------------------- Overlay */
+
+        #overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(6, 8, 12, 0.72);
+            backdrop-filter: blur(2px);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        #overlayContent {
+            background: var(--bg-panel);
+            border: 1px solid var(--line);
+            padding: 26px;
+            border-radius: var(--radius);
+            max-width: 460px;
+            width: 100%;
+            box-shadow: var(--shadow);
+        }
+
+        #overlayContent h3 {
+            margin-top: 0;
+            color: var(--text);
+            text-transform: none;
+            font-size: 1.05rem;
+            letter-spacing: normal;
+            font-weight: 600;
+        }
+
+        #overlayContent p {
+            margin: 15px 0;
+            word-break: break-all;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+
+        #overlayContent input[type="text"] { width: 100%; }
+
+        #overlayContent button { margin-top: 10px; padding: 10px 20px; cursor: pointer; }
+
+        .copyBtn { background: var(--accent); color: #06222c; border: none; font-weight: 600; }
+        .copyBtn:hover { background: #6adcff; }
+
+        .closeBtn { background: var(--bg-raised); color: var(--text); border: 1px solid var(--line); }
+        .closeBtn:hover { background: #1c2230; }
+
+        /* ---------------------------------------------------------- Console */
+
         #consoleToolbar {
             display: flex;
             flex-wrap: wrap;
             align-items: center;
             gap: 12px;
-            margin-bottom: 10px;
+            margin-bottom: 12px;
         }
 
-        #consoleToolbar label { display: flex; align-items: center; gap: 5px; }
+        #consoleToolbar label { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 0.85rem; }
 
         #connStatus {
             display: inline-flex;
             align-items: center;
             gap: 6px;
             font-size: 13px;
-            color: #555;
+            color: var(--text-muted);
         }
 
         #connDot {
-            width: 10px;
-            height: 10px;
+            width: 9px;
+            height: 9px;
             border-radius: 50%;
-            background: #6c757d;
+            background: var(--text-faint);
+            box-shadow: 0 0 0 3px transparent;
+            transition: box-shadow 0.2s ease;
         }
 
-        #connDot.live { background: #28a745; }
-        #connDot.connecting { background: #ffc107; }
-        #connDot.down { background: #dc3545; }
+        #connDot.live { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+        #connDot.connecting { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
+        #connDot.down { background: var(--danger); box-shadow: 0 0 0 3px var(--danger-soft); }
 
         #consoleOutput {
-            background: #12151a;
+            background: #0a0d12;
+            border: 1px solid var(--line);
             color: #d6dbe3;
-            font-family: Consolas, "Courier New", monospace;
-            font-size: 13px;
-            line-height: 1.45;
-            padding: 12px;
-            border-radius: 6px;
-            height: 60vh;
+            font-family: "JetBrains Mono", Consolas, "Courier New", monospace;
+            font-size: 12.5px;
+            line-height: 1.5;
+            padding: 14px;
+            border-radius: var(--radius);
+            height: 55vh;
             overflow-y: auto;
             overflow-x: auto;
             white-space: pre;
         }
 
+        #consoleOutput::-webkit-scrollbar { width: 10px; height: 10px; }
+        #consoleOutput::-webkit-scrollbar-track { background: transparent; }
+        #consoleOutput::-webkit-scrollbar-thumb { background: var(--line); border-radius: 6px; }
+        #consoleOutput::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
+
         #consoleOutput .line { display: block; }
-        #consoleOutput .lvl-WARN { color: #f0c674; }
-        #consoleOutput .lvl-ERROR, #consoleOutput .lvl-FATAL { color: #ff6b6b; }
-        #consoleOutput .lvl-meta { color: #7f8a99; font-style: italic; }
-        #consoleOutput .lvl-echo { color: #6fb3ff; font-weight: bold; }
+        #consoleOutput .lvl-WARN { color: var(--warn); }
+        #consoleOutput .lvl-ERROR, #consoleOutput .lvl-FATAL { color: var(--danger); }
+        #consoleOutput .lvl-meta { color: var(--text-faint); font-style: italic; }
+        #consoleOutput .lvl-echo { color: var(--accent); font-weight: bold; }
 
         #consoleForm {
             display: flex;
@@ -163,28 +474,111 @@
 
         #consoleInput {
             flex: 1;
-            padding: 10px;
-            font-family: Consolas, "Courier New", monospace;
-            border: 1px solid #ccc;
-            border-radius: 4px;
+            padding: 11px 12px;
+            font-family: "JetBrains Mono", Consolas, "Courier New", monospace;
         }
+
+        #consoleSend {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #06222c;
+            font-weight: 600;
+        }
+        #consoleSend:hover { background: #6adcff; }
 
         #powerControls {
             display: flex;
             align-items: center;
             gap: 8px;
+            flex-wrap: wrap;
         }
 
         #serverState {
-            font-weight: bold;
-            padding: 4px 10px;
-            border-radius: 4px;
-            margin-right: 6px;
+            font-weight: 600;
+            padding: 5px 12px;
+            border-radius: 999px;
+            margin-right: 4px;
+            font-size: 0.8rem;
+            border: 1px solid transparent;
         }
 
-        .state-running { background: #d4edda; color: #155724; }
-        .state-stopped { background: #f8d7da; color: #721c24; }
-        .state-unknown { background: #e2e3e5; color: #383d41; }
+        .state-running { background: var(--ok-soft); color: var(--ok); border-color: rgba(52, 211, 153, 0.3); }
+        .state-stopped { background: var(--danger-soft); color: var(--danger); border-color: rgba(255, 107, 107, 0.3); }
+        .state-unknown { background: var(--bg-raised); color: var(--text-muted); border-color: var(--line); }
+
+        .powerBtn[data-action="start"] { border-color: rgba(52, 211, 153, 0.35); color: var(--ok); }
+        .powerBtn[data-action="start"]:hover { background: var(--ok-soft); }
+        .powerBtn[data-action="stop"] { border-color: rgba(255, 107, 107, 0.35); color: var(--danger); }
+        .powerBtn[data-action="stop"]:hover { background: var(--danger-soft); }
+        .powerBtn[data-action="restart"] { border-color: rgba(240, 198, 116, 0.35); color: var(--warn); }
+        .powerBtn[data-action="restart"]:hover { background: var(--warn-soft); }
+
+        /* ---------------------------------------------------------- Mobile */
+
+        @media (max-width: 720px) {
+            #content { padding: 16px 12px 48px; }
+            #topbar { padding: 10px 14px; }
+            h1 { font-size: 1.25rem; }
+
+            .tab { padding: 9px 12px; font-size: 0.86rem; }
+
+            /* Table becomes a stacked card list; data-label (added in JS)
+               supplies the field name that the header row would have shown. */
+            #userTable thead { display: none; }
+            #userTable, #userTable tbody, #userTable tr, #userTable td { display: block; width: 100%; }
+
+            #userTable tr {
+                border-bottom: 8px solid var(--bg);
+                padding: 4px 0;
+            }
+
+            #userTable td {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 12px;
+                border-bottom: 1px solid var(--line-soft);
+                padding: 10px 14px;
+            }
+
+            #userTable td::before {
+                content: attr(data-label);
+                color: var(--text-muted);
+                font-size: 0.72rem;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                font-weight: 600;
+                flex-shrink: 0;
+            }
+
+            #userTable td:first-child {
+                background: var(--bg-raised);
+                font-weight: 600;
+                font-size: 0.95rem;
+            }
+            #userTable td:first-child::before { content: ""; }
+
+            #userTable td:last-child {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 6px;
+            }
+            #userTable td:last-child::before { display: none; }
+            #userTable td:last-child button { margin: 0; width: 100%; }
+
+            #consoleOutput { height: 48vh; font-size: 12px; }
+
+            #consoleForm { flex-direction: column; }
+            #consoleSend { width: 100%; }
+
+            #powerControls { width: 100%; }
+            #powerControls .powerBtn { flex: 1; }
+
+            #moderationPanel { padding: 16px; margin-left: 0; margin-right: 0; }
+            #modUsername, #banType, #modNote { max-width: none; }
+
+            #overlayContent { padding: 20px; }
+        }
     </style>
 </head>
 <body>
@@ -203,6 +597,7 @@
 
     <div class="tab-content active" id="users-tab">
     <h1>Manage User Accounts</h1>
+    <p class="page-hint">Search, moderate, and adjust access for every account on the server.</p>
 
     <input type="text" id="searchUser" placeholder="Search username..." />
 
@@ -234,12 +629,12 @@
         <h2>Moderation Panel</h2>
 
         <div>
-            <label for="modUsername">Username:</label><br>
+            <label for="modUsername">Username:</label>
             <input type="text" id="modUsername" placeholder="Enter username...">
         </div>
 
         <div>
-            <label for="banType">Ban Type:</label><br>
+            <label for="banType">Ban Type:</label>
             <select id="banType">
             <option value="1d">1 Day</option>
             <option value="3d">3 Days</option>
@@ -250,7 +645,7 @@
         </div>
 
         <div>
-            <label for="modNote">Reason / Moderator Note:</label><br>
+            <label for="modNote">Reason / Moderator Note:</label>
             <textarea id="modNote" placeholder="Reason for ban..." rows="3" cols="40"></textarea>
         </div>
 
@@ -266,6 +661,7 @@
 
     <div class="tab-content" id="console-tab">
         <h1>Server Console</h1>
+        <p class="page-hint">Live output from the Minecraft server, with start / stop / restart control.</p>
 
         <div id="consoleToolbar">
             <span id="powerControls">
@@ -432,25 +828,27 @@
                 console.log(user); // Add this line for debug
                 const tr = document.createElement('tr');
 
+                // data-label attributes let the mobile stylesheet render
+                // each cell as a labelled row inside a stacked card.
                 tr.innerHTML = `
-                    <td>${user.username}</td>
-                    <td>${user.accountStatus || 'ok'}</td>
-                    <td>
+                    <td data-label="Username">${user.username}</td>
+                    <td data-label="Status">${user.accountStatus || 'ok'}</td>
+                    <td data-label="Admin">
                         <input type="checkbox" class="adminToggle" data-username="${user.username}" ${user.isAdmin ? 'checked' : ''}>
                     </td>
-                    <td>
+                    <td data-label="Member">
                         <input type="checkbox" class="memberToggle" data-username="${user.username}" ${user.isMember ? 'checked' : ''}>
                     </td>
-                    <td>
+                    <td data-label="RD Projects">
                         <input type="checkbox" class="projToggle" data-username="${user.username}" ${user.isProjAllowed ? 'checked' : ''}> 
                     </td>
-                    <td>
+                    <td data-label="Plex">
                         <input type="checkbox" class="plexToggle" data-username="${user.username}" ${user.isPlexAllowed ? 'checked' : ''}>
                     </td>
-                    <td>
+                    <td data-label="OG">
                         <input type="checkbox" class="ogToggle" data-username="${user.username}" ${user.isOG ? 'checked' : ''}>
                     </td>
-                    <td>
+                    <td data-label="Actions">
                         <button class="unbanBtn" data-username="${user.username}">Unban / Clear Moderation</button>
                         <button class="deleteBtn" data-username="${user.username}">Delete Account</button>
                         <button class="genPWDreset" data-username="${user.username}">Generate Password Reset</button>
