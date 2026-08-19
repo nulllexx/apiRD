@@ -317,7 +317,15 @@
 
         tbody tr:last-child td { border-bottom: none; }
         tbody tr:hover { background: rgba(79, 209, 255, 0.035) !important; }
+        #userTable tbody tr, 
+        #userTable tbody tr:nth-child(even), 
+        #userTable tbody tr:nth-child(odd) {
+            background: transparent !important;
+        }
 
+        #userTable tbody tr:hover { 
+            background: rgba(79, 209, 255, 0.035) !important; 
+        }
         td:first-child, th:first-child { padding-left: 18px; }
         td:last-child, th:last-child { padding-right: 18px; }
 
