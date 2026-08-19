@@ -184,6 +184,85 @@ async fn shared_pool() -> Option<MySqlPool> {
         .clone()
 }
 
+/// Re-run each query `GET /api/status/status` performs, reporting which one
+/// fails and why.
+///
+/// `AppError` flattens every `sqlx::Error` into a generic 500 `{"error":
+/// "Internal server error"}` and logs the detail through `log::error!`, which
+/// tests never see because no logger is installed. Probing the queries directly
+/// is the only way to turn that back into an actionable message.
+async fn diagnose_status_queries(pool: &MySqlPool) -> String {
+    let probes: [(&str, &str); 4] = [
+        (
+            "SELECT components",
+            "SELECT id, name, status, CAST(last_updated AS CHAR) AS last_updated FROM components",
+        ),
+        (
+            "SELECT incidents",
+            "SELECT id, title, impact, status, status_text, CAST(status_updated_at AS CHAR) AS status_updated_at,              CAST(started_at AS CHAR) AS started_at, CAST(ended_at AS CHAR) AS ended_at, created_by, CAST(created_at AS CHAR) AS created_at              FROM incidents WHERE status != 'resolved' ORDER BY started_at DESC",
+        ),
+        (
+            "SELECT incident_status_history",
+            "SELECT id, incident_id, status, status_text, CAST(status_updated_at AS CHAR) AS status_updated_at              FROM incident_status_history ORDER BY status_updated_at ASC",
+        ),
+        (
+            "UPSERT meta (write path — the only one unique to this endpoint)",
+            // Deliberately the same row the handler upserts. Probing a
+            // different key would take a different row lock and so miss the
+            // lock-wait case entirely — which is the whole point of the probe.
+            "INSERT INTO meta (`key`, `value`) VALUES ('generated_at', '__diag__') ON DUPLICATE KEY UPDATE `value` = '__diag__'",
+        ),
+    ];
+
+    let mut report = String::from("
+Query-by-query probe:
+");
+    for (label, sql) in probes {
+        // A lock wait would otherwise stall this diagnostic for as long as it
+        // stalled the handler, so cap it and report the stall as the finding.
+        let attempt = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            sqlx::query(sql).execute(pool),
+        )
+        .await;
+
+        let outcome = match attempt {
+            Ok(Ok(_)) => "ok".to_string(),
+            Ok(Err(e)) => format!("FAILED -- {e}"),
+            Err(_) => "TIMED OUT after 10s (lock wait or unresponsive server)".to_string(),
+        };
+        report.push_str(&format!("  {label}: {outcome}
+"));
+    }
+
+    for table in ["components", "meta"] {
+        report.push_str(&format!("
+Columns in `{table}`:
+"));
+        let cols: Result<Vec<(String, String)>, _> = sqlx::query_as(
+            "SELECT COLUMN_NAME, COLUMN_TYPE FROM information_schema.COLUMNS              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION",
+        )
+        .bind(table)
+        .fetch_all(pool)
+        .await;
+
+        match cols {
+            Ok(cols) if cols.is_empty() => report.push_str("  (table does not exist)
+"),
+            Ok(cols) => {
+                for (name, ty) in cols {
+                    report.push_str(&format!("  {name} {ty}
+"));
+                }
+            }
+            Err(e) => report.push_str(&format!("  (could not read schema: {e})
+")),
+        }
+    }
+
+    report
+}
+
 /// A minimal `AppState` for tests: the pool is real, the config carries dummy
 /// (but valid, non-empty) required values since the endpoints under test only
 /// touch the pool.
@@ -216,6 +295,10 @@ async fn status_endpoint_returns_seeded_components() {
         return;
     };
 
+    // Kept aside so the failure path can probe the database directly; the
+    // handler's own pool is moved into the app.
+    let probe_pool = pool.clone();
+
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(test_state(pool)))
@@ -234,13 +317,17 @@ async fn status_endpoint_returns_seeded_components() {
     // in the test database as an inscrutable "key not present".
     let status = resp.status();
     let body: serde_json::Value = test::read_body_json(resp).await;
-    assert!(
-        status.is_success(),
-        "GET /api/status/status returned {status}; body: {body}
-Hint: a stale TEST_DATABASE_URL schema is the usual cause. init_database
-uses CREATE TABLE IF NOT EXISTS, so it will not reshape an existing table.
-Drop and recreate the test database."
-    );
+    if !status.is_success() {
+        let probe = diagnose_status_queries(&probe_pool).await;
+        panic!(
+            "GET /api/status/status returned {status}; body: {body}{probe}
+A FAILED line means the test database has an older schema. init_database uses
+CREATE TABLE IF NOT EXISTS and will not reshape an existing table, so drop and
+recreate the test database.
+A TIMED OUT line means something else holds a row lock. Look for a stuck
+transaction with: SELECT * FROM information_schema.INNODB_TRX;"
+        );
+    }
 
     let components = body
         .get("components")
