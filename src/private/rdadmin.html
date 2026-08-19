@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#0e1116">
+    <meta name="theme-color" content="#f4f6f9" id="metaThemeColor">
     <title>RainDrippy Studios - Admin Dashboard</title>
     <link rel="icon" href="/raindrippy/rd.png">
     <link rel="stylesheet" href="https://bakosmp.go.ro/raindrippy/index.css">
@@ -37,6 +37,7 @@
             --bg-glow-1: rgba(8, 145, 178, 0.05);
             --bg-glow-2: rgba(8, 145, 178, 0.04);
             --shadow: 0 8px 24px rgba(20, 30, 45, 0.08);
+            --topbar-bg: rgba(255, 255, 255, 0.82);
 
             --radius: 10px;
             --radius-sm: 6px;
@@ -70,6 +71,7 @@
             --bg-glow-1: rgba(79, 209, 255, 0.07);
             --bg-glow-2: rgba(79, 209, 255, 0.05);
             --shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+            --topbar-bg: rgba(14, 17, 22, 0.85);
         }
 
         * { box-sizing: border-box; }
@@ -95,7 +97,7 @@
             transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
         }
 
-        h1, h2, h3, p, span, label, td, th, div {
+        h1, h2, h3, p, label, td, th, div {
             color: var(--text) !important;
         }
 
@@ -125,9 +127,9 @@
             align-items: center;
             gap: 4px;
             padding: 12px 20px;
-            background: rgba(14, 17, 22, 0.85) !important;
+            background: var(--topbar-bg) !important;
             backdrop-filter: blur(10px);
-            border-bottom: 1px solid var(--line);
+            border-bottom: 1px solid var(--line) !important;
         }
 
         /* the "rain drip" signature: a faint streak that runs the width of
@@ -559,7 +561,7 @@
         #consoleOutput::-webkit-scrollbar-thumb { background: var(--line) !important; border-radius: 6px; }
         #consoleOutput::-webkit-scrollbar-thumb:hover { background: var(--accent-dim) !important; }
 
-        #consoleOutput .line { display: block; }
+        #consoleOutput .line { display: block; color: #d6dbe3 !important; }
         #consoleOutput .lvl-WARN { color: var(--warn) !important; }
         #consoleOutput .lvl-ERROR, #consoleOutput .lvl-FATAL { color: var(--danger) !important; }
         #consoleOutput .lvl-meta { color: var(--text-faint) !important; font-style: italic; }
@@ -820,16 +822,19 @@
     (function initTheme() {
         const root = document.documentElement;
         const toggle = document.getElementById('themeToggle');
+        const metaTheme = document.getElementById('metaThemeColor');
 
         function applyTheme(theme) {
             if (theme === 'dark') {
                 root.setAttribute('data-theme', 'dark');
                 toggle.title = 'Switch to light mode';
                 toggle.setAttribute('aria-label', 'Switch to light mode');
+                if (metaTheme) metaTheme.setAttribute('content', '#0e1116');
             } else {
                 root.removeAttribute('data-theme');
                 toggle.title = 'Switch to dark mode';
                 toggle.setAttribute('aria-label', 'Switch to dark mode');
+                if (metaTheme) metaTheme.setAttribute('content', '#f4f6f9');
             }
         }
 
