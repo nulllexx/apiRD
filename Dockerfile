@@ -26,7 +26,12 @@ FROM debian:bookworm-slim
 # would otherwise be root on the host via /containers/create bind mounts.
 RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/api-rd /usr/local/bin/
-COPY src/private /home/useradmin/api/mainapi/src/private
+# Served read-only by serve_rdadmin/serve_dashboard, so it belongs to the image
+# rather than to host state. It must NOT live under /home/useradmin/api: compose
+# bind-mounts the host's copy of that directory over the container's, which
+# shadows anything the image puts there -- the reason a rebuilt image kept
+# serving a stale rdadmin.html.
+COPY src/private /app/private
 RUN mkdir -p /home/useradmin/api/mainapi/src/content
 WORKDIR /home/useradmin/api/mainapi
 EXPOSE 5000

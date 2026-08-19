@@ -5,7 +5,10 @@ services:
     env_file:
       - /home/useradmin/api/mainapi/.env
     environment:
-      - PRIVATE_DIR=/home/useradmin/api/mainapi/src/private
+      # Baked into the image (see Dockerfile). Kept outside /home/useradmin/api
+      # because that path is bind-mounted from the host below and would shadow
+      # the image's copy.
+      - PRIVATE_DIR=/app/private
       - CONTENT_PATH=/home/useradmin/api/mainapi/src/src/content
       - SEASONS_PATH=/usr/share/nginx/html/raindrippy/content
       - GAMES_DIR=/home/useradmin/api/mainapi/src/src/games
