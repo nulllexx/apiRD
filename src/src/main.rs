@@ -5,7 +5,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use api_rd::config::AppConfig;
-use api_rd::{configure_api, db, middleware, AppState};
+use api_rd::{configure_api, console, db, middleware, AppState};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -31,6 +31,7 @@ async fn main() -> std::io::Result<()> {
         config: config.clone(),
         player_count: Arc::new(RwLock::new(0)),
         max_players: Arc::new(RwLock::new(20)),
+        console: console::Consoles::new(config.console_backlog_lines),
     };
 
     // Spawn auto-unban background task
@@ -51,6 +52,30 @@ async fn main() -> std::io::Result<()> {
     tokio::spawn(async move {
         watch_player_count(pc_state).await;
     });
+
+    // Spawn the console tailers — one reader per source process-wide, fanned
+    // out to every admin viewing the console over SSE.
+    //
+    // The stdout capture only exists if `start.sh` tees the container's output
+    // to it; until then that tailer simply idles waiting for the file, and the
+    // console's stdout tab stays empty.
+    for (label, path, hub) in [
+        (
+            "latest.log",
+            config.minecraft_log_path.clone(),
+            Arc::clone(&app_state.console.server_log),
+        ),
+        (
+            "stdout capture",
+            config.minecraft_stdout_path.clone(),
+            Arc::clone(&app_state.console.stdout),
+        ),
+    ] {
+        log::info!("Console tailing {} at {}", label, path);
+        tokio::spawn(async move {
+            console::tail::tail_log(hub, path).await;
+        });
+    }
 
     log::info!("Server is running on port {}", port);
 

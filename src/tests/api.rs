@@ -39,6 +39,118 @@ async fn unknown_route_returns_404() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
+/// An `AppState` whose pool is never actually connected.
+///
+/// `AdminUser` rejects a request with no `userToken` cookie before it issues
+/// any query, so the console's auth gate is exercisable without a database.
+/// The short acquire timeout matters: if a refactor ever moves a query *ahead*
+/// of the cookie check, these tests fail quickly instead of hanging.
+fn lazy_state() -> AppState {
+    let config = AppConfig::build(|key| match key {
+        "DB_HOST" => Some("127.0.0.1".to_string()),
+        "DB_USER" => Some("test".to_string()),
+        "DB_PASSWORD" => Some("test".to_string()),
+        "DB_NAME" => Some("apird_test".to_string()),
+        "JWT_SECRET" => Some("test-secret".to_string()),
+        _ => None,
+    })
+    .expect("build test config");
+
+    let pool = MySqlPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_secs(2))
+        .connect_lazy(&config.database_url())
+        .expect("lazy pool never dials on construction");
+
+    AppState {
+        pool,
+        config,
+        player_count: Arc::new(RwLock::new(0)),
+        max_players: Arc::new(RwLock::new(20)),
+        console: api_rd::console::Consoles::new(64),
+    }
+}
+
+/// The console exposes the server's log and an arbitrary-command channel, so
+/// the property most worth pinning down is that none of it answers without an
+/// admin session.
+#[actix_web::test]
+async fn console_routes_reject_anonymous_callers() {
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(lazy_state()))
+            .configure(configure_api),
+    )
+    .await;
+
+    for uri in [
+        "/api/admin/console/stream",
+        "/api/admin/console/stream?source=stdout",
+        "/api/admin/console/download",
+        "/api/admin/console/power/status",
+    ] {
+        let req = test::TestRequest::get().uri(uri).to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "GET {uri} must require an admin session"
+        );
+    }
+
+    let req = test::TestRequest::post()
+        .uri("/api/admin/console/command")
+        .set_json(serde_json::json!({ "command": "list" }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "POST /api/admin/console/command must require an admin session"
+    );
+
+    // Power control reaches the sidecar, so an unauthenticated caller must not
+    // be able to queue anything — including an unrecognised verb.
+    for action in ["start", "stop", "restart", "bogus"] {
+        let req = test::TestRequest::post()
+            .uri(&format!("/api/admin/console/power/{action}"))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "POST /api/admin/console/power/{action} must require an admin session"
+        );
+    }
+}
+
+/// Auth is checked before the body is parsed, so a malformed or hostile
+/// payload never reaches command validation on an unauthenticated request.
+#[actix_web::test]
+async fn console_command_checks_auth_before_validating_input() {
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(lazy_state()))
+            .configure(configure_api),
+    )
+    .await;
+
+    for body in [
+        serde_json::json!({ "command": "" }),
+        serde_json::json!({ "wrong_field": "list" }),
+    ] {
+        let req = test::TestRequest::post()
+            .uri("/api/admin/console/command")
+            .set_json(body)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "auth must be decided before the body is considered"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // DB-backed tests (run when TEST_DATABASE_URL is set)
 // ---------------------------------------------------------------------------
@@ -91,6 +203,9 @@ fn test_state(pool: MySqlPool) -> AppState {
         config,
         player_count: Arc::new(RwLock::new(0)),
         max_players: Arc::new(RwLock::new(20)),
+        // No tailer is spawned in tests, so this stays empty — the console
+        // routes under test are rejected at the auth layer before reaching it.
+        console: api_rd::console::Consoles::new(64),
     }
 }
 
@@ -150,3 +265,4 @@ async fn incidents_endpoint_returns_json_array() {
     let body: serde_json::Value = test::read_body_json(resp).await;
     assert!(body.is_array(), "incidents endpoint should return a JSON array");
 }
+

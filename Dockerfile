@@ -20,6 +20,10 @@ RUN cargo build --release
 
 # --- Final Stage ---
 FROM debian:bookworm-slim
+# Deliberately no Docker CLI and no docker.sock mount (see docker-compose.yml).
+# Server control goes through the `mc-control` sidecar and console commands go
+# over RCON, so an RCE in this container cannot reach the Docker daemon — which
+# would otherwise be root on the host via /containers/create bind mounts.
 RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/api-rd /usr/local/bin/
 COPY src/private /home/useradmin/api/mainapi/src/private

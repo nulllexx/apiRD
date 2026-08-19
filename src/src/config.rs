@@ -39,6 +39,21 @@ pub struct AppConfig {
     pub authed_players_path: String,
     pub player_count_path: String,
     pub server_properties_path: String,
+    /// Minecraft's rolling log file, tailed by the admin console.
+    pub minecraft_log_path: String,
+    /// The container's raw stdout, captured to a file by `start.sh` teeing it.
+    /// Carries JVM crashes and start-up output that never reach `latest.log`.
+    pub minecraft_stdout_path: String,
+    /// How many recent console lines to retain for replay to new subscribers.
+    pub console_backlog_lines: usize,
+    /// `host:port` of the Minecraft server's RCON listener.
+    pub rcon_address: String,
+    /// RCON password. Empty disables the console's command box rather than
+    /// failing startup, so an existing deployment keeps booting without it.
+    pub rcon_password: String,
+    /// Shared directory used to reach the `mc-control` sidecar, which holds the
+    /// Docker socket so this container does not have to.
+    pub control_dir: String,
     pub upload_logs_path: String,
     pub content_path: String,
     pub seasons_path: String,
@@ -88,6 +103,14 @@ impl AppConfig {
         let port = |key: &str, default: u16| -> u16 {
             get(key).and_then(|p| p.parse().ok()).unwrap_or(default)
         };
+        // Optional bounded count, ignoring unparseable values. Clamped so a
+        // typo cannot pin an unbounded amount of memory in the console buffer.
+        let count = |key: &str, default: usize| -> usize {
+            get(key)
+                .and_then(|v| v.parse::<usize>().ok())
+                .map(|v| v.clamp(50, 10_000))
+                .unwrap_or(default)
+        };
 
         Ok(Self {
             db_host: required("DB_HOST")?,
@@ -113,6 +136,15 @@ impl AppConfig {
                 "SERVER_PROPERTIES_PATH",
                 "/mcserver/server.properties",
             ),
+            minecraft_log_path: optional("MINECRAFT_LOG_PATH", "/mcserver/logs/latest.log"),
+            minecraft_stdout_path: optional(
+                "MINECRAFT_STDOUT_PATH",
+                "/mcserver/logs/console.log",
+            ),
+            console_backlog_lines: count("CONSOLE_BACKLOG_LINES", 500),
+            rcon_address: optional("RCON_ADDRESS", "127.0.0.1:29875"),
+            rcon_password: get("RCON_PASSWORD").unwrap_or_default(),
+            control_dir: optional("CONTROL_DIR", "/control"),
             upload_logs_path: optional(
                 "UPLOAD_LOGS_PATH",
                 "/home/useradmin/api/uploadlogs.json",
@@ -253,5 +285,61 @@ mod tests {
         pairs.push(("CONTENT_PATH", "/srv/content"));
         let cfg = AppConfig::build(lookup(&pairs)).unwrap();
         assert_eq!(cfg.content_path, "/srv/content");
+    }
+
+    #[test]
+    fn console_defaults_match_the_deployed_mount() {
+        // The API container bind-mounts the server dir at /mcserver and shares
+        // /control with the sidecar, so these defaults must work with no extra
+        // env in docker-compose.
+        let cfg = AppConfig::build(lookup(&required_pairs())).unwrap();
+        assert_eq!(cfg.minecraft_log_path, "/mcserver/logs/latest.log");
+        assert_eq!(cfg.minecraft_stdout_path, "/mcserver/logs/console.log");
+        assert_eq!(cfg.console_backlog_lines, 500);
+        assert_eq!(cfg.rcon_address, "127.0.0.1:29875");
+        assert_eq!(cfg.control_dir, "/control");
+    }
+
+    #[test]
+    fn console_overrides_are_applied() {
+        let mut pairs = required_pairs();
+        pairs.push(("MINECRAFT_LOG_PATH", "/tmp/latest.log"));
+        pairs.push(("MINECRAFT_STDOUT_PATH", "/tmp/console.log"));
+        pairs.push(("CONSOLE_BACKLOG_LINES", "1200"));
+        pairs.push(("RCON_ADDRESS", "10.0.0.5:25575"));
+        pairs.push(("CONTROL_DIR", "/srv/control"));
+        let cfg = AppConfig::build(lookup(&pairs)).unwrap();
+        assert_eq!(cfg.minecraft_log_path, "/tmp/latest.log");
+        assert_eq!(cfg.minecraft_stdout_path, "/tmp/console.log");
+        assert_eq!(cfg.console_backlog_lines, 1200);
+        assert_eq!(cfg.rcon_address, "10.0.0.5:25575");
+        assert_eq!(cfg.control_dir, "/srv/control");
+    }
+
+    #[test]
+    fn missing_rcon_password_does_not_fail_startup() {
+        // Deliberately optional: an existing deployment without RCON_PASSWORD
+        // must still boot, with only the console's command box disabled.
+        let cfg = AppConfig::build(lookup(&required_pairs())).unwrap();
+        assert_eq!(cfg.rcon_password, "");
+
+        let mut pairs = required_pairs();
+        pairs.push(("RCON_PASSWORD", "s3cret"));
+        let cfg = AppConfig::build(lookup(&pairs)).unwrap();
+        assert_eq!(cfg.rcon_password, "s3cret");
+    }
+
+    #[test]
+    fn console_backlog_is_clamped_and_unparseable_falls_back() {
+        let build_with = |v: &str| {
+            let mut pairs = required_pairs();
+            pairs.push(("CONSOLE_BACKLOG_LINES", v));
+            AppConfig::build(lookup(&pairs)).unwrap().console_backlog_lines
+        };
+        // A zero would make the console replay nothing; a huge value would pin
+        // memory. Both are clamped rather than trusted.
+        assert_eq!(build_with("0"), 50);
+        assert_eq!(build_with("999999"), 10_000);
+        assert_eq!(build_with("not-a-number"), 500);
     }
 }

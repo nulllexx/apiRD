@@ -10,13 +10,16 @@ use sqlx::MySqlPool;
 use std::sync::{Arc, RwLock};
 
 pub mod config;
+pub mod console;
 pub mod db;
 pub mod error;
 pub mod middleware;
 pub mod models;
+pub mod rcon;
 pub mod routes;
 
 use config::AppConfig;
+use console::Consoles;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -24,6 +27,8 @@ pub struct AppState {
     pub config: AppConfig,
     pub player_count: Arc<RwLock<u32>>,
     pub max_players: Arc<RwLock<u32>>,
+    /// Fan-out points for the two live log streams, fed by the tail tasks.
+    pub console: Arc<Consoles>,
 }
 
 /// Registers every HTTP route the server exposes (the `/api` scope plus the
@@ -45,6 +50,7 @@ pub fn configure_api(cfg: &mut web::ServiceConfig) {
             .configure(routes::projects::configure)
             .configure(routes::api_keys::configure)
             .configure(routes::api::configure)
+            .configure(routes::console::configure)
             .configure(routes::oauth_google::configure),
     )
     .route("/dashboard.html", web::get().to(routes::auth::serve_dashboard))

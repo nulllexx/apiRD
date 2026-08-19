@@ -3,6 +3,7 @@ use serde::Serialize;
 use serde_json::json;
 use std::collections::HashMap;
 
+use crate::console::control;
 use crate::error::AppError;
 use crate::middleware::auth::AuthUser;
 use crate::AppState;
@@ -22,30 +23,23 @@ pub struct GameDetails {
 /// POST /startserver
 pub(super) async fn start_server(
     req: HttpRequest,
+    state: web::Data<AppState>,
     limiter: web::Data<RateLimiter>,
     _auth: AuthUser,
 ) -> Result<HttpResponse, AppError> {
     check_rate_limit(&req, &limiter)?;
 
-    let output = tokio::process::Command::new("docker")
-        .args(["compose", "up", "-d", "minecraft"])
-        .output()
+    // Queued for the `mc-control` sidecar. This container holds no Docker
+    // socket, so it cannot (and must not) drive the daemon itself.
+    control::request(&state.config.control_dir, control::PowerAction::Start)
         .await
-        .map_err(|e| AppError::Internal(format!("Error starting server: {}", e)))?;
+        .map_err(|e| {
+            log::error!("Error queueing start for the sidecar: {}", e);
+            AppError::Internal("Error starting server".to_string())
+        })?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        log::error!("Error starting server: {}", stderr);
-        return Ok(HttpResponse::InternalServerError().json(json!({
-            "message": "Error starting server",
-            "error": stderr.to_string()
-        })));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    log::info!("Server started successfully: {}", stdout);
-
-    Ok(HttpResponse::Ok().json(json!({ "message": "Server started successfully" })))
+    log::info!("Server start queued.");
+    Ok(HttpResponse::Accepted().json(json!({ "message": "Server start queued" })))
 }
 
 /// GET /fetch-worlds

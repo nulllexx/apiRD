@@ -74,6 +74,117 @@
         .closeBtn:hover {
             background: #545b62;
         }
+
+        /* Tabs — same markup contract as dashboard.html (.tab[data-tab] / .tab-content) */
+        .tab-container {
+            display: flex;
+            gap: 4px;
+            border-bottom: 2px solid #ccc;
+            margin-bottom: 20px;
+        }
+
+        .tab {
+            padding: 10px 18px;
+            cursor: pointer;
+            border: 1px solid transparent;
+            border-bottom: none;
+            border-radius: 6px 6px 0 0;
+            user-select: none;
+        }
+
+        .tab:hover { background: #f0f0f0; }
+
+        .tab.active {
+            background: #fff;
+            border-color: #ccc;
+            font-weight: bold;
+            margin-bottom: -2px;
+            border-bottom: 2px solid #fff;
+        }
+
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* Console */
+        #consoleToolbar {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 10px;
+        }
+
+        #consoleToolbar label { display: flex; align-items: center; gap: 5px; }
+
+        #connStatus {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            color: #555;
+        }
+
+        #connDot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #6c757d;
+        }
+
+        #connDot.live { background: #28a745; }
+        #connDot.connecting { background: #ffc107; }
+        #connDot.down { background: #dc3545; }
+
+        #consoleOutput {
+            background: #12151a;
+            color: #d6dbe3;
+            font-family: Consolas, "Courier New", monospace;
+            font-size: 13px;
+            line-height: 1.45;
+            padding: 12px;
+            border-radius: 6px;
+            height: 60vh;
+            overflow-y: auto;
+            overflow-x: auto;
+            white-space: pre;
+        }
+
+        #consoleOutput .line { display: block; }
+        #consoleOutput .lvl-WARN { color: #f0c674; }
+        #consoleOutput .lvl-ERROR, #consoleOutput .lvl-FATAL { color: #ff6b6b; }
+        #consoleOutput .lvl-meta { color: #7f8a99; font-style: italic; }
+        #consoleOutput .lvl-echo { color: #6fb3ff; font-weight: bold; }
+
+        #consoleForm {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        #consoleInput {
+            flex: 1;
+            padding: 10px;
+            font-family: Consolas, "Courier New", monospace;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+
+        #powerControls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        #serverState {
+            font-weight: bold;
+            padding: 4px 10px;
+            border-radius: 4px;
+            margin-right: 6px;
+        }
+
+        .state-running { background: #d4edda; color: #155724; }
+        .state-stopped { background: #f8d7da; color: #721c24; }
+        .state-unknown { background: #e2e3e5; color: #383d41; }
     </style>
 </head>
 <body>
@@ -85,6 +196,12 @@
 </div>
 
 <div id="content">
+    <div class="tab-container">
+        <div class="tab active" data-tab="users">Users</div>
+        <div class="tab" data-tab="console">Server Console</div>
+    </div>
+
+    <div class="tab-content active" id="users-tab">
     <h1>Manage User Accounts</h1>
 
     <input type="text" id="searchUser" placeholder="Search username..." />
@@ -145,6 +262,43 @@
 
         <button id="applyBan" style="margin-top: 15px;">Apply Moderation</button>
     </div>
+    </div><!-- /users-tab -->
+
+    <div class="tab-content" id="console-tab">
+        <h1>Server Console</h1>
+
+        <div id="consoleToolbar">
+            <span id="powerControls">
+                <span id="serverState" class="state-unknown">Server: unknown</span>
+                <button type="button" class="powerBtn" data-action="start">Start</button>
+                <button type="button" class="powerBtn" data-action="stop">Stop</button>
+                <button type="button" class="powerBtn" data-action="restart">Restart</button>
+            </span>
+        </div>
+
+        <div id="consoleToolbar">
+            <label for="consoleSource">Source:
+                <select id="consoleSource">
+                    <option value="log">latest.log</option>
+                    <option value="stdout">Container stdout</option>
+                </select>
+            </label>
+
+            <span id="connStatus"><span id="connDot"></span><span id="connText">Disconnected</span></span>
+
+            <label><input type="checkbox" id="autoscroll" checked> Autoscroll</label>
+
+            <button type="button" id="clearConsole">Clear</button>
+            <a href="/api/admin/console/download"><button type="button">Download latest.log</button></a>
+        </div>
+
+        <div id="consoleOutput" aria-live="polite"></div>
+
+        <form id="consoleForm" autocomplete="off">
+            <input type="text" id="consoleInput" placeholder="Type a command (e.g. list) and press Enter…">
+            <button type="submit" id="consoleSend">Send</button>
+        </form>
+    </div><!-- /console-tab -->
 </div>
 
 <!-- Overlay for messages -->
@@ -532,6 +686,243 @@
 
     // initial fetch
     fetchUsers();
+
+    /* ---------------------------------------------------------------- Tabs */
+
+    document.querySelectorAll('.tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+            tab.classList.add('active');
+            document.getElementById(`${tab.dataset.tab}-tab`).classList.add('active');
+
+            // The console holds an open connection, so it is only attached
+            // while its tab is actually visible.
+            if (tab.dataset.tab === 'console') {
+                consoleConnect();
+                startStatusPolling();
+            } else {
+                consoleDisconnect();
+                stopStatusPolling();
+            }
+        });
+    });
+
+    /* ------------------------------------------------------------- Console */
+
+    const MAX_CONSOLE_LINES = 2000;   // past this the page starts to crawl
+    const consoleOutput = document.getElementById('consoleOutput');
+    const consoleSource = document.getElementById('consoleSource');
+    const consoleInput = document.getElementById('consoleInput');
+    const autoscroll = document.getElementById('autoscroll');
+    const connDot = document.getElementById('connDot');
+    const connText = document.getElementById('connText');
+
+    let evtSource = null;
+    let retryDelay = 1000;
+    let retryTimer = null;
+    let stuckToBottom = true;
+    const history = [];
+    let historyIndex = 0;
+
+    function setStatus(state, text) {
+        connDot.className = state;
+        connText.textContent = text;
+    }
+
+    // Minecraft lines look like "[12:34:56] [Server thread/INFO]: message".
+    function levelOf(line) {
+        const match = line.match(/\[[^\]]*\/(\w+)\]/);
+        return match ? match[1].toUpperCase() : '';
+    }
+
+    function appendLine(text, forcedClass) {
+        const line = document.createElement('span');
+        line.className = 'line ' + (forcedClass || 'lvl-' + levelOf(text));
+        // textContent, never innerHTML: log lines carry player chat, which is
+        // attacker-controlled and would otherwise inject markup into the panel.
+        line.textContent = text;
+        consoleOutput.appendChild(line);
+
+        while (consoleOutput.childElementCount > MAX_CONSOLE_LINES) {
+            consoleOutput.removeChild(consoleOutput.firstChild);
+        }
+
+        if (autoscroll.checked && stuckToBottom) {
+            consoleOutput.scrollTop = consoleOutput.scrollHeight;
+        }
+    }
+
+    // Autoscroll pauses on its own when the operator scrolls up to read, and
+    // resumes once they return to the bottom.
+    consoleOutput.addEventListener('scroll', () => {
+        const distance = consoleOutput.scrollHeight - consoleOutput.scrollTop - consoleOutput.clientHeight;
+        stuckToBottom = distance < 40;
+    });
+
+    function consoleDisconnect() {
+        clearTimeout(retryTimer);
+        if (evtSource) {
+            evtSource.close();
+            evtSource = null;
+        }
+        setStatus('', 'Disconnected');
+    }
+
+    function consoleConnect() {
+        consoleDisconnect();
+        setStatus('connecting', 'Connecting…');
+
+        const source = new EventSource('/api/admin/console/stream?source=' + encodeURIComponent(consoleSource.value));
+        evtSource = source;
+
+        source.onopen = () => {
+            retryDelay = 1000;
+            setStatus('live', 'Live');
+        };
+
+        source.onmessage = (e) => appendLine(e.data);
+
+        source.onerror = () => {
+            // A non-200 (e.g. an expired session returning 401) closes the
+            // EventSource permanently, and the browser's own retry does not
+            // back off — so reconnection is handled here instead.
+            source.close();
+            if (evtSource !== source) return;   // superseded by a newer connect
+            evtSource = null;
+
+            setStatus('down', `Reconnecting in ${Math.round(retryDelay / 1000)}s…`);
+            retryTimer = setTimeout(() => {
+                if (document.getElementById('console-tab').classList.contains('active')) {
+                    consoleConnect();
+                }
+            }, retryDelay);
+            retryDelay = Math.min(retryDelay * 2, 30000);
+        };
+    }
+
+    consoleSource.addEventListener('change', () => {
+        appendLine(`── switched to ${consoleSource.options[consoleSource.selectedIndex].text} ──`, 'lvl-meta');
+        consoleConnect();
+    });
+
+    document.getElementById('clearConsole').addEventListener('click', () => {
+        consoleOutput.innerHTML = '';
+    });
+
+    document.getElementById('consoleForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const command = consoleInput.value.trim();
+        if (!command) return;
+
+        history.push(command);
+        historyIndex = history.length;
+        consoleInput.value = '';
+        appendLine('> ' + command, 'lvl-echo');
+
+        try {
+            const response = await fetch('/api/admin/console/command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ command })
+            });
+            const data = await response.json();
+
+            if (!response.ok) {
+                appendLine(data.error || 'Command failed', 'lvl-ERROR');
+                return;
+            }
+            if (data.output) {
+                data.output.split('\n').forEach(line => appendLine(line, 'lvl-meta'));
+            }
+        } catch (err) {
+            console.error(err);
+            appendLine('Failed to reach the server', 'lvl-ERROR');
+        }
+    });
+
+    consoleInput.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+        if (!history.length) return;
+        e.preventDefault();
+
+        if (e.key === 'ArrowUp') {
+            historyIndex = Math.max(0, historyIndex - 1);
+        } else {
+            historyIndex = Math.min(history.length, historyIndex + 1);
+        }
+        consoleInput.value = historyIndex === history.length ? '' : history[historyIndex];
+    });
+
+    /* ------------------------------------------------------- Power control */
+
+    const serverState = document.getElementById('serverState');
+    let statusTimer = null;
+
+    async function refreshStatus() {
+        try {
+            const response = await fetch('/api/admin/console/power/status', { credentials: 'include' });
+            if (!response.ok) throw new Error('status ' + response.status);
+            const data = await response.json();
+            serverState.textContent = 'Server: ' + data.state;
+            serverState.className = 'state-' + data.state;
+        } catch (err) {
+            // "unknown" means the sidecar isn't reporting — deliberately not
+            // shown as "stopped", which would be misleading.
+            serverState.textContent = 'Server: unknown';
+            serverState.className = 'state-unknown';
+        }
+    }
+
+    function startStatusPolling() {
+        refreshStatus();
+        clearInterval(statusTimer);
+        statusTimer = setInterval(refreshStatus, 5000);
+    }
+
+    function stopStatusPolling() {
+        clearInterval(statusTimer);
+        statusTimer = null;
+    }
+
+    document.querySelectorAll('.powerBtn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const action = btn.dataset.action;
+            if (action !== 'start' && !confirm(`Really ${action} the Minecraft server?`)) return;
+
+            document.querySelectorAll('.powerBtn').forEach(b => b.disabled = true);
+            try {
+                const response = await fetch('/api/admin/console/power/' + action, {
+                    method: 'POST',
+                    credentials: 'include'
+                });
+                const data = await response.json();
+
+                if (response.ok) {
+                    // The sidecar polls its spool directory, so this is queued
+                    // rather than done — the status pill reflects the result.
+                    appendLine(`── ${action} queued ──`, 'lvl-meta');
+                } else {
+                    appendLine(data.error || `Failed to ${action}`, 'lvl-ERROR');
+                }
+            } catch (err) {
+                console.error(err);
+                appendLine(`Failed to reach the server to ${action}`, 'lvl-ERROR');
+            } finally {
+                document.querySelectorAll('.powerBtn').forEach(b => b.disabled = false);
+                setTimeout(refreshStatus, 1500);
+            }
+        });
+    });
+
+    // Drop the connection when the tab is closed rather than leaving the
+    // server streaming into nothing.
+    window.addEventListener('beforeunload', () => {
+        consoleDisconnect();
+        stopStatusPolling();
+    });
 </script>
 
 <script src="https://bakosmp.go.ro/js/topbar-show.js"></script>

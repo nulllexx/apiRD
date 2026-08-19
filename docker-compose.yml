@@ -17,12 +17,21 @@ services:
       - DB_NAME=${DB_NAME}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      # Console commands go over RCON directly (network_mode: host reaches the
+      # published port below), so the API needs no Docker access for them.
+      - RCON_PASSWORD=${RCON_PASSWORD}
     ports:
       - "5000:5000"
     stdin_open: true
     tty: true
     restart: unless-stopped
     volumes:
+      # NOTE: /var/run/docker.sock is deliberately NOT mounted here. Docker
+      # socket access is root-equivalent on the host (an attacker can POST
+      # /containers/create with a "/:/host" bind), so lifecycle control is
+      # delegated to the mc-control sidecar below, which only ever runs three
+      # fixed commands.
+      - mc-control:/control
       - /home/useradmin/mcserver:/mcserver
       - /home/useradmin/mcserver:/home/useradmin/mcserver
       - /home/useradmin/api/mainapi/data:/home/useradmin/api/mainapi/data
@@ -30,6 +39,57 @@ services:
       - /usr/share/nginx/html/raindrippy/content:/usr/share/nginx/html/raindrippy/content:ro
       - /usr/share/nginx/html/raindrippy/projects/public:/usr/share/nginx/html/raindrippy/projects/public:rw
     network_mode: "host"
+
+  # Holds the Docker socket so the API does not have to.
+  #
+  # It reads command files the API drops into /control/queue and matches them
+  # against a three-verb allowlist. Anything else is logged and discarded, so
+  # the worst an attacker who fully controls the API container can do through
+  # this channel is start, stop or restart the Minecraft container — not create
+  # a privileged container and own the host.
+  #
+  # The command name is never interpolated into the docker invocation; the case
+  # branch selects a hardcoded command, so no input reaches the shell as code.
+  mc-control:
+    image: docker:cli
+    container_name: mc-control
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - mc-control:/control
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        TARGET=minecraft
+        mkdir -p /control/queue
+
+        # Publish container state for the API, which cannot ask the daemon.
+        while :; do
+          if docker inspect -f '{{.State.Running}}' "$$TARGET" > /control/status.tmp 2>/dev/null; then
+            mv /control/status.tmp /control/status
+          else
+            echo unknown > /control/status.tmp && mv /control/status.tmp /control/status
+          fi
+          sleep 5
+        done &
+
+        echo "mc-control: watching /control/queue for $$TARGET"
+        while :; do
+          for f in /control/queue/*.cmd; do
+            [ -e "$$f" ] || continue
+            cmd=$$(cat "$$f" 2>/dev/null || echo "")
+            rm -f "$$f"
+            case "$$cmd" in
+              start)   echo "mc-control: start";   docker start "$$TARGET"   || true ;;
+              stop)    echo "mc-control: stop";    docker stop "$$TARGET"    || true ;;
+              restart) echo "mc-control: restart"; docker restart "$$TARGET" || true ;;
+              *)       echo "mc-control: rejected unknown command" ;;
+            esac
+          done
+          sleep 1
+        done
 
   minecraft:
     image: itzg/minecraft-server:java21-jdk
@@ -63,3 +123,8 @@ services:
     stdin_open: true
     tty: true
     restart: unless-stopped
+
+# Shared spool between the API and the mc-control sidecar: the API writes
+# command files into /control/queue, the sidecar writes /control/status back.
+volumes:
+  mc-control:

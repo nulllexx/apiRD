@@ -1,6 +1,6 @@
 use actix_web::{web, HttpRequest, HttpResponse};
-use std::process::Stdio;
 
+use crate::console::control;
 use crate::error::AppError;
 use crate::middleware::api_key_auth;
 use crate::middleware::auth::AuthUser;
@@ -131,18 +131,14 @@ async fn server_running(
 ) -> Result<HttpResponse, AppError> {
     require_api_key(&req, &state).await?;
 
-    let output = tokio::process::Command::new("docker")
-        .args(["ps", "--filter", "name=minecraft", "--format", "{{.Names}}"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .map_err(|e| AppError::Internal(format!("Error checking server status: {}", e)))?;
+    // Read the state the `mc-control` sidecar last observed. This container has
+    // no Docker socket by design, so it cannot ask the daemon itself.
+    let server_state = control::status(&state.config.control_dir).await;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let is_running = stdout.trim() == "minecraft";
-
-    Ok(HttpResponse::Ok().json(serde_json::json!({ "running": is_running })))
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "running": server_state == control::ServerState::Running,
+        "state": server_state.as_str(),
+    })))
 }
 
 /// POST /api/v1/restart — requires auth + API key
@@ -153,43 +149,19 @@ async fn restart_server(
 ) -> Result<HttpResponse, AppError> {
     require_api_key(&req, &state).await?;
 
-    // Stop
-    let stop = tokio::process::Command::new("docker")
-        .args(["compose", "down", "minecraft"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await;
+    // Queued for the `mc-control` sidecar rather than run here: the API holds
+    // no Docker socket, so an RCE in this process cannot reach the daemon.
+    control::request(&state.config.control_dir, control::PowerAction::Restart)
+        .await
+        .map_err(|e| {
+            log::error!("Error queueing restart for the sidecar: {}", e);
+            AppError::Internal("Failed to restart Minecraft server.".to_string())
+        })?;
 
-    if let Err(e) = stop {
-        log::error!("Error shutting down docker container: {}", e);
-        return Err(AppError::Internal(
-            "Failed to shut down Minecraft server.".to_string(),
-        ));
-    }
-
-    // Start
-    let start = tokio::process::Command::new("docker")
-        .args(["compose", "up", "-d", "minecraft"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await;
-
-    match start {
-        Ok(_) => {
-            log::info!("Server restarted successfully.");
-            Ok(HttpResponse::Ok().json(serde_json::json!({
-                "message": "Minecraft server restarted successfully."
-            })))
-        }
-        Err(e) => {
-            log::error!("Error starting server: {}", e);
-            Err(AppError::Internal(
-                "Failed to start Minecraft server.".to_string(),
-            ))
-        }
-    }
+    log::info!("Server restart queued.");
+    Ok(HttpResponse::Accepted().json(serde_json::json!({
+        "message": "Minecraft server restart queued."
+    })))
 }
 
 /// POST /api/v1/startserver — requires auth + API key
@@ -200,21 +172,16 @@ async fn start_server(
 ) -> Result<HttpResponse, AppError> {
     require_api_key(&req, &state).await?;
 
-    let output = tokio::process::Command::new("docker")
-        .args(["compose", "up", "-d", "minecraft"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
+    control::request(&state.config.control_dir, control::PowerAction::Start)
         .await
-        .map_err(|e| AppError::Internal(format!("Error starting server: {}", e)))?;
+        .map_err(|e| {
+            log::error!("Error queueing start for the sidecar: {}", e);
+            AppError::Internal("Failed to start Minecraft server.".to_string())
+        })?;
 
-    log::info!(
-        "Server started successfully: {}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-
-    Ok(HttpResponse::Ok().json(serde_json::json!({
-        "message": "Server started successfully"
+    log::info!("Server start queued.");
+    Ok(HttpResponse::Accepted().json(serde_json::json!({
+        "message": "Server start queued"
     })))
 }
 
