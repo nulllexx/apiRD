@@ -22,6 +22,16 @@ services:
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       # Console commands go over RCON directly (network_mode: host reaches the
       # published port below), so the API needs no Docker access for them.
+      #
+      # This MUST equal `rcon.password` in /home/useradmin/mcserver/server.properties.
+      # That file is authoritative: the minecraft service below overrides itzg's
+      # entrypoint with /data/start.sh, which bypasses the image's normal
+      # env-var -> server.properties handling, so setting RCON_PASSWORD there
+      # does not necessarily change what the server actually accepts.
+      #
+      # Supplied by the deploy workflow's .env (secrets.RCON_PASSWORD). If it is
+      # blank, compose warns and the console's command box reports
+      # "RCON is not configured on this server".
       - RCON_PASSWORD=${RCON_PASSWORD}
     ports:
       - "5000:5000"

@@ -150,10 +150,24 @@ jobs:
             DB_NAME=$DB_NAME
             GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
             GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+            RCON_PASSWORD=${{ secrets.RCON_PASSWORD }}
             EOF
 
+            # Not fatal: the API boots without RCON and only the console's
+            # command box is disabled. But compose interpolates this into BOTH
+            # the minecraft service (which sets the server's actual RCON
+            # password) and the api service, so a blank value silently leaves
+            # the console unable to run commands.
+            if [ -z "${{ secrets.RCON_PASSWORD }}" ]; then
+              echo "::warning::RCON_PASSWORD secret is empty — the admin console will not be able to run commands."
+            fi
+
             docker-compose pull api
-            docker-compose up -d api
+            # mc-control holds the Docker socket and services the console's
+            # start/stop/restart queue. It is not a compose dependency of api,
+            # so naming it explicitly is what keeps a deploy from leaving the
+            # power buttons pointing at a sidecar that was never created.
+            docker-compose up -d api mc-control
 
             # Verify the container actually came up with a non-empty DB_HOST.
             actual_host="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' api | grep '^DB_HOST=' | cut -d= -f2-)"
