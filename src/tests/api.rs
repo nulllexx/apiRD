@@ -48,6 +48,10 @@ async fn unknown_route_returns_404() {
 fn lazy_state() -> AppState {
     let config = AppConfig::build(|key| match key {
         "DB_HOST" => Some("127.0.0.1".to_string()),
+        // Port 1 has nothing on it. In CI, 127.0.0.1:3306 is the real MariaDB
+        // service, so a pool aimed there could quietly consume connections from
+        // the shared server if a regression ever made these routes query.
+        "DB_PORT" => Some("1".to_string()),
         "DB_USER" => Some("test".to_string()),
         "DB_PASSWORD" => Some("test".to_string()),
         "DB_NAME" => Some("apird_test".to_string()),
@@ -164,24 +168,66 @@ use tokio::sync::OnceCell;
 /// single initialized pool prevents concurrent `init_database` calls from
 /// racing on `CREATE UNIQUE INDEX`. Yields `None` (→ tests skip) when
 /// `TEST_DATABASE_URL` is unset.
-static SHARED_POOL: OnceCell<Option<MySqlPool>> = OnceCell::const_new();
+/// Guards `init_database` so the schema is created exactly once per test
+/// binary, preventing concurrent `CREATE UNIQUE INDEX` races.
+static SCHEMA_READY: OnceCell<bool> = OnceCell::const_new();
 
+/// Serializes the DB-backed tests.
+///
+/// They share a single database and the status endpoint writes to `meta`, so
+/// ordering them removes contention as a source of flakiness. There are only
+/// two, so the cost is negligible.
+static DB_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Prepare the schema once, then hand this test its **own** pool.
+///
+/// The pool deliberately is not shared between tests. `#[actix_web::test]`
+/// builds a fresh runtime per test, and a sqlx pool binds each connection --
+/// and the I/O driver polling its socket -- to the runtime that opened it. Once
+/// that runtime is dropped at the end of its test, any connection it left in
+/// the pool is inert: a later test acquires it, waits on a socket nobody is
+/// polling, and blocks until `acquire_timeout` expires. The handler then maps
+/// that to a generic 500, which is what made this look like a database fault
+/// rather than a harness one. Symptom to recognise: the pool reports idle
+/// connections available while `acquire()` times out anyway.
 async fn shared_pool() -> Option<MySqlPool> {
-    SHARED_POOL
+    let url = std::env::var("TEST_DATABASE_URL").ok()?;
+
+    // Uses a throwaway pool that is closed before returning, so no connection
+    // from this runtime is ever left behind for another test to pick up.
+    let ready = SCHEMA_READY
         .get_or_init(|| async {
-            let url = std::env::var("TEST_DATABASE_URL").ok()?;
+            let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
+                return false;
+            };
             let pool = MySqlPoolOptions::new()
-                .max_connections(5)
+                .max_connections(1)
+                .acquire_timeout(std::time::Duration::from_secs(10))
                 .connect(&url)
                 .await
                 .expect("connect to TEST_DATABASE_URL");
             api_rd::db::init_database(&pool)
                 .await
                 .expect("initialize test database");
-            Some(pool)
+            pool.close().await;
+            true
         })
+        .await;
+
+    if !ready {
+        return None;
+    }
+
+    let pool = MySqlPoolOptions::new()
+        .max_connections(5)
+        // Well under sqlx's 30s default: a pool that cannot hand out a
+        // connection should fail quickly and say so, not stall the suite.
+        .acquire_timeout(std::time::Duration::from_secs(10))
+        .connect(&url)
         .await
-        .clone()
+        .expect("connect to TEST_DATABASE_URL");
+
+    Some(pool)
 }
 
 /// Re-run each query `GET /api/status/status` performs, reporting which one
@@ -191,7 +237,13 @@ async fn shared_pool() -> Option<MySqlPool> {
 /// "Internal server error"}` and logs the detail through `log::error!`, which
 /// tests never see because no logger is installed. Probing the queries directly
 /// is the only way to turn that back into an actionable message.
+///
+/// Acquiring a connection is timed separately from running the query. Without
+/// that split, a pool that cannot hand out a connection is indistinguishable
+/// from a slow or blocked query -- and they have completely different causes.
 async fn diagnose_status_queries(pool: &MySqlPool) -> String {
+    use std::time::{Duration, Instant};
+
     let probes: [(&str, &str); 4] = [
         (
             "SELECT components",
@@ -206,30 +258,62 @@ async fn diagnose_status_queries(pool: &MySqlPool) -> String {
             "SELECT id, incident_id, status, status_text, CAST(status_updated_at AS CHAR) AS status_updated_at              FROM incident_status_history ORDER BY status_updated_at ASC",
         ),
         (
-            "UPSERT meta (write path — the only one unique to this endpoint)",
             // Deliberately the same row the handler upserts. Probing a
             // different key would take a different row lock and so miss the
-            // lock-wait case entirely — which is the whole point of the probe.
+            // lock-wait case entirely -- which is the whole point of the probe.
+            "UPSERT meta (write path -- the only one unique to this endpoint)",
             "INSERT INTO meta (`key`, `value`) VALUES ('generated_at', '__diag__') ON DUPLICATE KEY UPDATE `value` = '__diag__'",
         ),
     ];
 
-    let mut report = String::from("
+    let mut report = format!(
+        "
+Pool: size={} idle={} max={}
+
 Query-by-query probe:
-");
+",
+        pool.size(),
+        pool.num_idle(),
+        pool.options().get_max_connections(),
+    );
+
     for (label, sql) in probes {
-        // A lock wait would otherwise stall this diagnostic for as long as it
-        // stalled the handler, so cap it and report the stall as the finding.
-        let attempt = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            sqlx::query(sql).execute(pool),
+        let began = Instant::now();
+        let conn = tokio::time::timeout(Duration::from_secs(10), pool.acquire()).await;
+        let acquired_in = began.elapsed();
+
+        let mut conn = match conn {
+            Ok(Ok(conn)) => conn,
+            Ok(Err(e)) => {
+                report.push_str(&format!(
+                    "  {label}: COULD NOT ACQUIRE a connection after {acquired_in:.1?} -- {e}
+"
+                ));
+                continue;
+            }
+            Err(_) => {
+                report.push_str(&format!(
+                    "  {label}: ACQUIRE TIMED OUT after 10s (pool exhausted, or the server                      is not accepting connections -- not a problem with the query)
+"
+                ));
+                continue;
+            }
+        };
+
+        let began_query = Instant::now();
+        let ran = tokio::time::timeout(
+            Duration::from_secs(10),
+            sqlx::query(sql).execute(&mut *conn),
         )
         .await;
+        let ran_in = began_query.elapsed();
 
-        let outcome = match attempt {
-            Ok(Ok(_)) => "ok".to_string(),
-            Ok(Err(e)) => format!("FAILED -- {e}"),
-            Err(_) => "TIMED OUT after 10s (lock wait or unresponsive server)".to_string(),
+        let outcome = match ran {
+            Ok(Ok(_)) => format!("ok (acquire {acquired_in:.1?}, query {ran_in:.1?})"),
+            Ok(Err(e)) => format!("FAILED after {ran_in:.1?} -- {e}"),
+            Err(_) => format!(
+                "QUERY TIMED OUT after 10s (acquire took {acquired_in:.1?}) -- a lock or a                  genuinely slow query"
+            ),
         };
         report.push_str(&format!("  {label}: {outcome}
 "));
@@ -295,6 +379,9 @@ async fn status_endpoint_returns_seeded_components() {
         return;
     };
 
+    // Serialized against the other DB-backed test; see DB_TEST_LOCK.
+    let _serialized = DB_TEST_LOCK.lock().await;
+
     // Kept aside so the failure path can probe the database directly; the
     // handler's own pool is moved into the app.
     let probe_pool = pool.clone();
@@ -321,11 +408,15 @@ async fn status_endpoint_returns_seeded_components() {
         let probe = diagnose_status_queries(&probe_pool).await;
         panic!(
             "GET /api/status/status returned {status}; body: {body}{probe}
-A FAILED line means the test database has an older schema. init_database uses
-CREATE TABLE IF NOT EXISTS and will not reshape an existing table, so drop and
-recreate the test database.
-A TIMED OUT line means something else holds a row lock. Look for a stuck
-transaction with: SELECT * FROM information_schema.INNODB_TRX;"
+A FAILED line means the query itself was rejected -- usually an older schema in
+the test database. init_database uses CREATE TABLE IF NOT EXISTS and will not
+reshape an existing table, so drop and recreate it.
+An ACQUIRE line means the problem is the connection pool, not the query. If the
+pool reports idle connections while acquire still times out, those connections
+belong to a runtime that has already been dropped: #[actix_web::test] gives each
+test its own runtime, so a pool must never be shared across tests.
+A QUERY TIMED OUT line means a genuine lock. Look for a stuck transaction with:
+SELECT * FROM information_schema.INNODB_TRX;"
         );
     }
 
@@ -349,6 +440,9 @@ async fn incidents_endpoint_returns_json_array() {
         eprintln!("skipping incidents_endpoint_returns_json_array: TEST_DATABASE_URL not set");
         return;
     };
+
+    // Serialized against the other DB-backed test; see DB_TEST_LOCK.
+    let _serialized = DB_TEST_LOCK.lock().await;
 
     let app = test::init_service(
         App::new()
