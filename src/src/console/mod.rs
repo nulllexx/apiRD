@@ -11,6 +11,7 @@
 //! directly, while the parsing that actually goes wrong is not.
 
 pub mod control;
+pub mod inventory;
 pub mod players;
 pub mod presence;
 pub mod stats;

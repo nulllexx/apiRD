@@ -8,6 +8,7 @@ use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::console::control::{self, PowerAction};
+use crate::console::inventory::{self, InventoryError};
 use crate::console::players::{self, PlayerAction};
 use crate::console::stats::{self, STATS_MAX_AGE};
 use crate::console::{sse_frame, strip_ansi, LogSource};
@@ -254,6 +255,49 @@ async fn list_players(
     })))
 }
 
+/// GET /api/admin/console/players/{uuid}/inventory — what a player is carrying.
+///
+/// Served from the player's `playerdata` file rather than over RCON, so it
+/// answers for everyone who has ever joined and not just whoever is online
+/// right now. The trade is freshness: the server writes that file on autosave
+/// and on disconnect, so `savedAt` is part of the payload rather than a detail
+/// the caller has to know to ask about.
+async fn player_inventory(
+    state: web::Data<AppState>,
+    _admin: AdminUser,
+    path: web::Path<String>,
+) -> Result<HttpResponse, AppError> {
+    let uuid = path.into_inner().trim().to_ascii_lowercase();
+
+    // The UUID becomes a filename, so a value that could not name a player file
+    // is refused outright rather than cleaned up into one that could.
+    if !inventory::is_canonical_uuid(&uuid) {
+        return Err(AppError::BadRequest(
+            "That is not a valid player UUID".to_string(),
+        ));
+    }
+
+    let (snapshot, saved_at) =
+        inventory::load_snapshot(&state.config.server_properties_path, &uuid)
+            .await
+            .map_err(|e| match e {
+                InventoryError::Missing => AppError::NotFound(
+                    "This player has no saved data on the server yet".to_string(),
+                ),
+                InventoryError::Unreadable(why) => {
+                    log::error!("console: cannot read playerdata for {uuid}: {why}");
+                    AppError::Internal("Could not read this player's saved data".to_string())
+                }
+            })?;
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "uuid": uuid,
+        "savedAt": saved_at,
+        "items": snapshot.item_count(),
+        "inventory": snapshot,
+    })))
+}
+
 #[derive(Deserialize)]
 struct PlayerActionBody {
     player: String,
@@ -336,6 +380,9 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .route("/stats", web::get().to(server_stats))
             .route("/online", web::get().to(online_players))
             .route("/players", web::get().to(list_players))
+            // Three segments, so it cannot be swallowed by the two-segment
+            // `{action}` route below.
+            .route("/players/{uuid}/inventory", web::get().to(player_inventory))
             .route("/players/{action}", web::post().to(player_action))
             // Registered before the `{action}` catch-all so "status" is not
             // swallowed by it.

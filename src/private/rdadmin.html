@@ -658,6 +658,123 @@
         .copyBtn:hover { background: var(--accent-dim) !important; }
 
         .closeBtn { background: var(--bg-raised) !important; color: var(--text) !important; border: 1px solid var(--line) !important; }
+
+        /* Player inventory viewer */
+        #invOverlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(6, 8, 12, 0.72) !important;
+            backdrop-filter: blur(2px);
+            z-index: 1100;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        #invPanel {
+            background: var(--bg-panel) !important;
+            border: 1px solid var(--line) !important;
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            width: 100%;
+            max-width: 760px;
+            max-height: 88vh;
+            overflow-y: auto;
+            padding: 24px;
+        }
+
+        .inv-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .inv-head h3 {
+            margin: 0;
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: var(--text) !important;
+            text-transform: none;
+            letter-spacing: normal;
+        }
+        .inv-uuid {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.72rem;
+            color: var(--text-faint) !important;
+        }
+        .inv-head .closeBtn { margin-left: auto; padding: 6px 14px; cursor: pointer; border-radius: var(--radius-sm); }
+
+        .inv-meta { font-size: 0.82rem; color: var(--text-muted) !important; margin: 10px 0 0; line-height: 1.5; }
+        .inv-stale { color: var(--warn) !important; }
+
+        .inv-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 4px; }
+        .inv-chip {
+            font-size: 0.75rem;
+            padding: 3px 9px;
+            border-radius: 999px;
+            border: 1px solid var(--line) !important;
+            background: var(--bg-raised) !important;
+            color: var(--text-muted) !important;
+        }
+
+        .inv-section { margin-top: 20px; }
+        .inv-section h4 {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-faint) !important;
+            margin: 0 0 8px;
+            font-weight: 600;
+        }
+
+        .inv-grid { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 4px; }
+        .inv-grid.narrow { grid-template-columns: repeat(4, minmax(0, 1fr)); max-width: 300px; }
+        .inv-grid.single { grid-template-columns: repeat(1, minmax(0, 1fr)); max-width: 72px; }
+
+        .inv-worn { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start; }
+        .inv-worn > div { flex: 0 0 auto; }
+
+        .inv-slot {
+            position: relative;
+            aspect-ratio: 1 / 1;
+            border: 1px solid var(--line) !important;
+            border-radius: var(--radius-sm);
+            background: var(--bg) !important;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.68rem;
+            font-weight: 700;
+            letter-spacing: 0.03em;
+            color: var(--text-faint) !important;
+            overflow: hidden;
+        }
+        .inv-slot.filled {
+            background: var(--bg-raised) !important;
+            color: var(--text) !important;
+            cursor: help;
+        }
+        /* Enchanted gear is what a moderator is usually looking for, so it is
+           marked in the grid rather than only in the tooltip. */
+        .inv-slot.enchanted { border-color: var(--accent) !important; background: var(--accent-soft) !important; }
+        .inv-slot.selected { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+        .inv-count {
+            position: absolute;
+            right: 3px;
+            bottom: 1px;
+            font-size: 0.62rem;
+            font-weight: 700;
+            color: var(--text) !important;
+        }
+
+        .inv-boxes { margin: 0; padding: 0; list-style: none; font-size: 0.82rem; }
+        .inv-boxes li { padding: 6px 0; border-bottom: 1px solid var(--line-soft) !important; color: var(--text-muted) !important; }
+        .inv-boxes li:last-child { border-bottom: none; }
+        .inv-boxes strong { color: var(--text) !important; font-weight: 600; }
+
+        .inv-note { font-size: 0.85rem; color: var(--text-muted) !important; margin: 18px 0 0; }
+
+        @media (max-width: 640px) {
+            #invPanel { padding: 18px; }
+            .inv-slot { font-size: 0.6rem; }
+        }
         .closeBtn:hover { background: var(--bg-panel) !important; }
 
         /* Console */
@@ -1261,6 +1378,19 @@
         <h3 id="overlayTitle">Message</h3>
         <p id="overlayMessage"></p>
         <div id="overlayButtons"></div>
+    </div>
+</div>
+
+<!-- Player inventory viewer, filled in by openInventory() -->
+<div id="invOverlay">
+    <div id="invPanel" role="dialog" aria-modal="true" aria-labelledby="invTitle">
+        <div class="inv-head">
+            <h3 id="invTitle">Inventory</h3>
+            <span class="inv-uuid" id="invUuid"></span>
+            <button type="button" class="closeBtn" id="invClose">Close</button>
+        </div>
+        <p class="inv-meta" id="invMeta"></p>
+        <div id="invBody"></div>
     </div>
 </div>
 
@@ -2663,6 +2793,260 @@
         refreshOnline();
     }
 
+    /* ------------------------------------------------- Player inventory viewer */
+
+    const invOverlay = document.getElementById('invOverlay');
+    const invTitle = document.getElementById('invTitle');
+    const invUuid = document.getElementById('invUuid');
+    const invMeta = document.getElementById('invMeta');
+    const invBody = document.getElementById('invBody');
+
+    /* Slot layout, mirrored from console/inventory.rs so the two agree on how
+       many holes each grid has. */
+    const INV_SECTIONS = [
+        { key: 'main', title: 'Inventory', columns: 9 },
+        { key: 'hotbar', title: 'Hotbar', columns: 9 },
+        { key: 'enderChest', title: 'Ender chest', columns: 9 }
+    ];
+
+    /* No item textures ship with the panel, so a slot shows initials and leans
+       on the tooltip for the full story. */
+    function itemAbbreviation(name) {
+        const words = String(name || '').split(/[\s_]+/).filter(Boolean);
+        if (words.length > 1) {
+            return words.slice(0, 3).map(word => word[0]).join('').toUpperCase();
+        }
+        return (words[0] || '?').slice(0, 3).toUpperCase();
+    }
+
+    function itemTooltip(item) {
+        const lines = [`${item.count}x ${item.name}`];
+        if (item.customName) lines.push(`Named "${item.customName}"`);
+        lines.push(item.id);
+        if (typeof item.damage === 'number') lines.push(`Damage: ${item.damage}`);
+        (item.enchantments || []).forEach(enchant => {
+            lines.push(`${enchant.stored ? 'Stores' : 'Enchanted'}: ${enchant.name} ${enchant.level}`);
+        });
+        if (item.contents && item.contents.length) {
+            lines.push(`Contains ${item.contents.length} stack${item.contents.length === 1 ? '' : 's'}`);
+        }
+        return lines.join('\n');
+    }
+
+    function slotElement(item, selected) {
+        const slot = document.createElement('div');
+        slot.className = 'inv-slot';
+        if (selected) slot.classList.add('selected');
+
+        if (!item) {
+            slot.setAttribute('aria-label', 'Empty slot');
+            return slot;
+        }
+
+        slot.classList.add('filled');
+        if ((item.enchantments || []).length) slot.classList.add('enchanted');
+        slot.title = itemTooltip(item);
+
+        const label = document.createElement('span');
+        label.textContent = itemAbbreviation(item.customName || item.name);
+        slot.appendChild(label);
+
+        if (item.count > 1) {
+            const count = document.createElement('span');
+            count.className = 'inv-count';
+            count.textContent = item.count;
+            slot.appendChild(count);
+        }
+
+        return slot;
+    }
+
+    function slotGrid(items, columns, selectedIndex) {
+        const grid = document.createElement('div');
+        grid.className = 'inv-grid' + (columns === 4 ? ' narrow' : columns === 1 ? ' single' : '');
+        (items || []).forEach((item, index) => {
+            grid.appendChild(slotElement(item, index === selectedIndex));
+        });
+        return grid;
+    }
+
+    function invSection(title, node) {
+        const section = document.createElement('div');
+        section.className = 'inv-section';
+        const heading = document.createElement('h4');
+        heading.textContent = title;
+        section.appendChild(heading);
+        section.appendChild(node);
+        return section;
+    }
+
+    function invChip(text) {
+        const chip = document.createElement('span');
+        chip.className = 'inv-chip';
+        chip.textContent = text;
+        return chip;
+    }
+
+    function vitalChips(vitals) {
+        const row = document.createElement('div');
+        row.className = 'inv-chips';
+
+        if (typeof vitals.health === 'number') row.appendChild(invChip(`${Math.round(vitals.health * 10) / 10} / 20 health`));
+        if (typeof vitals.food === 'number') row.appendChild(invChip(`${vitals.food} / 20 food`));
+        if (typeof vitals.xpLevel === 'number') row.appendChild(invChip(`Level ${vitals.xpLevel}`));
+        if (vitals.gameMode) row.appendChild(invChip(vitals.gameMode));
+        if (vitals.dimension) row.appendChild(invChip(vitals.dimension.replace('minecraft:', '')));
+        if (vitals.position) row.appendChild(invChip(vitals.position.join(', ')));
+
+        return row.childElementCount ? row : null;
+    }
+
+    /* Shulker boxes and bundles are where the interesting loot is, and a
+       tooltip cannot nest, so their contents get spelled out under the grids. */
+    function containerList(snapshot) {
+        const found = [];
+        const collect = (items, label) => {
+            (items || []).forEach((item, index) => {
+                if (item && item.contents && item.contents.length) {
+                    found.push({ item, where: `${label} ${index + 1}` });
+                }
+            });
+        };
+
+        collect(snapshot.hotbar, 'Hotbar');
+        collect(snapshot.main, 'Inventory');
+        collect(snapshot.enderChest, 'Ender chest');
+        collect(snapshot.armour, 'Worn');
+        if (snapshot.offhand && snapshot.offhand.contents && snapshot.offhand.contents.length) {
+            found.push({ item: snapshot.offhand, where: 'Offhand' });
+        }
+
+        if (!found.length) return null;
+
+        const list = document.createElement('ul');
+        list.className = 'inv-boxes';
+
+        found.forEach(({ item, where }) => {
+            const entry = document.createElement('li');
+            const name = document.createElement('strong');
+            name.textContent = `${item.customName || item.name} (${where})`;
+            entry.appendChild(name);
+            entry.appendChild(document.createTextNode(
+                ' — ' + item.contents.map(inner => `${inner.count}x ${inner.customName || inner.name}`).join(', ')
+            ));
+            list.appendChild(entry);
+        });
+
+        return list;
+    }
+
+    function renderInventory(data, player) {
+        const snapshot = data.inventory || {};
+        invBody.innerHTML = '';
+
+        const chips = vitalChips(snapshot.vitals || {});
+        if (chips) invBody.appendChild(chips);
+
+        const worn = document.createElement('div');
+        worn.className = 'inv-worn';
+        const armour = document.createElement('div');
+        armour.appendChild(Object.assign(document.createElement('h4'), { textContent: 'Worn' }));
+        armour.appendChild(slotGrid(snapshot.armour, 4));
+        const offhand = document.createElement('div');
+        offhand.appendChild(Object.assign(document.createElement('h4'), { textContent: 'Offhand' }));
+        offhand.appendChild(slotGrid([snapshot.offhand || null], 1));
+        worn.appendChild(armour);
+        worn.appendChild(offhand);
+
+        const wornSection = document.createElement('div');
+        wornSection.className = 'inv-section';
+        wornSection.appendChild(worn);
+        invBody.appendChild(wornSection);
+
+        INV_SECTIONS.forEach(section => {
+            const selected = section.key === 'hotbar' && typeof snapshot.selectedSlot === 'number'
+                ? snapshot.selectedSlot
+                : -1;
+            invBody.appendChild(invSection(
+                section.title,
+                slotGrid(snapshot[section.key], section.columns, selected)
+            ));
+        });
+
+        const boxes = containerList(snapshot);
+        if (boxes) invBody.appendChild(invSection('Container contents', boxes));
+
+        const saved = data.savedAt ? relativeTime(data.savedAt) : 'an unknown time ago';
+        const parts = [`${data.items} stack${data.items === 1 ? '' : 's'} on record · saved ${saved}`];
+        invMeta.textContent = parts.join(' · ');
+        invMeta.title = data.savedAt || '';
+        invMeta.classList.remove('inv-stale');
+
+        // The server only writes this file on autosave and on disconnect, so
+        // for someone who is still playing it is a snapshot of the past. Saying
+        // so beats an operator acting on an inventory that has since changed.
+        if (player && player.online) {
+            invMeta.classList.add('inv-stale');
+            invMeta.textContent += ' — they are online, so this is their last save, not live';
+        }
+    }
+
+    function closeInventory() {
+        if (invOverlay) invOverlay.style.display = 'none';
+    }
+
+    async function openInventory(player) {
+        if (!invOverlay || !player || !player.uuid) return;
+
+        invTitle.textContent = playerLabel(player);
+        invUuid.textContent = player.uuid;
+        invMeta.textContent = 'Reading saved player data\u2026';
+        invMeta.classList.remove('inv-stale');
+        invBody.innerHTML = '';
+        invOverlay.style.display = 'flex';
+
+        try {
+            const response = await fetch(
+                '/api/admin/console/players/' + encodeURIComponent(player.uuid) + '/inventory',
+                { credentials: 'include' }
+            );
+            const data = await response.json();
+
+            if (!response.ok) {
+                invMeta.textContent = data.error || 'Could not read this player\u2019s inventory.';
+                return;
+            }
+
+            renderInventory(data, player);
+        } catch (err) {
+            console.error(err);
+            invMeta.textContent = 'Could not reach the server.';
+        }
+    }
+
+    if (invOverlay) {
+        invOverlay.addEventListener('click', (e) => {
+            if (e.target === invOverlay) closeInventory();
+        });
+    }
+    const invCloseBtn = document.getElementById('invClose');
+    if (invCloseBtn) invCloseBtn.addEventListener('click', closeInventory);
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeInventory();
+    });
+
+    /* Enabled on UUID rather than on name: the file is named by UUID, and a
+       row that has only ever been seen by name has nothing to read. */
+    function inventoryButton(player) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = 'Inventory';
+        button.disabled = !player.uuid;
+        if (!player.uuid) button.title = 'No UUID on record for this player yet';
+        button.addEventListener('click', () => openInventory(player));
+        return button;
+    }
+
     function renderPlayers() {
         if (!playerTable) return;
         const body = playerTable.querySelector('tbody');
@@ -2711,6 +3095,7 @@
 
             const actionCell = document.createElement('td');
             actionCell.dataset.label = 'Actions';
+            actionCell.appendChild(inventoryButton(player));
             actionCell.appendChild(actionButton(player, player.op ? 'De-op' : 'Op', player.op ? 'deop' : 'op'));
             if (player.online) {
                 actionCell.appendChild(actionButton(player, 'Kick', 'kick'));

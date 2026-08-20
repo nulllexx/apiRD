@@ -101,6 +101,9 @@ async fn console_routes_reject_anonymous_callers() {
         "/api/admin/console/stats",
         "/api/admin/console/online",
         "/api/admin/console/players",
+        // Reads a file off the server's disk, so it must be behind the
+        // admin gate exactly like everything else here.
+        "/api/admin/console/players/069a79f4-44e9-4726-a5be-fca90e38aaf5/inventory",
     ] {
         let req = test::TestRequest::get().uri(uri).to_request();
         let resp = test::call_service(&app, req).await;
