@@ -95,7 +95,9 @@ const MISS_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
 /// 4: added the server's own mod jars as a source.
 /// 5: resolve through the item's model file before falling back to guesses.
 /// 6: look inside NeoForge JarJar bundles, which adds whole namespaces.
-const CANDIDATE_GENERATION: u32 = 6;
+/// 7: keep a model's own textures when an ancestor model is missing, which is
+///    what finally made model-driven resolution work for vanilla items at all.
+const CANDIDATE_GENERATION: u32 = 7;
 
 #[derive(Debug)]
 pub enum TextureError {
@@ -239,15 +241,32 @@ impl TextureCache {
 
         for _ in 0..models::MAX_PARENT_DEPTH {
             let (model_ns, model_path) = models::model_asset_path(&location);
-            let raw = self.read_asset(&model_ns, &model_path).await?;
-            let json = String::from_utf8(raw).ok()?;
-            let model = models::parse_model(&json)?;
+
+            // A parent that cannot be read stops the walk but does NOT fail it.
+            //
+            // The child's own `textures` block is the answer; ancestors only
+            // supply slots the child left unset. Bailing out here instead used
+            // to discard a perfectly good answer already in `merged`, and it did
+            // so for practically every vanilla item: the chain runs
+            // item/<name> -> item/generated -> builtin/generated, and that last
+            // one exists as no file. tipped_arrow names its texture correctly as
+            // `tipped_arrow_head` and was still thrown away one hop later.
+            let Some(raw) = self.read_asset(&model_ns, &model_path).await else {
+                break;
+            };
+            let Ok(json) = String::from_utf8(raw) else {
+                break;
+            };
+            let Some(model) = models::parse_model(&json) else {
+                break;
+            };
 
             models::merge_textures(&mut merged, model.textures);
 
             match model.parent {
-                Some(parent) => location = parent,
-                None => break,
+                // Never chase a hardcoded model: it is always a wasted request.
+                Some(parent) if !models::is_builtin(&parent) => location = parent,
+                _ => break,
             }
         }
 

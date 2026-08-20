@@ -23,7 +23,16 @@ request  ->  cache hit?              <- this tool fills the cache
 
 ## Running it
 
-Build once:
+**On the server**, do not build — there is no repo checkout there, only
+`docker-compose.yml`. CI publishes the image, so pull it and use that name:
+
+```sh
+IMG=ghcr.io/<owner>/apird-item-icons:latest
+docker pull "$IMG"
+```
+
+Substitute `$IMG` for `item-icons` in the commands below. Building locally is
+for a machine with the repo checked out:
 
 ```sh
 docker build -t item-icons tools/item-icons

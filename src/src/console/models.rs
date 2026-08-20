@@ -81,6 +81,18 @@ pub fn model_asset_path(location: &str) -> (String, String) {
     (namespace, format!("models/{path}.json"))
 }
 
+/// Whether a parent reference names one of the game's hardcoded models.
+///
+/// `builtin/generated` and `builtin/entity` are implemented in the game's own
+/// code and exist as no file anywhere, so following them is a guaranteed miss.
+/// This matters more than it sounds: nearly every vanilla item model inherits
+/// from `item/generated`, whose own parent is `builtin/generated`, so a walk
+/// that does not stop here ends every single vanilla lookup on a failed fetch.
+pub fn is_builtin(location: &str) -> bool {
+    let (_, path) = split_location(location);
+    path.starts_with("builtin/")
+}
+
 /// The namespace and `textures/`-relative filename a texture location names.
 ///
 /// Returned in the same shape the texture lookup already uses for its guesses,
@@ -347,5 +359,58 @@ mod tests {
     fn nothing_to_pick_is_none() {
         assert_eq!(pick_texture(&HashMap::new()), None);
         assert_eq!(pick_texture(&textures(&[("layer0", "")])), None);
+    }
+}
+
+#[cfg(test)]
+mod builtin_tests {
+    use super::*;
+
+    #[test]
+    fn builtin_parents_are_recognised() {
+        // The two the game implements in code. Following either is always a
+        // wasted request that ends in a 404.
+        assert!(is_builtin("builtin/generated"));
+        assert!(is_builtin("builtin/entity"));
+        assert!(is_builtin("minecraft:builtin/generated"));
+    }
+
+    #[test]
+    fn ordinary_parents_are_not_builtin() {
+        assert!(!is_builtin("item/generated"));
+        assert!(!is_builtin("minecraft:item/generated"));
+        assert!(!is_builtin("create:block/shaft"));
+        // Not a prefix match on the bare word: a mod may legitimately ship a
+        // model under a directory that merely starts with these letters.
+        assert!(!is_builtin("item/builtin_looking_thing"));
+    }
+
+    /// The exact chain that made every vanilla item fall back to guesswork.
+    ///
+    /// tipped_arrow names its texture correctly, but its parent chain reaches
+    /// builtin/generated, which exists as no file. Keeping the child's textures
+    /// when the walk stops is what makes the right answer survive.
+    #[test]
+    fn child_textures_survive_a_missing_ancestor() {
+        let child = parse_model(
+            r#"{"parent":"item/generated",
+                "textures":{"layer0":"item/tipped_arrow_head",
+                            "layer1":"item/tipped_arrow_base"}}"#,
+        )
+        .expect("child model parses");
+
+        let mut merged = HashMap::new();
+        merge_textures(&mut merged, child.textures);
+
+        // item/generated carries no textures, and its own parent
+        // (builtin/generated) is unreachable -- so the walk stops here.
+        assert_eq!(child.parent.as_deref(), Some("item/generated"));
+
+        let picked = pick_texture(&merged).expect("layer0 is chosen");
+        assert_eq!(picked, "item/tipped_arrow_head");
+        assert_eq!(
+            texture_candidate(&picked),
+            ("minecraft".to_string(), "item/tipped_arrow_head.png".to_string())
+        );
     }
 }
