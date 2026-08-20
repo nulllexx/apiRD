@@ -88,8 +88,30 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # The icon renderer ships as its own image so PHP and ImageMagick stay
-      # out of the internet-facing API container, which never renders anything.
+  # Built in its own job on purpose. The icon renderer is a nicety; the API is
+  # the product. Wiring it into build-and-push meant a broken renderer build
+  # blocked the API from deploying at all, which is exactly what happened the
+  # first time this shipped.
+  build-icons:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Extract metadata for the item-icons image
         id: meta-icons
         uses: docker/metadata-action@v5
@@ -184,12 +206,12 @@ jobs:
               echo "::warning::RCON_PASSWORD secret is empty — the admin console will not be able to run commands."
             fi
 
-            docker-compose pull api item-icons
+            docker-compose pull api
             # mc-control holds the Docker socket and services the console's
             # start/stop/restart queue. It is not a compose dependency of api,
             # so naming it explicitly is what keeps a deploy from leaving the
             # power buttons pointing at a sidecar that was never created.
-            docker-compose up -d api mc-control item-icons
+            docker-compose up -d api mc-control
 
             # Verify the container actually came up with a non-empty DB_HOST.
             actual_host="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' api | grep '^DB_HOST=' | cut -d= -f2-)"
@@ -197,6 +219,15 @@ jobs:
               echo "::error::api container started with an empty DB_HOST — check the compose .env interpolation."
               docker logout ghcr.io
               exit 1
+            fi
+
+            # Icons last, and tolerantly. The renderer is optional — without it
+            # the panel falls back to its own texture lookup — so a missing or
+            # broken image must never take the API down with it.
+            if docker-compose pull item-icons && docker-compose up -d item-icons; then
+              echo "item-icons is running"
+            else
+              echo "::warning::item-icons could not be started; the panel falls back to its own texture lookup"
             fi
 
             docker logout ghcr.io
