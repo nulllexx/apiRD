@@ -11,7 +11,7 @@ use crate::console::control::{self, PowerAction};
 use crate::console::{sse_frame, strip_ansi, LogSource};
 use crate::error::AppError;
 use crate::middleware::admin_auth::AdminUser;
-use crate::rcon::{self, RconError};
+use crate::rcon::RconError;
 use crate::AppState;
 
 /// Idle gap after which a comment frame is emitted. Keeps intermediaries from
@@ -86,13 +86,7 @@ async fn run_command(
     // is admin-only, and operators need the full command set.
     log::info!("console command by {}: {}", admin.username, command);
 
-    let output = rcon::execute(
-        &state.config.rcon_address,
-        &state.config.rcon_password,
-        &command,
-    )
-    .await
-    .map_err(|e| {
+    let output = state.rcon.execute(&command).await.map_err(|e| {
         log::error!("console: RCON command failed: {}", e);
         match e {
             // Distinguished from a transient failure so an operator can tell

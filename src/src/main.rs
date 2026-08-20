@@ -32,6 +32,11 @@ async fn main() -> std::io::Result<()> {
         player_count: Arc::new(RwLock::new(0)),
         max_players: Arc::new(RwLock::new(20)),
         console: console::Consoles::new(config.console_backlog_lines),
+        // One connection reused across commands; see RconClient for why.
+        rcon: api_rd::rcon::RconClient::new(
+            config.rcon_address.clone(),
+            config.rcon_password.clone(),
+        ),
     };
 
     // Spawn auto-unban background task

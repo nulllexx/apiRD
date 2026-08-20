@@ -1,8 +1,21 @@
+//! Minimal RCON client for the Minecraft server.
+//!
+//! Replaces shelling out to `docker exec … rcon-cli`, which required handing
+//! the API container the Docker socket — root-equivalent access to the host.
+//! Talking RCON directly scopes command execution to the game server itself.
+//!
+//! Protocol (Source RCON): every packet is
+//! `i32 length | i32 request_id | i32 type | body NUL | NUL`, all little-endian,
+//! where `length` counts everything after itself.
+
 use std::io;
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::sync::Mutex;
 
 /// Client -> server: authenticate.
 const TYPE_AUTH: i32 = 3;
@@ -22,6 +35,15 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long to wait for further packets once a response has been received.
 const DRAIN_TIMEOUT: Duration = Duration::from_millis(300);
+
+/// Minecraft splits an RCON response into 4096-byte chunks, so a first packet
+/// comfortably under that cannot have been split. Checking this lets the common
+/// case return immediately instead of always paying the drain window.
+const SPLIT_THRESHOLD: usize = 4000;
+
+/// Upper bound on packets discarded while looking for the reply to the current
+/// request, so a confused peer cannot keep us reading forever.
+const MAX_SKIPPED_PACKETS: u32 = 16;
 
 #[derive(Debug)]
 pub enum RconError {
@@ -83,22 +105,96 @@ pub fn decode_payload(payload: &[u8]) -> Result<(i32, i32, String), RconError> {
     Ok((request_id, packet_type, body))
 }
 
-/// Connect, authenticate, run one command and return its output.
-pub async fn execute(address: &str, password: &str, command: &str) -> Result<String, RconError> {
-    if password.is_empty() {
-        return Err(RconError::NotConfigured);
+/// A long-lived, authenticated RCON connection.
+///
+/// The connection is held open rather than dialled per command. Minecraft logs
+/// a client thread starting and shutting down for *every* connection, and those
+/// lines land in `latest.log` — which the admin console streams — so a
+/// connect-per-command design has the console spamming itself two lines deep
+/// each time an operator runs anything.
+///
+/// The trade is state that can go stale: the server restarts, the socket dies
+/// while idle, and the next command inherits a dead connection. That is what
+/// the single retry in [`RconClient::execute`] exists for.
+pub struct RconClient {
+    address: String,
+    password: String,
+    /// RCON is one request/response at a time per socket, so concurrent
+    /// commands have to serialize rather than interleave on the same stream.
+    conn: Mutex<Option<TcpStream>>,
+    next_id: AtomicI32,
+}
+
+impl RconClient {
+    pub fn new(address: String, password: String) -> Arc<Self> {
+        Arc::new(Self {
+            address,
+            password,
+            conn: Mutex::new(None),
+            next_id: AtomicI32::new(10),
+        })
     }
 
+    /// Whether a password is configured at all. Without one the console still
+    /// streams logs; only the command box is unusable.
+    pub fn is_configured(&self) -> bool {
+        !self.password.is_empty()
+    }
+
+    /// Run one command, reusing the open connection when there is one.
+    ///
+    /// Attempts at most twice. The first attempt can fail because a connection
+    /// that was healthy when stored died while idle — a server restart being
+    /// the obvious way — and reconnecting resolves that transparently. A second
+    /// failure is reported rather than retried, so a genuinely broken server
+    /// does not turn one command into an unbounded reconnect loop.
+    pub async fn execute(&self, command: &str) -> Result<String, RconError> {
+        if !self.is_configured() {
+            return Err(RconError::NotConfigured);
+        }
+
+        let mut held = self.conn.lock().await;
+        let mut last_err: Option<RconError> = None;
+
+        for _attempt in 0..2 {
+            if held.is_none() {
+                match connect_and_auth(&self.address, &self.password).await {
+                    Ok(stream) => *held = Some(stream),
+                    // Neither a rejected password nor a refused connection
+                    // becomes true on an immediate retry.
+                    Err(e) => return Err(e),
+                }
+            }
+
+            let stream = held.as_mut().expect("connected just above");
+            let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+
+            match run_command(stream, id, command).await {
+                Ok(output) => return Ok(output),
+                Err(e) => {
+                    // However this failed, the socket now sits at an unknown
+                    // point in the protocol. Drop it rather than leave a
+                    // half-consumed response for the next command to read.
+                    *held = None;
+                    last_err = Some(e);
+                }
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| RconError::Io("command failed".to_string())))
+    }
+}
+
+async fn connect_and_auth(address: &str, password: &str) -> Result<TcpStream, RconError> {
     let mut stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(address))
         .await
         .map_err(|_| RconError::Connect("timed out".to_string()))?
         .map_err(|e| RconError::Connect(e.to_string()))?;
 
-    // Auth and command use distinct ids so a stray packet cannot be mistaken
-    // for the reply we are waiting on.
-    const AUTH_ID: i32 = 1;
-    const COMMAND_ID: i32 = 2;
+    // Small, latency-sensitive packets; Nagle would sit on them.
+    let _ = stream.set_nodelay(true);
 
+    const AUTH_ID: i32 = 1;
     write_packet(&mut stream, AUTH_ID, TYPE_AUTH, password).await?;
 
     // Some servers emit an empty RESPONSE_VALUE before the auth result; the
@@ -114,19 +210,43 @@ pub async fn execute(address: &str, password: &str, command: &str) -> Result<Str
         break;
     }
 
-    write_packet(&mut stream, COMMAND_ID, TYPE_COMMAND, command).await?;
+    Ok(stream)
+}
 
-    let (_, _, mut output) = read_packet(&mut stream).await?;
+async fn run_command(stream: &mut TcpStream, id: i32, command: &str) -> Result<String, RconError> {
+    write_packet(stream, id, TYPE_COMMAND, command).await?;
 
-    // Responses over ~4KB arrive split with no end marker, so collect whatever
-    // follows within a short window and treat silence as the end.
-    while let Ok(Ok((_, packet_type, chunk))) =
-        tokio::time::timeout(DRAIN_TIMEOUT, read_packet(&mut stream)).await
-    {
-        if packet_type != TYPE_RESPONSE {
+    // Skip anything that is not the reply to *this* request. On a reused
+    // connection an earlier command that timed out can leave its response
+    // sitting in the socket, and returning that would show an operator the
+    // answer to a question they did not ask.
+    let mut output = String::new();
+    let mut skipped = 0;
+    loop {
+        let (request_id, _, body) = read_packet(stream).await?;
+        if request_id == id {
+            output.push_str(&body);
             break;
         }
-        output.push_str(&chunk);
+        skipped += 1;
+        if skipped > MAX_SKIPPED_PACKETS {
+            return Err(RconError::Protocol(
+                "no response matching the request id".to_string(),
+            ));
+        }
+    }
+
+    // Only a response big enough to have been split is worth waiting on;
+    // otherwise every command would pay the drain window in latency.
+    if output.len() >= SPLIT_THRESHOLD {
+        while let Ok(Ok((request_id, packet_type, chunk))) =
+            tokio::time::timeout(DRAIN_TIMEOUT, read_packet(stream)).await
+        {
+            if request_id != id || packet_type != TYPE_RESPONSE {
+                break;
+            }
+            output.push_str(&chunk);
+        }
     }
 
     Ok(output)
@@ -175,6 +295,7 @@ async fn read_exact(stream: &mut TcpStream, buf: &mut [u8]) -> Result<(), RconEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::net::TcpListener;
 
     #[test]
     fn encodes_the_documented_frame_layout() {
@@ -231,56 +352,110 @@ mod tests {
 
     #[tokio::test]
     async fn empty_password_is_refused_without_dialing() {
-        // Port 1 would refuse instantly anyway, but the point is that the
+        // Port 1 would refuse instantly anyway; the point is that the
         // configuration check happens before any network access.
-        let err = execute("127.0.0.1:1", "", "list").await.unwrap_err();
-        assert!(matches!(err, RconError::NotConfigured));
+        let client = RconClient::new("127.0.0.1:1".to_string(), String::new());
+        assert!(!client.is_configured());
+        assert!(matches!(
+            client.execute("list").await,
+            Err(RconError::NotConfigured)
+        ));
     }
 
-    /// Drives the real client against a scripted server, which is the only way
-    /// to cover the auth handshake and multi-packet drain end to end.
+    async fn read_one(socket: &mut TcpStream) -> (i32, i32, String) {
+        let mut len = [0u8; 4];
+        socket.read_exact(&mut len).await.unwrap();
+        let mut payload = vec![0u8; i32::from_le_bytes(len) as usize];
+        socket.read_exact(&mut payload).await.unwrap();
+        decode_payload(&payload).unwrap()
+    }
+
+    /// Accept one connection, complete the auth handshake, and return it.
+    async fn accept_and_auth(listener: &TcpListener) -> TcpStream {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let (id, kind, _) = read_one(&mut socket).await;
+        assert_eq!(kind, TYPE_AUTH);
+        socket
+            .write_all(&encode_packet(id, TYPE_COMMAND, ""))
+            .await
+            .unwrap();
+        socket
+    }
+
+    /// Read one command and answer it, echoing the client's request id.
+    async fn serve_one_command(socket: &mut TcpStream, reply: &str) -> String {
+        let (id, kind, body) = read_one(socket).await;
+        assert_eq!(kind, TYPE_COMMAND);
+        socket
+            .write_all(&encode_packet(id, TYPE_RESPONSE, reply))
+            .await
+            .unwrap();
+        body
+    }
+
     #[tokio::test]
     async fn executes_a_command_against_a_scripted_server() {
-        use tokio::net::TcpListener;
-
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap().to_string();
 
         let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-
-            // Auth request.
-            let (id, kind, body) = read_one(&mut socket).await;
-            assert_eq!(kind, TYPE_AUTH);
-            assert_eq!(body, "s3cret");
-            socket
-                .write_all(&encode_packet(id, TYPE_COMMAND, ""))
-                .await
-                .unwrap();
-
-            // Command request, answered in two chunks to exercise the drain.
-            let (id, kind, body) = read_one(&mut socket).await;
-            assert_eq!(kind, TYPE_COMMAND);
-            assert_eq!(body, "list");
-            socket
-                .write_all(&encode_packet(id, TYPE_RESPONSE, "There are 2 "))
-                .await
-                .unwrap();
-            socket
-                .write_all(&encode_packet(id, TYPE_RESPONSE, "players online"))
-                .await
-                .unwrap();
+            let mut socket = accept_and_auth(&listener).await;
+            assert_eq!(serve_one_command(&mut socket, "There are 2 players").await, "list");
         });
 
-        let output = execute(&addr, "s3cret", "list").await.unwrap();
-        assert_eq!(output, "There are 2 players online");
+        let client = RconClient::new(addr, "s3cret".to_string());
+        assert_eq!(client.execute("list").await.unwrap(), "There are 2 players");
+        server.await.unwrap();
+    }
+
+    /// The whole point of holding the connection: Minecraft logs a client
+    /// thread per connection, and those lines show up in the console we stream.
+    #[tokio::test]
+    async fn reuses_one_connection_across_commands() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+
+        let server = tokio::spawn(async move {
+            // Exactly one accept. A client that reconnects per command would
+            // hang here on the second command instead of being served.
+            let mut socket = accept_and_auth(&listener).await;
+            serve_one_command(&mut socket, "first").await;
+            serve_one_command(&mut socket, "second").await;
+            serve_one_command(&mut socket, "third").await;
+        });
+
+        let client = RconClient::new(addr, "s3cret".to_string());
+        assert_eq!(client.execute("a").await.unwrap(), "first");
+        assert_eq!(client.execute("b").await.unwrap(), "second");
+        assert_eq!(client.execute("c").await.unwrap(), "third");
+        server.await.unwrap();
+    }
+
+    /// A held connection dies whenever the server restarts, which is routine
+    /// here — the console has a restart button.
+    #[tokio::test]
+    async fn reconnects_after_the_server_drops_the_connection() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+
+        let server = tokio::spawn(async move {
+            let mut socket = accept_and_auth(&listener).await;
+            serve_one_command(&mut socket, "before restart").await;
+            drop(socket); // the "restart"
+
+            let mut socket = accept_and_auth(&listener).await;
+            serve_one_command(&mut socket, "after restart").await;
+        });
+
+        let client = RconClient::new(addr, "s3cret".to_string());
+        assert_eq!(client.execute("a").await.unwrap(), "before restart");
+        // Transparent to the caller: no error surfaces for the dead socket.
+        assert_eq!(client.execute("b").await.unwrap(), "after restart");
         server.await.unwrap();
     }
 
     #[tokio::test]
     async fn surfaces_a_rejected_password() {
-        use tokio::net::TcpListener;
-
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap().to_string();
 
@@ -291,19 +466,44 @@ mod tests {
                 .write_all(&encode_packet(AUTH_FAILED, TYPE_COMMAND, ""))
                 .await
                 .unwrap();
+            // A second accept would mean the client retried a bad password.
+            let second = tokio::time::timeout(Duration::from_millis(400), listener.accept()).await;
+            assert!(second.is_err(), "must not retry a rejected password");
         });
 
-        assert!(matches!(
-            execute(&addr, "wrong", "list").await,
-            Err(RconError::Auth)
-        ));
+        let client = RconClient::new(addr, "wrong".to_string());
+        assert!(matches!(client.execute("list").await, Err(RconError::Auth)));
+        server.await.unwrap();
+    }
+
+    /// A leftover reply from an earlier, abandoned command must not be handed
+    /// back as this command's output.
+    #[tokio::test]
+    async fn ignores_a_stale_reply_left_on_the_connection() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+
+        let server = tokio::spawn(async move {
+            let mut socket = accept_and_auth(&listener).await;
+            let (id, _, _) = read_one(&mut socket).await;
+            // Answer with a stale id first, then the real reply.
+            socket
+                .write_all(&encode_packet(id - 999, TYPE_RESPONSE, "STALE"))
+                .await
+                .unwrap();
+            socket
+                .write_all(&encode_packet(id, TYPE_RESPONSE, "fresh"))
+                .await
+                .unwrap();
+        });
+
+        let client = RconClient::new(addr, "s3cret".to_string());
+        assert_eq!(client.execute("list").await.unwrap(), "fresh");
         server.await.unwrap();
     }
 
     #[tokio::test]
     async fn refuses_an_absurd_declared_length() {
-        use tokio::net::TcpListener;
-
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap().to_string();
 
@@ -312,23 +512,64 @@ mod tests {
             let _ = read_one(&mut socket).await;
             // A hostile peer claiming a 1GB frame must not cause a 1GB alloc.
             socket.write_all(&1_000_000_000i32.to_le_bytes()).await.ok();
-            // Hold the connection open so the client fails on the length check
-            // rather than on the socket closing.
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            tokio::time::sleep(Duration::from_millis(800)).await;
         });
 
+        let client = RconClient::new(addr, "pw".to_string());
         assert!(matches!(
-            execute(&addr, "pw", "list").await,
+            client.execute("list").await,
             Err(RconError::Protocol(_))
         ));
         server.abort();
     }
 
-    async fn read_one(socket: &mut TcpStream) -> (i32, i32, String) {
-        let mut len = [0u8; 4];
-        socket.read_exact(&mut len).await.unwrap();
-        let mut payload = vec![0u8; i32::from_le_bytes(len) as usize];
-        socket.read_exact(&mut payload).await.unwrap();
-        decode_payload(&payload).unwrap()
+    /// Short replies must not pay the drain window, or every command an
+    /// operator types would sit for DRAIN_TIMEOUT before showing anything.
+    #[tokio::test]
+    async fn a_short_reply_returns_without_waiting_out_the_drain() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+
+        let server = tokio::spawn(async move {
+            let mut socket = accept_and_auth(&listener).await;
+            serve_one_command(&mut socket, "short").await;
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        });
+
+        let client = RconClient::new(addr, "s3cret".to_string());
+        let began = std::time::Instant::now();
+        assert_eq!(client.execute("list").await.unwrap(), "short");
+        assert!(
+            began.elapsed() < DRAIN_TIMEOUT,
+            "returned in {:?}, which means it waited out the drain",
+            began.elapsed()
+        );
+        server.abort();
+    }
+
+    /// A reply at the split threshold still gets its continuation collected.
+    #[tokio::test]
+    async fn collects_a_split_reply() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let head = "x".repeat(SPLIT_THRESHOLD);
+        let expected = format!("{head}tail");
+
+        let server = tokio::spawn(async move {
+            let mut socket = accept_and_auth(&listener).await;
+            let (id, _, _) = read_one(&mut socket).await;
+            socket
+                .write_all(&encode_packet(id, TYPE_RESPONSE, &"x".repeat(SPLIT_THRESHOLD)))
+                .await
+                .unwrap();
+            socket
+                .write_all(&encode_packet(id, TYPE_RESPONSE, "tail"))
+                .await
+                .unwrap();
+        });
+
+        let client = RconClient::new(addr, "s3cret".to_string());
+        assert_eq!(client.execute("list").await.unwrap(), expected);
+        server.await.unwrap();
     }
 }

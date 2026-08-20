@@ -20,6 +20,7 @@ pub mod routes;
 
 use config::AppConfig;
 use console::Consoles;
+use rcon::RconClient;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -29,6 +30,8 @@ pub struct AppState {
     pub max_players: Arc<RwLock<u32>>,
     /// Fan-out points for the two live log streams, fed by the tail tasks.
     pub console: Arc<Consoles>,
+    /// Long-lived RCON connection shared by every console command.
+    pub rcon: Arc<RconClient>,
 }
 
 /// Registers every HTTP route the server exposes (the `/api` scope plus the

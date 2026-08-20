@@ -71,6 +71,9 @@ fn lazy_state() -> AppState {
         player_count: Arc::new(RwLock::new(0)),
         max_players: Arc::new(RwLock::new(20)),
         console: api_rd::console::Consoles::new(64),
+        // Points at a dead port; the console routes under test are
+        // rejected at the auth layer long before RCON is reached.
+        rcon: api_rd::rcon::RconClient::new("127.0.0.1:1".to_string(), String::new()),
     }
 }
 
@@ -164,10 +167,6 @@ use sqlx::MySqlPool;
 use std::sync::{Arc, RwLock};
 use tokio::sync::OnceCell;
 
-/// Connect + migrate exactly ONCE across every test in this binary. Sharing a
-/// single initialized pool prevents concurrent `init_database` calls from
-/// racing on `CREATE UNIQUE INDEX`. Yields `None` (→ tests skip) when
-/// `TEST_DATABASE_URL` is unset.
 /// Guards `init_database` so the schema is created exactly once per test
 /// binary, preventing concurrent `CREATE UNIQUE INDEX` races.
 static SCHEMA_READY: OnceCell<bool> = OnceCell::const_new();
@@ -369,6 +368,9 @@ fn test_state(pool: MySqlPool) -> AppState {
         // No tailer is spawned in tests, so this stays empty — the console
         // routes under test are rejected at the auth layer before reaching it.
         console: api_rd::console::Consoles::new(64),
+        // Points at a dead port; the console routes under test are
+        // rejected at the auth layer long before RCON is reached.
+        rcon: api_rd::rcon::RconClient::new("127.0.0.1:1".to_string(), String::new()),
     }
 }
 
