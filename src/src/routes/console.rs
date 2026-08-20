@@ -9,6 +9,7 @@ use tokio::sync::broadcast::error::RecvError;
 
 use crate::console::control::{self, PowerAction};
 use crate::console::inventory::{self, InventoryError};
+use crate::console::textures::TextureError;
 use crate::console::players::{self, PlayerAction};
 use crate::console::stats::{self, STATS_MAX_AGE};
 use crate::console::{sse_frame, strip_ansi, LogSource};
@@ -255,17 +256,62 @@ async fn list_players(
     })))
 }
 
+#[derive(Deserialize)]
+struct InventoryQuery {
+    /// `?live=<name>` asks the server itself for this player's inventory, using
+    /// the name because `/data get` selects by name rather than by UUID. The
+    /// UUID in the path still identifies whose file to fall back to.
+    live: Option<String>,
+}
+
+/// Ask the running server for one player's live inventory.
+///
+/// Returns `Ok(None)` when the server answered but had nothing usable — the
+/// player logged off between the roster load and this request being the normal
+/// way that happens — so the caller can fall back to the saved file rather than
+/// report a failure the operator can do nothing about.
+async fn live_inventory(
+    state: &AppState,
+    player: &str,
+) -> Result<Option<inventory::PlayerSnapshot>, String> {
+    if !state.rcon.is_configured() {
+        return Err("RCON is not configured on this server".to_string());
+    }
+
+    let mut replies: Vec<(&str, String)> = Vec::new();
+    for path in inventory::LIVE_PATHS {
+        let Some(command) = inventory::live_command(player, path) else {
+            return Err("That is not a valid Minecraft username".to_string());
+        };
+
+        match state.rcon.execute(&command).await {
+            Ok(output) => replies.push((path, output)),
+            // One failed path is survivable; a dead connection is not, and
+            // retrying the remaining three would just wait out three timeouts.
+            Err(e) => return Err(e.user_message()),
+        }
+    }
+
+    let root = inventory::live_root(&replies);
+    if !inventory::live_root_is_usable(&root) {
+        return Ok(None);
+    }
+
+    Ok(Some(inventory::snapshot_from_root(&root)))
+}
+
 /// GET /api/admin/console/players/{uuid}/inventory — what a player is carrying.
 ///
-/// Served from the player's `playerdata` file rather than over RCON, so it
-/// answers for everyone who has ever joined and not just whoever is online
-/// right now. The trade is freshness: the server writes that file on autosave
-/// and on disconnect, so `savedAt` is part of the payload rather than a detail
-/// the caller has to know to ask about.
+/// Two sources, and the response says which one answered. `?live=<name>` reads
+/// the player out of the running server over RCON, which is exact but only
+/// possible while they are online. Everything else — and any live read that
+/// does not come back — falls back to their `playerdata` file, which exists for
+/// everyone who has ever joined but is only as fresh as the last autosave.
 async fn player_inventory(
     state: web::Data<AppState>,
     _admin: AdminUser,
     path: web::Path<String>,
+    query: web::Query<InventoryQuery>,
 ) -> Result<HttpResponse, AppError> {
     let uuid = path.into_inner().trim().to_ascii_lowercase();
 
@@ -277,10 +323,44 @@ async fn player_inventory(
         ));
     }
 
-    let (snapshot, saved_at) =
-        inventory::load_snapshot(&state.config.server_properties_path, &uuid)
-            .await
-            .map_err(|e| match e {
+    let mut live_error: Option<String> = None;
+    let mut live_snapshot: Option<inventory::PlayerSnapshot> = None;
+
+    if let Some(name) = query.live.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+        match live_inventory(&state, name).await {
+            Ok(Some(snapshot)) => live_snapshot = Some(snapshot),
+            Ok(None) => {
+                live_error = Some("The server had no live data for that player".to_string())
+            }
+            Err(why) => {
+                log::warn!("console: live inventory for {name} failed: {why}");
+                live_error = Some(why);
+            }
+        }
+    }
+
+    // The file is read even in live mode: it is the only source for `savedAt`,
+    // and its vitals fill the header when the live paths do not carry them.
+    let saved = inventory::load_snapshot(&state.config.server_properties_path, &uuid).await;
+
+    let (snapshot, source, saved_at) = match (live_snapshot, saved) {
+        (Some(mut live), saved) => {
+            let saved_at = match saved {
+                Ok((from_file, saved_at)) => {
+                    // Vitals are not on any of the live paths, so they come off
+                    // disk. Health from the last save next to a live inventory
+                    // is still worth showing, and the response marks the source
+                    // so the panel can say which is which.
+                    live.vitals = from_file.vitals;
+                    saved_at
+                }
+                Err(_) => None,
+            };
+            (live, "live", saved_at)
+        }
+        (None, Ok((from_file, saved_at))) => (from_file, "saved", saved_at),
+        (None, Err(e)) => {
+            return Err(match e {
                 InventoryError::Missing => AppError::NotFound(
                     "This player has no saved data on the server yet".to_string(),
                 ),
@@ -288,14 +368,53 @@ async fn player_inventory(
                     log::error!("console: cannot read playerdata for {uuid}: {why}");
                     AppError::Internal("Could not read this player's saved data".to_string())
                 }
-            })?;
+            })
+        }
+    };
 
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "uuid": uuid,
+        "source": source,
         "savedAt": saved_at,
+        "liveError": live_error,
         "items": snapshot.item_count(),
         "inventory": snapshot,
     })))
+}
+
+/// GET /api/admin/console/item-texture/{namespace}/{name}.png — item artwork.
+///
+/// Cached on disk after the first request, so this is a file read in the steady
+/// state. A miss is a 404 rather than a placeholder image: the panel already
+/// draws its own fallback tile, and a real 404 lets the browser's cache
+/// remember the gap.
+async fn item_texture(
+    state: web::Data<AppState>,
+    _admin: AdminUser,
+    path: web::Path<(String, String)>,
+) -> Result<HttpResponse, AppError> {
+    let (namespace, file) = path.into_inner();
+    let name = file.trim_end_matches(".png");
+
+    match state.textures.get(&namespace, name).await {
+        Ok(bytes) => Ok(HttpResponse::Ok()
+            .content_type("image/png")
+            // Private because the route is behind an admin session, so a shared
+            // cache must not hold it. Immutable because a texture for a given
+            // Minecraft version never changes — which is what keeps an
+            // inventory full of images from costing an auth query per slot on
+            // every open.
+            .insert_header(("Cache-Control", "private, max-age=2592000, immutable"))
+            .body(bytes)),
+        Err(TextureError::BadId) => Err(AppError::BadRequest("Not a valid item id".to_string())),
+        Err(TextureError::Missing) => {
+            Err(AppError::NotFound("No texture for that item".to_string()))
+        }
+        Err(TextureError::Cache(why)) => {
+            log::error!("textures: cache is not writable: {why}");
+            Err(AppError::Internal("Texture cache is unavailable".to_string()))
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -383,6 +502,10 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             // Three segments, so it cannot be swallowed by the two-segment
             // `{action}` route below.
             .route("/players/{uuid}/inventory", web::get().to(player_inventory))
+            .route(
+                "/item-texture/{namespace}/{name}",
+                web::get().to(item_texture),
+            )
             .route("/players/{action}", web::post().to(player_action))
             // Registered before the `{action}` catch-all so "status" is not
             // swallowed by it.

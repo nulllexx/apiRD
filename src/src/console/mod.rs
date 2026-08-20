@@ -14,8 +14,10 @@ pub mod control;
 pub mod inventory;
 pub mod players;
 pub mod presence;
+pub mod snbt;
 pub mod stats;
 pub mod tail;
+pub mod textures;
 
 use std::collections::VecDeque;
 use std::sync::{Arc, RwLock};

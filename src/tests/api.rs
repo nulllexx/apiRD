@@ -78,6 +78,13 @@ fn lazy_state() -> AppState {
             api_rd::console::stats::SNAPSHOT_TTL,
         ),
         presence: api_rd::console::presence::Presence::new(),
+        // Fetching disabled and the cache pointed at a path that does not
+        // exist: these tests must never reach the network or write a file.
+        textures: api_rd::console::textures::TextureCache::new(
+            String::from("target/test-texture-cache"),
+            String::from("1.21.4"),
+            String::new(),
+        ),
     }
 }
 
@@ -104,6 +111,9 @@ async fn console_routes_reject_anonymous_callers() {
         // Reads a file off the server's disk, so it must be behind the
         // admin gate exactly like everything else here.
         "/api/admin/console/players/069a79f4-44e9-4726-a5be-fca90e38aaf5/inventory",
+        // Fetches from a mirror and writes to disk on a miss, so an
+        // anonymous caller must not be able to drive it either.
+        "/api/admin/console/item-texture/minecraft/diamond_sword.png",
     ] {
         let req = test::TestRequest::get().uri(uri).to_request();
         let resp = test::call_service(&app, req).await;
@@ -401,6 +411,13 @@ fn test_state(pool: MySqlPool) -> AppState {
             api_rd::console::stats::SNAPSHOT_TTL,
         ),
         presence: api_rd::console::presence::Presence::new(),
+        // Fetching disabled and the cache pointed at a path that does not
+        // exist: these tests must never reach the network or write a file.
+        textures: api_rd::console::textures::TextureCache::new(
+            String::from("target/test-texture-cache"),
+            String::from("1.21.4"),
+            String::new(),
+        ),
     }
 }
 

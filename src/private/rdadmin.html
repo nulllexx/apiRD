@@ -764,6 +764,46 @@
             color: var(--text) !important;
         }
 
+        /* Textures are 16x16, so they must be scaled with hard edges - the
+           default smoothing turns them into coloured smudges at this size. */
+        .inv-icon {
+            width: 78%;
+            height: 78%;
+            object-fit: contain;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        /* The initials tile stays in the markup underneath and is revealed by
+           removing this class when the image 404s or the mirror is cold. */
+        .inv-slot.has-icon .inv-initials { display: none; }
+
+        .inv-count {
+            /* Sits over the artwork once there is artwork to sit over. */
+            text-shadow:
+                 1px 1px 0 var(--bg-raised), -1px 1px 0 var(--bg-raised),
+                 1px -1px 0 var(--bg-raised), -1px -1px 0 var(--bg-raised);
+        }
+
+        .inv-source {
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            padding: 2px 8px;
+            border-radius: 999px;
+        }
+        .inv-source.live { background: var(--ok-soft) !important; color: var(--ok) !important; }
+        .inv-source.saved { background: var(--warn-soft) !important; color: var(--warn) !important; }
+
+        #invRefresh {
+            padding: 6px 14px;
+            cursor: pointer;
+            border-radius: var(--radius-sm);
+            background: var(--bg-raised) !important;
+            color: var(--text) !important;
+            border: 1px solid var(--line) !important;
+        }
+
         .inv-boxes { margin: 0; padding: 0; list-style: none; font-size: 0.82rem; }
         .inv-boxes li { padding: 6px 0; border-bottom: 1px solid var(--line-soft) !important; color: var(--text-muted) !important; }
         .inv-boxes li:last-child { border-bottom: none; }
@@ -1387,6 +1427,8 @@
         <div class="inv-head">
             <h3 id="invTitle">Inventory</h3>
             <span class="inv-uuid" id="invUuid"></span>
+            <span class="inv-source" id="invSource" style="display: none;"></span>
+            <button type="button" id="invRefresh">Refresh</button>
             <button type="button" class="closeBtn" id="invClose">Close</button>
         </div>
         <p class="inv-meta" id="invMeta"></p>
@@ -2800,6 +2842,7 @@
     const invUuid = document.getElementById('invUuid');
     const invMeta = document.getElementById('invMeta');
     const invBody = document.getElementById('invBody');
+    const invSource = document.getElementById('invSource');
 
     /* Slot layout, mirrored from console/inventory.rs so the two agree on how
        many holes each grid has. */
@@ -2833,6 +2876,31 @@
         return lines.join('\n');
     }
 
+    /* Textures are served from this API rather than hotlinked: the first request
+       for an id fetches it from the assets mirror and caches it on disk, so
+       every later one is a local file and an admin's browser never talks to a
+       third party. A 404 is normal - not every id has a flat texture - and the
+       initials tile underneath is what shows through when that happens. */
+    function itemIcon(item) {
+        const id = String(item.id || '');
+        const [namespace, name] = id.includes(':')
+            ? [id.slice(0, id.indexOf(':')), id.slice(id.indexOf(':') + 1)]
+            : ['minecraft', id];
+
+        if (!/^[a-z0-9_.-]+$/.test(namespace) || !/^[a-z0-9_.-]+$/.test(name)) return null;
+
+        const icon = document.createElement('img');
+        icon.className = 'inv-icon';
+        icon.alt = '';
+        icon.loading = 'lazy';
+        icon.src = `/api/admin/console/item-texture/${namespace}/${name}.png`;
+        icon.addEventListener('load', () => {
+            if (icon.parentNode) icon.parentNode.classList.add('has-icon');
+        });
+        icon.addEventListener('error', () => icon.remove());
+        return icon;
+    }
+
     function slotElement(item, selected) {
         const slot = document.createElement('div');
         slot.className = 'inv-slot';
@@ -2848,8 +2916,12 @@
         slot.title = itemTooltip(item);
 
         const label = document.createElement('span');
+        label.className = 'inv-initials';
         label.textContent = itemAbbreviation(item.customName || item.name);
         slot.appendChild(label);
+
+        const icon = itemIcon(item);
+        if (icon) slot.appendChild(icon);
 
         if (item.count > 1) {
             const count = document.createElement('span');
@@ -2976,18 +3048,36 @@
         const boxes = containerList(snapshot);
         if (boxes) invBody.appendChild(invSection('Container contents', boxes));
 
+        const live = data.source === 'live';
         const saved = data.savedAt ? relativeTime(data.savedAt) : 'an unknown time ago';
-        const parts = [`${data.items} stack${data.items === 1 ? '' : 's'} on record · saved ${saved}`];
+        const parts = [`${data.items} stack${data.items === 1 ? '' : 's'}`];
+
+        if (live) {
+            // Read out of the running server, so the grids are exact. The
+            // header numbers are not on any of the live paths and still come
+            // off disk, which is worth saying rather than implying.
+            parts.push('read live from the server');
+            if (data.savedAt) parts.push(`health and XP are from the save ${saved}`);
+        } else {
+            parts.push(`from the save ${saved}`);
+            // The server writes that file on autosave and on disconnect, so for
+            // someone still playing it is a snapshot of the past. Saying so
+            // beats an operator acting on an inventory that has since changed.
+            if (player && player.online) {
+                parts.push(data.liveError
+                    ? `live read failed: ${data.liveError}`
+                    : 'they are online, so this is their last save');
+            }
+        }
+
         invMeta.textContent = parts.join(' · ');
         invMeta.title = data.savedAt || '';
-        invMeta.classList.remove('inv-stale');
+        invMeta.classList.toggle('inv-stale', !live && !!(player && player.online));
 
-        // The server only writes this file on autosave and on disconnect, so
-        // for someone who is still playing it is a snapshot of the past. Saying
-        // so beats an operator acting on an inventory that has since changed.
-        if (player && player.online) {
-            invMeta.classList.add('inv-stale');
-            invMeta.textContent += ' — they are online, so this is their last save, not live';
+        if (invSource) {
+            invSource.style.display = '';
+            invSource.className = 'inv-source ' + (live ? 'live' : 'saved');
+            invSource.textContent = live ? 'Live' : 'Saved';
         }
     }
 
@@ -2995,21 +3085,42 @@
         if (invOverlay) invOverlay.style.display = 'none';
     }
 
+    /* Whoever the modal is currently showing, so Refresh knows what to re-ask
+       for without the caller having to thread it back through. */
+    let invPlayer = null;
+
     async function openInventory(player) {
         if (!invOverlay || !player || !player.uuid) return;
 
+        invPlayer = player;
         invTitle.textContent = playerLabel(player);
         invUuid.textContent = player.uuid;
-        invMeta.textContent = 'Reading saved player data\u2026';
-        invMeta.classList.remove('inv-stale');
         invBody.innerHTML = '';
         invOverlay.style.display = 'flex';
+        await loadInventory();
+    }
+
+    async function loadInventory() {
+        const player = invPlayer;
+        if (!player) return;
+
+        // A live read is only attempted for someone the roster says is online,
+        // and only when their name is known: /data get selects by name, and the
+        // server answers "no entity found" for anybody who has logged off. The
+        // endpoint falls back to their saved file on its own, so a player who
+        // leaves mid-request still gets an answer.
+        const live = player.online && player.name;
+        invMeta.textContent = live
+            ? 'Asking the server\u2026'
+            : 'Reading saved player data\u2026';
+        invMeta.classList.remove('inv-stale');
+        if (invSource) invSource.style.display = 'none';
+
+        let url = '/api/admin/console/players/' + encodeURIComponent(player.uuid) + '/inventory';
+        if (live) url += '?live=' + encodeURIComponent(player.name);
 
         try {
-            const response = await fetch(
-                '/api/admin/console/players/' + encodeURIComponent(player.uuid) + '/inventory',
-                { credentials: 'include' }
-            );
+            const response = await fetch(url, { credentials: 'include' });
             const data = await response.json();
 
             if (!response.ok) {
@@ -3031,6 +3142,8 @@
     }
     const invCloseBtn = document.getElementById('invClose');
     if (invCloseBtn) invCloseBtn.addEventListener('click', closeInventory);
+    const invRefreshBtn = document.getElementById('invRefresh');
+    if (invRefreshBtn) invRefreshBtn.addEventListener('click', () => loadInventory());
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') closeInventory();
     });

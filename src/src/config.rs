@@ -54,6 +54,15 @@ pub struct AppConfig {
     /// Shared directory used to reach the `mc-control` sidecar, which holds the
     /// Docker socket so this container does not have to.
     pub control_dir: String,
+    /// Where fetched item textures are kept. Must survive a container restart
+    /// or every deploy re-fetches the whole set.
+    pub item_texture_dir: String,
+    /// Minecraft version whose assets the textures come from. Part of the cache
+    /// path, so changing it does not serve the previous version's art.
+    pub minecraft_assets_version: String,
+    /// Mirror the textures are fetched from. Empty disables fetching, leaving a
+    /// pre-populated cache as the only source — the air-gapped deployment.
+    pub item_texture_base_url: String,
     pub upload_logs_path: String,
     pub content_path: String,
     pub seasons_path: String,
@@ -145,6 +154,18 @@ impl AppConfig {
             rcon_address: optional("RCON_ADDRESS", "127.0.0.1:29875"),
             rcon_password: get("RCON_PASSWORD").unwrap_or_default(),
             control_dir: optional("CONTROL_DIR", "/control"),
+            item_texture_dir: optional(
+                "ITEM_TEXTURE_DIR",
+                "/home/useradmin/api/mainapi/data/item-textures",
+            ),
+            minecraft_assets_version: optional("MINECRAFT_ASSETS_VERSION", "1.21.4"),
+            // Read through `get` rather than `optional` so that setting the
+            // variable to an empty string is honoured as "never fetch" instead
+            // of silently falling back to the default mirror. Unset still means
+            // the default.
+            item_texture_base_url: get("ITEM_TEXTURE_BASE_URL").unwrap_or_else(|| {
+                "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets".to_string()
+            }),
             upload_logs_path: optional(
                 "UPLOAD_LOGS_PATH",
                 "/home/useradmin/api/uploadlogs.json",
@@ -298,6 +319,34 @@ mod tests {
         assert_eq!(cfg.console_backlog_lines, 500);
         assert_eq!(cfg.rcon_address, "127.0.0.1:29875");
         assert_eq!(cfg.control_dir, "/control");
+    }
+
+    #[test]
+    fn item_texture_defaults_land_in_the_persisted_data_mount() {
+        // The cache has to outlive the container: /home/useradmin/api is
+        // bind-mounted from the host, so a default anywhere else would mean
+        // re-fetching every texture after each deploy.
+        let cfg = AppConfig::build(lookup(&required_pairs())).unwrap();
+        assert_eq!(
+            cfg.item_texture_dir,
+            "/home/useradmin/api/mainapi/data/item-textures"
+        );
+        assert_eq!(cfg.minecraft_assets_version, "1.21.4");
+        assert!(cfg.item_texture_base_url.starts_with("https://"));
+    }
+
+    #[test]
+    fn item_texture_fetching_can_be_turned_off() {
+        // An empty base URL is a supported configuration - serve whatever is
+        // already cached and never dial out - not a missing setting.
+        let mut pairs = required_pairs();
+        pairs.push(("ITEM_TEXTURE_BASE_URL", ""));
+        pairs.push(("ITEM_TEXTURE_DIR", "/srv/textures"));
+        pairs.push(("MINECRAFT_ASSETS_VERSION", "1.20.6"));
+        let cfg = AppConfig::build(lookup(&pairs)).unwrap();
+        assert_eq!(cfg.item_texture_base_url, "");
+        assert_eq!(cfg.item_texture_dir, "/srv/textures");
+        assert_eq!(cfg.minecraft_assets_version, "1.20.6");
     }
 
     #[test]

@@ -39,6 +39,11 @@ async fn main() -> std::io::Result<()> {
         ),
         snapshot: console::stats::SnapshotCache::new(console::stats::SNAPSHOT_TTL),
         presence: console::presence::Presence::new(),
+        textures: console::textures::TextureCache::new(
+            config.item_texture_dir.clone(),
+            config.minecraft_assets_version.clone(),
+            config.item_texture_base_url.clone(),
+        ),
     };
 
     // Spawn auto-unban background task

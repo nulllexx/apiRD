@@ -21,6 +21,7 @@ pub mod routes;
 use config::AppConfig;
 use console::presence::Presence;
 use console::stats::SnapshotCache;
+use console::textures::TextureCache;
 use console::Consoles;
 use rcon::RconClient;
 
@@ -41,6 +42,8 @@ pub struct AppState {
     /// Who is online, maintained from the log stream rather than by polling
     /// the game server.
     pub presence: Arc<Presence>,
+    /// Item artwork for the inventory viewer, fetched once and then local.
+    pub textures: Arc<TextureCache>,
 }
 
 /// Registers every HTTP route the server exposes (the `/api` scope plus the

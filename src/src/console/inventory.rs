@@ -551,6 +551,17 @@ pub fn parse_player_data(nbt: &[u8]) -> Result<PlayerSnapshot, InventoryError> {
     let root: HashMap<String, Value> = fastnbt::from_bytes(nbt)
         .map_err(|e| InventoryError::Unreadable(format!("not valid player NBT: {e}")))?;
 
+    Ok(snapshot_from_root(&root))
+}
+
+/// Build a snapshot from a player's root compound.
+///
+/// Split out from [`parse_player_data`] so the live view can feed it a root
+/// assembled from `/data get` replies instead of from a file. Both paths then
+/// read items, slots and versions through exactly the same code, which is the
+/// point: two implementations would eventually disagree about something like
+/// which end of the armour row is the helmet.
+pub fn snapshot_from_root(root: &HashMap<String, Value>) -> PlayerSnapshot {
     let mut snapshot = PlayerSnapshot::empty();
 
     for entry in root.get("Inventory").and_then(as_list).unwrap_or_default() {
@@ -563,7 +574,7 @@ pub fn parse_player_data(nbt: &[u8]) -> Result<PlayerSnapshot, InventoryError> {
 
     // After `Inventory`, so on a 1.21.5 world the equipment compound wins over
     // anything a converted world left behind in slots 100-103.
-    read_equipment(&mut snapshot, &root);
+    read_equipment(&mut snapshot, root);
 
     for entry in root.get("EnderItems").and_then(as_list).unwrap_or_default() {
         let Some(entry) = as_compound(entry) else { continue };
@@ -580,9 +591,76 @@ pub fn parse_player_data(nbt: &[u8]) -> Result<PlayerSnapshot, InventoryError> {
         .get("SelectedItemSlot")
         .and_then(as_i32)
         .filter(|slot| (0..HOTBAR_SLOTS as i32).contains(slot));
-    snapshot.vitals = read_vitals(&root);
+    snapshot.vitals = read_vitals(root);
 
-    Ok(snapshot)
+    snapshot
+}
+
+/* ------------------------------------------------------------- live reading */
+
+/// The entity paths the live view asks the server for, in the order it asks.
+///
+/// Four small `/data get` commands rather than one `data get entity <name>`:
+/// the unfiltered dump of a player entity includes their whole recipe book and
+/// attribute list, which is both enormous and none of this panel's business.
+/// Each path also fails independently, so a server too old to have `equipment`
+/// still answers the other three.
+pub const LIVE_PATHS: [&str; 4] = ["Inventory", "EnderItems", "equipment", "SelectedItemSlot"];
+
+/// Build the `/data get` command for one path.
+///
+/// The player name is interpolated into a command string, so it goes through
+/// the same validation the moderation actions use — a name with a space in it
+/// would silently become extra arguments. Returns `None` rather than a mangled
+/// command for anything that does not pass.
+pub fn live_command(player: &str, path: &str) -> Option<String> {
+    // `path` is only ever one of LIVE_PATHS, but checking it here means a future
+    // caller cannot turn this into a way to run arbitrary command text.
+    if !LIVE_PATHS.contains(&path) || !super::players::is_valid_name(player) {
+        return None;
+    }
+    Some(format!("data get entity {player} {path}"))
+}
+
+/// Assemble a root compound out of `/data get` replies.
+///
+/// Each reply is independent: one that is prose rather than data — "No entity
+/// was found" when the player logged off mid-request, or the error an older
+/// server gives for a path it does not have — is dropped, and the rest still
+/// build a snapshot. The caller decides what an empty result means, because
+/// "no live data at all" and "a genuinely empty inventory" are different
+/// answers and only the caller knows which one it asked for.
+pub fn live_root(replies: &[(&str, String)]) -> HashMap<String, Value> {
+    let mut root = HashMap::new();
+
+    for (path, reply) in replies {
+        let Some(body) = super::snbt::strip_reply_prefix(reply) else {
+            continue;
+        };
+        match super::snbt::parse(body) {
+            Ok(value) => {
+                root.insert((*path).to_string(), value);
+            }
+            Err(e) => {
+                // Worth a log line: this is how a format change in a future
+                // Minecraft first shows up.
+                log::debug!("inventory: live reply for {path} did not parse: {e}");
+            }
+        }
+    }
+
+    root
+}
+
+/// Whether a live root carries anything worth showing.
+///
+/// An inventory can legitimately be empty, so the test is whether the server
+/// answered any of the *container* paths at all — not whether they had items in
+/// them. `SelectedItemSlot` alone is not enough to call a view live.
+pub fn live_root_is_usable(root: &HashMap<String, Value>) -> bool {
+    ["Inventory", "EnderItems", "equipment"]
+        .iter()
+        .any(|path| root.contains_key(*path))
 }
 
 /* ---------------------------------------------------------------- file I/O */

@@ -1,0 +1,408 @@
+//! Item textures for the inventory viewer, fetched once and then served local.
+//!
+//! The panel has no artwork of its own and the *server* jar carries none either
+//! — item textures are a client asset. So the first time a texture is asked
+//! for, it is pulled from a public mirror of the vanilla assets, written to a
+//! cache directory, and served from there forever after. An admin's browser
+//! only ever talks to this server, and a mirror that is down or blocked costs
+//! nothing once the cache is warm.
+//!
+//! ## Finding the right file
+//!
+//! An item id does not map onto one predictable path. `diamond_sword` is
+//! `textures/item/diamond_sword.png`, `stone` is `textures/block/stone.png`,
+//! and `grass_block` is neither — its item form is a 3D render the assets do
+//! not contain, so the closest flat stand-in is `block/grass_block_side.png`.
+//! Rather than ship a mapping table that would go stale every release, each
+//! candidate is tried in turn and the first hit is cached under the id.
+//!
+//! A miss is cached too, as an empty marker file. Without that, every render of
+//! an inventory containing an unmappable item would re-ask the mirror for
+//! something that was never there.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+
+use dashmap::DashMap;
+use tokio::sync::Mutex;
+
+/// Only vanilla assets exist upstream, so a modded id is a miss without a
+/// lookup. It also keeps a namespace from ever reaching the URL.
+const VANILLA: &str = "minecraft";
+
+/// Longest id segment accepted. Real ids are far shorter; this bounds the path
+/// that gets built from one.
+const MAX_SEGMENT: usize = 64;
+
+/// A 16x16 PNG is a few hundred bytes. This is generous enough for the
+/// high-resolution texture packs some mirrors carry and small enough that a
+/// wrong URL cannot stream something huge into the cache.
+const MAX_TEXTURE_BYTES: usize = 256 * 1024;
+
+const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Debug)]
+pub enum TextureError {
+    /// The id could never name a texture — rejected before any I/O.
+    BadId,
+    /// Looked for and not found; the caller renders its own fallback.
+    Missing,
+    /// The cache directory could not be written.
+    Cache(String),
+}
+
+/// Where textures come from and where they are kept.
+pub struct TextureCache {
+    dir: PathBuf,
+    /// Assets are published per Minecraft version, and item ids come and go
+    /// between them, so the version is part of the cache path — changing it
+    /// does not serve last version's textures from a stale cache.
+    version: String,
+    /// Empty disables fetching entirely, leaving a pre-populated cache as the
+    /// only source. That is the air-gapped deployment, not an error.
+    base_url: String,
+    client: reqwest::Client,
+    /// One in-flight fetch per id. Opening an inventory asks for forty textures
+    /// at once, and several of those are usually the same item — without this,
+    /// a cold cache would send the mirror a burst of duplicate requests.
+    in_flight: DashMap<String, Arc<Mutex<()>>>,
+}
+
+impl TextureCache {
+    pub fn new(dir: String, version: String, base_url: String) -> Arc<Self> {
+        Arc::new(Self {
+            dir: PathBuf::from(dir),
+            version,
+            base_url,
+            client: reqwest::Client::builder()
+                .timeout(FETCH_TIMEOUT)
+                .user_agent("apiRD-admin-panel")
+                .build()
+                .unwrap_or_default(),
+            in_flight: DashMap::new(),
+        })
+    }
+
+    /// Cached bytes for one item id, fetching it if this is the first ask.
+    pub async fn get(&self, namespace: &str, name: &str) -> Result<Vec<u8>, TextureError> {
+        if !is_valid_segment(namespace) || !is_valid_segment(name) {
+            return Err(TextureError::BadId);
+        }
+        if namespace != VANILLA {
+            return Err(TextureError::Missing);
+        }
+
+        let hit = self.cache_path(name);
+        let miss = self.miss_path(name);
+
+        if let Some(bytes) = read_cached(&hit).await {
+            return Ok(bytes);
+        }
+        if tokio::fs::metadata(&miss).await.is_ok() {
+            return Err(TextureError::Missing);
+        }
+
+        // Serialise concurrent asks for the same id, then re-check: whoever
+        // held the lock has usually just written the file this caller wants.
+        let guard = self
+            .in_flight
+            .entry(name.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone();
+        let _held = guard.lock().await;
+
+        if let Some(bytes) = read_cached(&hit).await {
+            self.in_flight.remove(name);
+            return Ok(bytes);
+        }
+        if tokio::fs::metadata(&miss).await.is_ok() {
+            self.in_flight.remove(name);
+            return Err(TextureError::Missing);
+        }
+
+        let result = self.fetch_and_store(name, &hit, &miss).await;
+        self.in_flight.remove(name);
+        result
+    }
+
+    async fn fetch_and_store(
+        &self,
+        name: &str,
+        hit: &Path,
+        miss: &Path,
+    ) -> Result<Vec<u8>, TextureError> {
+        if self.base_url.is_empty() {
+            return Err(TextureError::Missing);
+        }
+
+        for candidate in candidate_paths(name) {
+            let url = format!(
+                "{}/{}/assets/minecraft/textures/{}",
+                self.base_url.trim_end_matches('/'),
+                self.version,
+                candidate
+            );
+
+            match self.download(&url).await {
+                Some(bytes) => {
+                    write_cached(hit, &bytes).await?;
+                    return Ok(bytes);
+                }
+                None => continue,
+            }
+        }
+
+        // Remember the miss so the next render does not repeat this whole walk.
+        write_cached(miss, &[]).await?;
+        Err(TextureError::Missing)
+    }
+
+    /// One candidate URL. `None` for anything that is not a PNG of a plausible
+    /// size, so a mirror serving an HTML error page cannot poison the cache.
+    async fn download(&self, url: &str) -> Option<Vec<u8>> {
+        let response = self.client.get(url).send().await.ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+
+        let bytes = response.bytes().await.ok()?;
+        if bytes.len() > MAX_TEXTURE_BYTES || !bytes.starts_with(PNG_MAGIC) {
+            log::warn!("textures: {url} did not return a PNG of a usable size");
+            return None;
+        }
+
+        Some(bytes.to_vec())
+    }
+
+    fn cache_path(&self, name: &str) -> PathBuf {
+        self.dir.join(&self.version).join(format!("{name}.png"))
+    }
+
+    fn miss_path(&self, name: &str) -> PathBuf {
+        self.dir.join(&self.version).join(format!("{name}.miss"))
+    }
+}
+
+const PNG_MAGIC: &[u8] = &[0x89, b'P', b'N', b'G'];
+
+/// Whether one id segment is safe to build a path and a URL out of.
+///
+/// Both a filename and a URL are derived from this, so the rule is an allowlist
+/// rather than an attempt to strip the dangerous parts: lowercase alphanumerics
+/// plus `_`, `-` and `.`, with `..` refused outright.
+pub fn is_valid_segment(raw: &str) -> bool {
+    !raw.is_empty()
+        && raw.len() <= MAX_SEGMENT
+        && !raw.contains("..")
+        && raw
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-' | '.'))
+}
+
+/// Where a given id might live, best guess first.
+///
+/// Items come first because most held things are items; the block fallbacks
+/// follow because a placeable block's inventory icon is rendered from its
+/// faces, and a face texture is the nearest flat thing to show.
+pub fn candidate_paths(name: &str) -> Vec<String> {
+    vec![
+        format!("item/{name}.png"),
+        format!("block/{name}.png"),
+        format!("block/{name}_side.png"),
+        format!("block/{name}_top.png"),
+        format!("block/{name}_front.png"),
+    ]
+}
+
+async fn read_cached(path: &Path) -> Option<Vec<u8>> {
+    let bytes = tokio::fs::read(path).await.ok()?;
+    (!bytes.is_empty()).then_some(bytes)
+}
+
+async fn write_cached(path: &Path, bytes: &[u8]) -> Result<(), TextureError> {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| TextureError::Cache(e.to_string()))?;
+    }
+    tokio::fs::write(path, bytes)
+        .await
+        .map_err(|e| TextureError::Cache(e.to_string()))
+}
+
+/// Split `minecraft:diamond_sword` into its namespace and name.
+///
+/// An id with no namespace is vanilla, which is how Minecraft itself reads one.
+pub fn split_id(id: &str) -> (String, String) {
+    match id.split_once(':') {
+        Some((namespace, name)) => (namespace.to_ascii_lowercase(), name.to_ascii_lowercase()),
+        None => (VANILLA.to_string(), id.to_ascii_lowercase()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_real_item_names() {
+        for name in ["diamond_sword", "stone", "oak_log", "music_disc_11", "tnt"] {
+            assert!(is_valid_segment(name), "{name} should be accepted");
+        }
+    }
+
+    #[test]
+    fn refuses_anything_that_could_escape_the_cache_directory() {
+        // This becomes both a filename and part of a URL, so traversal and
+        // scheme-smuggling are the cases that matter.
+        for bogus in [
+            "..",
+            "../../etc/passwd",
+            "a/../../b",
+            "item/../../secret",
+            "Diamond_Sword",
+            "sword?x=1",
+            "sword.png#",
+            "http://evil",
+            "",
+            &"a".repeat(65),
+        ] {
+            assert!(!is_valid_segment(bogus), "{bogus:?} must be refused");
+        }
+    }
+
+    #[test]
+    fn a_dot_is_allowed_but_a_double_dot_is_not() {
+        assert!(is_valid_segment("1.21"));
+        assert!(!is_valid_segment("a..b"));
+    }
+
+    #[test]
+    fn splits_a_namespaced_id() {
+        assert_eq!(
+            split_id("minecraft:diamond_sword"),
+            ("minecraft".to_string(), "diamond_sword".to_string())
+        );
+        // Unqualified ids are vanilla, which is how Minecraft reads them.
+        assert_eq!(
+            split_id("stone"),
+            ("minecraft".to_string(), "stone".to_string())
+        );
+        assert_eq!(
+            split_id("Create:Copper_Backtank"),
+            ("create".to_string(), "copper_backtank".to_string())
+        );
+    }
+
+    #[test]
+    fn items_are_looked_for_before_blocks() {
+        let paths = candidate_paths("stone");
+        assert_eq!(paths[0], "item/stone.png");
+        assert_eq!(paths[1], "block/stone.png");
+        // grass_block has no flat texture of its own; a face is the stand-in.
+        assert!(candidate_paths("grass_block").contains(&"block/grass_block_side.png".to_string()));
+    }
+
+    #[tokio::test]
+    async fn a_modded_id_is_a_miss_without_touching_the_network() {
+        // The base URL is deliberately unreachable: reaching it would be the
+        // bug this pins down.
+        let cache = TextureCache::new(
+            std::env::temp_dir()
+                .join(format!("apird-tex-{}", uuid::Uuid::new_v4()))
+                .to_string_lossy()
+                .into_owned(),
+            "1.21.4".to_string(),
+            "http://127.0.0.1:1".to_string(),
+        );
+
+        assert!(matches!(
+            cache.get("create", "copper_backtank").await,
+            Err(TextureError::Missing)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_cached_texture_is_served_without_fetching() {
+        let dir = std::env::temp_dir().join(format!("apird-tex-{}", uuid::Uuid::new_v4()));
+        let cache = TextureCache::new(
+            dir.to_string_lossy().into_owned(),
+            "1.21.4".to_string(),
+            // Unreachable, so a cache hit is the only way this can succeed.
+            "http://127.0.0.1:1".to_string(),
+        );
+
+        let png = [PNG_MAGIC, b"-body"].concat();
+        let path = dir.join("1.21.4").join("diamond_sword.png");
+        tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
+        tokio::fs::write(&path, &png).await.unwrap();
+
+        assert_eq!(cache.get("minecraft", "diamond_sword").await.unwrap(), png);
+
+        tokio::fs::remove_dir_all(&dir).await.ok();
+    }
+
+    #[tokio::test]
+    async fn a_recorded_miss_is_not_looked_up_again() {
+        let dir = std::env::temp_dir().join(format!("apird-tex-{}", uuid::Uuid::new_v4()));
+        let cache = TextureCache::new(
+            dir.to_string_lossy().into_owned(),
+            "1.21.4".to_string(),
+            "http://127.0.0.1:1".to_string(),
+        );
+
+        let marker = dir.join("1.21.4").join("nonexistent_item.miss");
+        tokio::fs::create_dir_all(marker.parent().unwrap()).await.unwrap();
+        tokio::fs::write(&marker, b"").await.unwrap();
+
+        assert!(matches!(
+            cache.get("minecraft", "nonexistent_item").await,
+            Err(TextureError::Missing)
+        ));
+
+        tokio::fs::remove_dir_all(&dir).await.ok();
+    }
+
+    #[tokio::test]
+    async fn fetching_disabled_serves_the_cache_and_nothing_else() {
+        // The air-gapped deployment: an empty base URL is a configuration, not
+        // a failure, so it must not spend the timeout dialling anything.
+        let dir = std::env::temp_dir().join(format!("apird-tex-{}", uuid::Uuid::new_v4()));
+        let cache = TextureCache::new(
+            dir.to_string_lossy().into_owned(),
+            "1.21.4".to_string(),
+            String::new(),
+        );
+
+        assert!(matches!(
+            cache.get("minecraft", "diamond_sword").await,
+            Err(TextureError::Missing)
+        ));
+
+        tokio::fs::remove_dir_all(&dir).await.ok();
+    }
+
+    #[tokio::test]
+    async fn a_hostile_id_never_reaches_the_filesystem() {
+        let dir = std::env::temp_dir().join(format!("apird-tex-{}", uuid::Uuid::new_v4()));
+        let cache = TextureCache::new(
+            dir.to_string_lossy().into_owned(),
+            "1.21.4".to_string(),
+            "http://127.0.0.1:1".to_string(),
+        );
+
+        assert!(matches!(
+            cache.get("minecraft", "../../../../etc/passwd").await,
+            Err(TextureError::BadId)
+        ));
+        assert!(matches!(
+            cache.get("../..", "stone").await,
+            Err(TextureError::BadId)
+        ));
+        assert!(
+            tokio::fs::metadata(&dir).await.is_err(),
+            "a rejected id must not create anything"
+        );
+    }
+}
