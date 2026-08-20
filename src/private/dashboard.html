@@ -1265,6 +1265,31 @@
 </div>
 
 <script>
+    /* --------------------------------------------------------- Global State Variables */
+    let evtSource = null;
+    let retryDelay = 1000;
+    let retryTimer = null;
+    let stuckToBottom = true;
+    const history = [];
+    let historyIndex = 0;
+    let statusTimer = null;
+    let statsTimer = null;
+    let onlineTimer = null;
+    let roster = [];
+    let onlineNames = [];
+    let rosterLoadedAt = 0;
+    let componentsData = [];
+    let statusInited = false;
+    let evidenceFields = [];
+    let currentPage = 1;
+
+    const API_BASE = '/api/status';
+    const STATS_INTERVAL = 30000;
+    const ONLINE_INTERVAL = 5000;
+    const ROSTER_RELOAD_FLOOR = 15000;
+    const MAX_CONSOLE_LINES = 2000;
+    const MAX_PLAYER_ROWS = 300;
+
     /* --------------------------------------------------------- Theme */
 
     (function initTheme() {
@@ -1314,8 +1339,6 @@
     const overlayTitle = document.getElementById('overlayTitle');
     const overlayMessage = document.getElementById('overlayMessage');
     const overlayButtons = document.getElementById('overlayButtons');
-    let evidenceFields = [];
-    let currentPage = 1;
 
     function showOverlay(title, message, buttons = []) {
         overlayTitle.textContent = title;
@@ -1345,75 +1368,82 @@
         overlay.style.display = 'none';
     }
 
-    document.getElementById('addIncriminatory').addEventListener('click', function() {
-        const incriminatoryList = document.getElementById('incriminatoryList');
-        const evidenceDiv = document.createElement('div');
-        evidenceDiv.innerHTML = `
-            <div style="margin: 10px 0; padding: 10px; border: 1px solid var(--line);">
-                <input type="text" placeholder="Reason (e.g. Spam, Harassment, etc.)" style="width: 100%; margin: 5px 0;">
-                <textarea placeholder="Content/Evidence (URLs, screenshots, descriptions, etc.)" style="width: 100%; margin: 5px 0; height: 60px;"></textarea>
-                <button type="button" class="btn-danger" onclick="this.parentNode.remove()">Remove Evidence</button>
-            </div>
-        `;
-        incriminatoryList.appendChild(evidenceDiv);
-    });
-
-    document.getElementById('applyBan').addEventListener('click', async function() {
-        const username = document.getElementById('modUsername').value.trim();
-        const type = document.getElementById('banType').value;
-        const modNote = document.getElementById('modNote').value.trim();
-        
-        const evidenceDivs = document.querySelectorAll('#incriminatoryList > div');
-        const incriminatory = [];
-        evidenceDivs.forEach(div => {
-            const reasonInput = div.querySelector('input');
-            const contentTextarea = div.querySelector('textarea');
-            if (reasonInput && contentTextarea && reasonInput.value.trim() && contentTextarea.value.trim()) {
-                incriminatory.push({
-                    reason: reasonInput.value.trim(),
-                    content: contentTextarea.value.trim()
-                });
-            }
+    const addIncrimBtn = document.getElementById('addIncriminatory');
+    if (addIncrimBtn) {
+        addIncrimBtn.addEventListener('click', function() {
+            const incriminatoryList = document.getElementById('incriminatoryList');
+            const evidenceDiv = document.createElement('div');
+            evidenceDiv.innerHTML = `
+                <div style="margin: 10px 0; padding: 10px; border: 1px solid var(--line);">
+                    <input type="text" placeholder="Reason (e.g. Spam, Harassment, etc.)" style="width: 100%; margin: 5px 0;">
+                    <textarea placeholder="Content/Evidence (URLs, screenshots, descriptions, etc.)" style="width: 100%; margin: 5px 0; height: 60px;"></textarea>
+                    <button type="button" class="btn-danger" onclick="this.parentNode.remove()">Remove Evidence</button>
+                </div>
+            `;
+            incriminatoryList.appendChild(evidenceDiv);
         });
+    }
 
-        if (!username) {
-            showOverlay('Error', 'Please enter a username');
-            return;
-        }
-
-        try {
-            const response = await fetch('/api/admin/moderate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({
-                    username,
-                    type,
-                    modNote,
-                    incriminatory: incriminatory.length > 0 ? incriminatory : null,
-                    poisonHWID: null,
-                    makeAdmin: false
-                })
+    const applyBanBtn = document.getElementById('applyBan');
+    if (applyBanBtn) {
+        applyBanBtn.addEventListener('click', async function() {
+            const username = document.getElementById('modUsername').value.trim();
+            const type = document.getElementById('banType').value;
+            const modNote = document.getElementById('modNote').value.trim();
+            
+            const evidenceDivs = document.querySelectorAll('#incriminatoryList > div');
+            const incriminatory = [];
+            evidenceDivs.forEach(div => {
+                const reasonInput = div.querySelector('input');
+                const contentTextarea = div.querySelector('textarea');
+                if (reasonInput && contentTextarea && reasonInput.value.trim() && contentTextarea.value.trim()) {
+                    incriminatory.push({
+                        reason: reasonInput.value.trim(),
+                        content: contentTextarea.value.trim()
+                    });
+                }
             });
 
-            const data = await response.json();
-            
-            if (response.ok) {
-                showOverlay('Success', 'Moderation applied: ' + data.message);
-                document.getElementById('modUsername').value = '';
-                document.getElementById('modNote').value = '';
-                document.getElementById('incriminatoryList').innerHTML = '';
-                fetchUsers(searchUser.value);
-            } else {
-                showOverlay('Error', data.error || data.message);
+            if (!username) {
+                showOverlay('Error', 'Please enter a username');
+                return;
             }
-        } catch (err) {
-            console.error('Error:', err);
-            showOverlay('Error', 'Server error occurred');
-        }
-    });
+
+            try {
+                const response = await fetch('/api/admin/moderate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        username,
+                        type,
+                        modNote,
+                        incriminatory: incriminatory.length > 0 ? incriminatory : null,
+                        poisonHWID: null,
+                        makeAdmin: false
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showOverlay('Success', 'Moderation applied: ' + data.message);
+                    document.getElementById('modUsername').value = '';
+                    document.getElementById('modNote').value = '';
+                    document.getElementById('incriminatoryList').innerHTML = '';
+                    fetchUsers(searchUser.value);
+                } else {
+                    showOverlay('Error', data.error || data.message);
+                }
+            } catch (err) {
+                console.error('Error:', err);
+                showOverlay('Error', 'Server error occurred');
+            }
+        });
+    }
 
     async function fetchUsers(query = '', page = currentPage) {
+        if (!userTableBody) return;
         try {
             const response = await fetch('/api/admin/list-users?search=' + encodeURIComponent(query) + '&page=' + page, { credentials: 'include' });
             const users = await response.json();
@@ -1451,9 +1481,12 @@
                 userTableBody.appendChild(tr);
             });
 
-            document.getElementById('currentPageSpan').textContent = `Page ${page}`;
-            document.getElementById('prevPageBtn').disabled = page === 1;
-            document.getElementById('nextPageBtn').disabled = users.length < 10;
+            const pageSpan = document.getElementById('currentPageSpan');
+            if (pageSpan) pageSpan.textContent = `Page ${page}`;
+            const prevBtn = document.getElementById('prevPageBtn');
+            if (prevBtn) prevBtn.disabled = page === 1;
+            const nextBtn = document.getElementById('nextPageBtn');
+            if (nextBtn) nextBtn.disabled = users.length < 10;
 
             attachEvents();
         } catch (err) {
@@ -1474,7 +1507,7 @@
                     });
                     const data = await response.json();
                     showOverlay('Success', data.message || 'User unbanned successfully');
-                    fetchUsers(searchUser.value);
+                    fetchUsers(searchUser ? searchUser.value : '');
                 } catch (err) {
                     console.error(err);
                     showOverlay('Error', 'Server error occurred');
@@ -1497,7 +1530,7 @@
                     });
                     const data = await response.json();
                     showOverlay('Success', data.message || 'User deleted successfully');
-                    fetchUsers(searchUser.value);
+                    fetchUsers(searchUser ? searchUser.value : '');
                 } catch (err) {
                     console.error(err);
                     showOverlay('Error', 'Server error occurred');
@@ -1566,7 +1599,7 @@
                         credentials: 'include',
                         body: JSON.stringify({ username, isAdmin })
                     });
-                    fetchUsers(searchUser.value);
+                    fetchUsers(searchUser ? searchUser.value : '');
                 } catch (err) { console.error(err); }
             });
         });
@@ -1582,7 +1615,7 @@
                         credentials: 'include',
                         body: JSON.stringify({ username, isMember })
                     });
-                    fetchUsers(searchUser.value);
+                    fetchUsers(searchUser ? searchUser.value : '');
                 } catch (err) { console.error(err); }
             });
         });
@@ -1598,7 +1631,7 @@
                         credentials: 'include',
                         body: JSON.stringify({ username, isAllowed })
                     });
-                    fetchUsers(searchUser.value);
+                    fetchUsers(searchUser ? searchUser.value : '');
                 } catch (err) { console.error(err); }
             });
         });
@@ -1614,7 +1647,7 @@
                         credentials: 'include',
                         body: JSON.stringify({ username, isAllowed })
                     });
-                    fetchUsers(searchUser.value);
+                    fetchUsers(searchUser ? searchUser.value : '');
                 } catch (err) { console.error(err); }
             });
         });
@@ -1630,130 +1663,57 @@
                         credentials: 'include',
                         body: JSON.stringify({ username, isOG })
                     });
-                    fetchUsers(searchUser.value);
+                    fetchUsers(searchUser ? searchUser.value : '');
                 } catch (err) { console.error(err); }
             });
         });
     }
 
     let SearchTimer;
-    searchUser.addEventListener('input', () => {
-        clearTimeout(SearchTimer);
-        SearchTimer = setTimeout(() => {
-            currentPage = 1;
-            fetchUsers(searchUser.value, currentPage);
-        }, 500);
-    });
+    if (searchUser) {
+        searchUser.addEventListener('input', () => {
+            clearTimeout(SearchTimer);
+            SearchTimer = setTimeout(() => {
+                currentPage = 1;
+                fetchUsers(searchUser.value, currentPage);
+            }, 500);
+        });
+    }
 
-    document.getElementById('prevPageBtn').addEventListener('click', () => {
-        if (currentPage > 1) {
-            currentPage--;
-            fetchUsers(searchUser.value, currentPage);
-        }
-    });
+    const prevPageBtn = document.getElementById('prevPageBtn');
+    if (prevPageBtn) {
+        prevPageBtn.addEventListener('click', () => {
+            if (currentPage > 1) {
+                currentPage--;
+                fetchUsers(searchUser ? searchUser.value : '', currentPage);
+            }
+        });
+    }
 
-    document.getElementById('nextPageBtn').addEventListener('click', () => {
-        currentPage++;
-        fetchUsers(searchUser.value, currentPage);
-    });
+    const nextPageBtn = document.getElementById('nextPageBtn');
+    if (nextPageBtn) {
+        nextPageBtn.addEventListener('click', () => {
+            currentPage++;
+            fetchUsers(searchUser ? searchUser.value : '', currentPage);
+        });
+    }
 
-    overlay.addEventListener('click', (e) => {
-        if (e.target === overlay) hideOverlay();
-    });
+    if (overlay) {
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) hideOverlay();
+        });
+    }
 
     fetchUsers();
 
-    /* --------------------------------------------------------- Tab Routing & URL Params */
-
-    function switchTab(tabName, updateUrl = true) {
-        let activeTabName = tabName.toLowerCase();
-        let targetContentId = activeTabName + '-tab';
-        let scrollToPlayers = false;
-
-        if (activeTabName === 'incidents' || activeTabName === 'dashboard') {
-            activeTabName = 'status';
-            targetContentId = 'status-tab';
-        } else if (activeTabName === 'server') {
-            activeTabName = 'console';
-            targetContentId = 'console-tab';
-        } else if (activeTabName === 'players') {
-            activeTabName = 'players';
-            targetContentId = 'console-tab';
-            scrollToPlayers = true;
-        }
-
-        document.querySelectorAll('.tab-container > .tab').forEach(tab => {
-            if (tab.dataset.tab === activeTabName) {
-                tab.classList.add('active');
-            } else {
-                tab.classList.remove('active');
-            }
-        });
-
-        document.querySelectorAll('#content > .tab-content').forEach(panel => {
-            panel.classList.remove('active');
-        });
-
-        const targetPanel = document.getElementById(targetContentId);
-        if (targetPanel) {
-            targetPanel.classList.add('active');
-        }
-
-        if (activeTabName === 'console' || activeTabName === 'players') {
-            consoleConnect();
-            startStatusPolling();
-            if (scrollToPlayers) {
-                setTimeout(() => {
-                    const panel = document.getElementById('playersPanel');
-                    if (panel) panel.scrollIntoView({ behavior: 'smooth' });
-                }, 100);
-            }
-        } else {
-            consoleDisconnect();
-            stopStatusPolling();
-        }
-
-        if (activeTabName === 'status') {
-            initStatusDashboard();
-        }
-
-        if (updateUrl) {
-            const url = new URL(window.location);
-            url.searchParams.set('page', activeTabName);
-            history.replaceState(null, '', url.toString());
-        }
-    }
-
-    document.querySelectorAll('.tab-container > .tab').forEach(tab => {
-        tab.addEventListener('click', () => {
-            switchTab(tab.dataset.tab);
-        });
-    });
-
-    window.addEventListener('popstate', () => {
-        const urlParams = new URLSearchParams(window.location.search);
-        const page = urlParams.get('page') || urlParams.get('tab') || 'status';
-        switchTab(page, false);
-    });
-
-    // Initial page load routing for dashboard.html default to 'status'
-    (function initRouting() {
-        const urlParams = new URLSearchParams(window.location.search);
-        const page = urlParams.get('page') || urlParams.get('tab') || 'status';
-        switchTab(page, false);
-    })();
-
     /* --------------------------------------------------------- Status & Incident Management JS */
 
-    const API_BASE = '/api/status';
     const alertBox = document.getElementById('alert-box');
     const currentTimeEl = document.getElementById('current-time');
     const componentsContainer = document.getElementById('components-container');
     const createIncidentForm = document.getElementById('create-incident-form');
     const createComponentUpdates = document.getElementById('create-component-updates');
     const addComponentButton = document.getElementById('add-component-update');
-    let componentsData = [];
-    let statusInited = false;
 
     document.querySelectorAll('#status-tab [data-inc-tab]').forEach(tab => {
         tab.addEventListener('click', () => {
@@ -1796,6 +1756,7 @@
     }
 
     async function loadComponents() {
+        if (!componentsContainer) return;
         try {
             const response = await fetch(`${API_BASE}/status`);
             const data = await response.json();
@@ -1872,6 +1833,7 @@
     }
 
     function addComponentUpdateField(container) {
+        if (!container) return;
         const updateField = document.createElement('div');
         updateField.className = 'component-update';
         updateField.innerHTML = `
@@ -2177,22 +2139,14 @@
         loadActiveIncidents();
     }
 
-    /* ------------------------------------------------------------- Console */
+    /* ------------------------------------------------------------- Console & Server Controls */
 
-    const MAX_CONSOLE_LINES = 2000;
     const consoleOutput = document.getElementById('consoleOutput');
     const consoleSource = document.getElementById('consoleSource');
     const consoleInput = document.getElementById('consoleInput');
     const autoscroll = document.getElementById('autoscroll');
     const connDot = document.getElementById('connDot');
     const connText = document.getElementById('connText');
-
-    let evtSource = null;
-    let retryDelay = 1000;
-    let retryTimer = null;
-    let stuckToBottom = true;
-    const history = [];
-    let historyIndex = 0;
 
     function setStatus(state, text) {
         if (connDot) connDot.className = state;
@@ -2207,7 +2161,7 @@
     const MC_COLOURS = {
         '0': '#000000', '1': '#00aa00', '2': '#00aa00', '3': '#00aaaa',
         '4': '#aa0000', '5': '#aa00aa', '6': '#ffaa00', '7': '#aaaaaa',
-        '8': '#555555', '9': '#5555ff', 'a': '#55ff55', 'b': '#55ffff',
+        '8': '#555555', '9': '#55ff55', 'a': '#55ff55', 'b': '#55ffff',
         'c': '#ff5555', 'd': '#ff55ff', 'e': '#ffff55', 'f': '#ffffff'
     };
 
@@ -2313,7 +2267,8 @@
 
             setStatus('down', `Reconnecting in ${Math.round(retryDelay / 1000)}s…`);
             retryTimer = setTimeout(() => {
-                if (document.getElementById('console-tab').classList.contains('active')) {
+                const consoleTab = document.getElementById('console-tab');
+                if (consoleTab && consoleTab.classList.contains('active')) {
                     consoleConnect();
                 }
             }, retryDelay);
@@ -2388,7 +2343,6 @@
     /* ------------------------------------------------------- Power control */
 
     const serverState = document.getElementById('serverState');
-    let statusTimer = null;
 
     async function refreshStatus() {
         try {
@@ -2464,9 +2418,6 @@
 
     /* --------------------------------------------------------- Performance */
 
-    const STATS_INTERVAL = 30000;
-    const MAX_PLAYER_ROWS = 300;
-
     const liveMetrics = document.getElementById('liveMetrics');
     const hideRconEcho = document.getElementById('hideRconEcho');
 
@@ -2484,9 +2435,10 @@
     }
 
     function shouldPollMetrics() {
+        const consoleTab = document.getElementById('console-tab');
         return liveMetrics && liveMetrics.checked
             && document.visibilityState === 'visible'
-            && document.getElementById('console-tab').classList.contains('active');
+            && consoleTab && consoleTab.classList.contains('active');
     }
 
     if (liveMetrics) {
@@ -2497,7 +2449,8 @@
 
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState !== 'visible') return;
-        if (document.getElementById('console-tab').classList.contains('active')) refreshOnline();
+        const consoleTab = document.getElementById('console-tab');
+        if (consoleTab && consoleTab.classList.contains('active')) refreshOnline();
         if (shouldPollMetrics()) refreshStats();
     });
 
@@ -2508,8 +2461,6 @@
     const statMemSub = document.getElementById('statMemSub');
     const statPlayers = document.getElementById('statPlayers');
     const statsNote = document.getElementById('statsNote');
-
-    let statsTimer = null;
 
     function setStat(element, text, tone) {
         if (!element) return;
@@ -2598,14 +2549,6 @@
     const onlineOnly = document.getElementById('onlineOnly');
     const playersNote = document.getElementById('playersNote');
     const playersCount = document.getElementById('playersCount');
-
-    let roster = [];
-    let onlineNames = [];
-    let onlineTimer = null;
-    let rosterLoadedAt = 0;
-
-    const ONLINE_INTERVAL = 5000;
-    const ROSTER_RELOAD_FLOOR = 15000;
 
     async function refreshOnline() {
         try {
@@ -2819,6 +2762,86 @@
         consoleDisconnect();
         stopStatusPolling();
     });
+
+    /* --------------------------------------------------------- Tab Routing Implementation */
+
+    function switchTab(tabName, updateUrl = true) {
+        let activeTabName = (tabName || 'status').toLowerCase();
+        let targetContentId = activeTabName + '-tab';
+        let scrollToPlayers = false;
+
+        if (activeTabName === 'incidents' || activeTabName === 'dashboard') {
+            activeTabName = 'status';
+            targetContentId = 'status-tab';
+        } else if (activeTabName === 'server') {
+            activeTabName = 'console';
+            targetContentId = 'console-tab';
+        } else if (activeTabName === 'players') {
+            activeTabName = 'players';
+            targetContentId = 'console-tab';
+            scrollToPlayers = true;
+        }
+
+        document.querySelectorAll('.tab-container > .tab').forEach(tab => {
+            if (tab.dataset.tab === activeTabName) {
+                tab.classList.add('active');
+            } else {
+                tab.classList.remove('active');
+            }
+        });
+
+        document.querySelectorAll('#content > .tab-content').forEach(panel => {
+            panel.classList.remove('active');
+        });
+
+        const targetPanel = document.getElementById(targetContentId);
+        if (targetPanel) {
+            targetPanel.classList.add('active');
+        }
+
+        if (activeTabName === 'console' || activeTabName === 'players') {
+            consoleConnect();
+            startStatusPolling();
+            if (scrollToPlayers) {
+                setTimeout(() => {
+                    const panel = document.getElementById('playersPanel');
+                    if (panel) panel.scrollIntoView({ behavior: 'smooth' });
+                }, 100);
+            }
+        } else {
+            consoleDisconnect();
+            stopStatusPolling();
+        }
+
+        if (activeTabName === 'status') {
+            initStatusDashboard();
+        }
+
+        if (updateUrl) {
+            const url = new URL(window.location);
+            url.searchParams.set('page', activeTabName);
+            history.replaceState(null, '', url.toString());
+        }
+    }
+
+    document.querySelectorAll('.tab-container > .tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            switchTab(tab.dataset.tab);
+        });
+    });
+
+    window.addEventListener('popstate', () => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const page = urlParams.get('page') || urlParams.get('tab') || 'status';
+        switchTab(page, false);
+    });
+
+    // Run routing init ONLY after all functions and variables are defined
+    (function initRouting() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const page = urlParams.get('page') || urlParams.get('tab') || 'status';
+        switchTab(page, false);
+    })();
 </script>
 
 <script src="https://bakosmp.go.ro/js/topbar-show.js"></script>
