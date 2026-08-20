@@ -88,6 +88,28 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # The icon renderer ships as its own image so PHP and ImageMagick stay
+      # out of the internet-facing API container, which never renders anything.
+      - name: Extract metadata for the item-icons image
+        id: meta-icons
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-item-icons
+          tags: |
+            type=ref,event=branch
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push the item-icons image
+        uses: docker/build-push-action@v5
+        with:
+          context: tools/item-icons
+          push: true
+          tags: ${{ steps.meta-icons.outputs.tags }}
+          labels: ${{ steps.meta-icons.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
@@ -162,12 +184,12 @@ jobs:
               echo "::warning::RCON_PASSWORD secret is empty — the admin console will not be able to run commands."
             fi
 
-            docker-compose pull api
+            docker-compose pull api item-icons
             # mc-control holds the Docker socket and services the console's
             # start/stop/restart queue. It is not a compose dependency of api,
             # so naming it explicitly is what keeps a deploy from leaving the
             # power buttons pointing at a sidecar that was never created.
-            docker-compose up -d api mc-control
+            docker-compose up -d api mc-control item-icons
 
             # Verify the container actually came up with a non-empty DB_HOST.
             actual_host="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' api | grep '^DB_HOST=' | cut -d= -f2-)"

@@ -94,7 +94,8 @@ const MISS_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
 /// 3: added base-material derivation for stairs, slabs, fences and friends.
 /// 4: added the server's own mod jars as a source.
 /// 5: resolve through the item's model file before falling back to guesses.
-const CANDIDATE_GENERATION: u32 = 5;
+/// 6: look inside NeoForge JarJar bundles, which adds whole namespaces.
+const CANDIDATE_GENERATION: u32 = 6;
 
 #[derive(Debug)]
 pub enum TextureError {

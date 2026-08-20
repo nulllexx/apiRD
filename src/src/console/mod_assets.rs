@@ -20,6 +20,14 @@
 //! be megabytes of strings held forever to save a few milliseconds on a path
 //! that is already cached on disk after its first hit.
 //!
+//! ## Bundled jars
+//!
+//! NeoForge lets one jar carry others inside `META-INF/jarjar/`, and mod
+//! authors use it to ship several mods as one download. The outer jar is then a
+//! wrapper that may contain no assets at all while the real ones sit a level
+//! down, so an indexer that reads only top-level entries silently misses every
+//! namespace in the bundle.
+//!
 //! ## Exact first, then a scan
 //!
 //! The same candidate paths the vanilla lookup uses are tried by name, which is
@@ -45,13 +53,102 @@ const MAX_TEXTURE_BYTES: u64 = 256 * 1024;
 /// this is a backstop against pointing the setting at something enormous.
 const MAX_JARS: usize = 2_000;
 
+/// Where NeoForge keeps the jars a bundle carries inside itself.
+const JARJAR_PREFIX: &str = "META-INF/jarjar/";
+
+/// A nested jar is read whole into memory to be opened, so it gets a much
+/// larger cap than a texture — but still a cap.
+const MAX_NESTED_JAR_BYTES: u64 = 128 * 1024 * 1024;
+
+/// How deep bundling is followed. NeoForge bundles are one level in practice;
+/// this stops a jar that contains itself from recursing forever.
+const MAX_NESTING: usize = 2;
+
+/// Somewhere a jar's entries can be read from: a file, or a jar bundled inside
+/// one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JarSource {
+    path: PathBuf,
+    /// Entry name of a jar nested inside `path`, for NeoForge JarJar bundles.
+    nested: Option<String>,
+}
+
+impl JarSource {
+    fn file(path: PathBuf) -> Self {
+        JarSource { path, nested: None }
+    }
+
+    fn inside(path: PathBuf, entry: String) -> Self {
+        JarSource {
+            path,
+            nested: Some(entry),
+        }
+    }
+}
+
+impl std::fmt::Display for JarSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.nested {
+            Some(entry) => write!(f, "{}!{entry}", self.path.display()),
+            None => write!(f, "{}", self.path.display()),
+        }
+    }
+}
+
+/// Either an open jar file or one held in memory after being unwrapped from a
+/// bundle. `ZipArchive` needs `Read + Seek`, and the two cases cannot share a
+/// type without this.
+enum JarReader {
+    File(std::fs::File),
+    Memory(std::io::Cursor<Vec<u8>>),
+}
+
+impl std::io::Read for JarReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            JarReader::File(file) => file.read(buf),
+            JarReader::Memory(cursor) => cursor.read(buf),
+        }
+    }
+}
+
+impl std::io::Seek for JarReader {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        match self {
+            JarReader::File(file) => file.seek(pos),
+            JarReader::Memory(cursor) => cursor.seek(pos),
+        }
+    }
+}
+
+/// Open a source for reading, unwrapping one level of bundling if needed.
+fn open(source: &JarSource) -> Option<zip::ZipArchive<JarReader>> {
+    let file = std::fs::File::open(&source.path).ok()?;
+
+    let Some(entry_name) = &source.nested else {
+        return zip::ZipArchive::new(JarReader::File(file)).ok();
+    };
+
+    let mut outer = zip::ZipArchive::new(file).ok()?;
+    let mut entry = outer.by_name(entry_name).ok()?;
+    if entry.size() > MAX_NESTED_JAR_BYTES {
+        log::warn!("mod assets: nested jar {source} is implausibly large");
+        return None;
+    }
+
+    let mut bytes = Vec::with_capacity(entry.size() as usize);
+    entry.read_to_end(&mut bytes).ok()?;
+
+    zip::ZipArchive::new(JarReader::Memory(std::io::Cursor::new(bytes))).ok()
+}
+
 /// Mod jars on disk, indexed by the namespaces they provide.
 pub struct ModAssets {
     dir: PathBuf,
     /// Built once, on the first lookup rather than at boot: a server with no
     /// mods should not pay to discover that, and a server with three hundred
     /// should not delay startup for it.
-    index: OnceCell<HashMap<String, Vec<PathBuf>>>,
+    index: OnceCell<HashMap<String, Vec<JarSource>>>,
 }
 
 impl ModAssets {
@@ -62,7 +159,7 @@ impl ModAssets {
         })
     }
 
-    async fn index(&self) -> &HashMap<String, Vec<PathBuf>> {
+    async fn index(&self) -> &HashMap<String, Vec<JarSource>> {
         self.index
             .get_or_init(|| async {
                 let dir = self.dir.clone();
@@ -167,8 +264,8 @@ fn namespace_of(entry: &str) -> Option<&str> {
     ok.then_some(namespace)
 }
 
-fn build_index(dir: &Path) -> HashMap<String, Vec<PathBuf>> {
-    let mut index: HashMap<String, Vec<PathBuf>> = HashMap::new();
+fn build_index(dir: &Path) -> HashMap<String, Vec<JarSource>> {
+    let mut index: HashMap<String, Vec<JarSource>> = HashMap::new();
 
     let Ok(entries) = std::fs::read_dir(dir) else {
         // Not an error: a vanilla or plugin-only server simply has no mods
@@ -190,26 +287,7 @@ fn build_index(dir: &Path) -> HashMap<String, Vec<PathBuf>> {
         }
         jars += 1;
 
-        let Ok(file) = std::fs::File::open(&path) else {
-            continue;
-        };
-        let Ok(archive) = zip::ZipArchive::new(file) else {
-            // A disabled mod is often left in place as a truncated or renamed
-            // file; that is not worth failing the whole index over.
-            log::debug!("mod assets: {} is not readable as a zip", path.display());
-            continue;
-        };
-
-        // `file_names` reads the central directory only — no decompression, and
-        // no per-entry setup.
-        let namespaces: HashSet<&str> = archive.file_names().filter_map(namespace_of).collect();
-
-        for namespace in namespaces {
-            index
-                .entry(namespace.to_string())
-                .or_default()
-                .push(path.clone());
-        }
+        index_source(&mut index, JarSource::file(path), 0);
     }
 
     log::info!(
@@ -218,6 +296,46 @@ fn build_index(dir: &Path) -> HashMap<String, Vec<PathBuf>> {
         dir.display()
     );
     index
+}
+
+/// Record every namespace one source provides, then descend into any jars it
+/// bundles.
+fn index_source(index: &mut HashMap<String, Vec<JarSource>>, source: JarSource, depth: usize) {
+    let Some(archive) = open(&source) else {
+        // A disabled mod is often left in place as a truncated or renamed file;
+        // that is not worth failing the whole index over.
+        log::debug!("mod assets: {source} is not readable as a zip");
+        return;
+    };
+
+    // `file_names` reads the central directory only — no decompression, and no
+    // per-entry setup.
+    let namespaces: HashSet<&str> = archive.file_names().filter_map(namespace_of).collect();
+    for namespace in namespaces {
+        index
+            .entry(namespace.to_string())
+            .or_default()
+            .push(source.clone());
+    }
+
+    if depth >= MAX_NESTING || source.nested.is_some() {
+        return;
+    }
+
+    let bundled: Vec<String> = archive
+        .file_names()
+        .filter(|entry| entry.starts_with(JARJAR_PREFIX) && entry.ends_with(".jar"))
+        .map(str::to_string)
+        .collect();
+
+    for entry in bundled {
+        log::debug!("mod assets: descending into bundled jar {entry}");
+        index_source(
+            index,
+            JarSource::inside(source.path.clone(), entry),
+            depth + 1,
+        );
+    }
 }
 
 /// Pick the entry that best answers `name` from a jar's file list.
@@ -268,9 +386,8 @@ fn best_match<'a>(
 }
 
 /// Read one named entry out of a jar.
-fn read_entry(jar: &Path, entry_name: &str) -> Option<Vec<u8>> {
-    let file = std::fs::File::open(jar).ok()?;
-    let mut archive = zip::ZipArchive::new(file).ok()?;
+fn read_entry(jar: &JarSource, entry_name: &str) -> Option<Vec<u8>> {
+    let mut archive = open(jar)?;
     let mut entry = archive.by_name(entry_name).ok()?;
 
     if entry.size() > MAX_TEXTURE_BYTES {
@@ -284,13 +401,12 @@ fn read_entry(jar: &Path, entry_name: &str) -> Option<Vec<u8>> {
 
 /// Pull one texture out of a single jar.
 fn read_from_jar(
-    jar: &Path,
+    jar: &JarSource,
     namespace: &str,
     name: &str,
     candidates: &[String],
 ) -> Option<Vec<u8>> {
-    let file = std::fs::File::open(jar).ok()?;
-    let mut archive = zip::ZipArchive::new(file).ok()?;
+    let mut archive = open(jar)?;
 
     let prefix = format!("assets/{namespace}/textures/");
 
@@ -306,7 +422,7 @@ fn read_from_jar(
 
     let mut entry = archive.by_name(&found).ok()?;
     if entry.size() > MAX_TEXTURE_BYTES {
-        log::warn!("mod assets: {found} in {} is implausibly large", jar.display());
+        log::warn!("mod assets: {found} in {jar} is implausibly large");
         return None;
     }
 
@@ -419,6 +535,217 @@ mod tests {
         std::fs::write(dir.join("config.toml"), b"x").unwrap();
 
         assert!(build_index(&dir).is_empty());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Write a jar that carries other jars inside META-INF/jarjar/, the way a
+    /// NeoForge bundle does.
+    fn write_bundle(dir: &Path, jar_name: &str, own: &[&str], bundled: &[(&str, &[&str])]) -> PathBuf {
+        // Build each nested jar in memory first.
+        let nested: Vec<(String, Vec<u8>)> = bundled
+            .iter()
+            .map(|(name, entries)| {
+                let mut buffer = std::io::Cursor::new(Vec::new());
+                {
+                    let mut inner = zip::ZipWriter::new(&mut buffer);
+                    for entry in *entries {
+                        inner
+                            .start_file::<_, ()>(*entry, zip::write::SimpleFileOptions::default())
+                            .unwrap();
+                        inner.write_all(PNG).unwrap();
+                    }
+                    inner.finish().unwrap();
+                }
+                ((*name).to_string(), buffer.into_inner())
+            })
+            .collect();
+
+        let path = dir.join(jar_name);
+        let file = std::fs::File::create(&path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+
+        for entry in own {
+            zip.start_file::<_, ()>(*entry, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(PNG).unwrap();
+        }
+        for (name, bytes) in &nested {
+            // Stored rather than deflated, which is what JarJar itself does.
+            zip.start_file::<_, ()>(
+                format!("META-INF/jarjar/{name}"),
+                zip::write::SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Stored),
+            )
+            .unwrap();
+            zip.write_all(bytes).unwrap();
+        }
+
+        zip.finish().unwrap();
+        path
+    }
+
+    /* ------------------------------------------------------------- bundles */
+
+    #[test]
+    fn namespaces_inside_a_bundled_jar_are_indexed() {
+        // The Aeronautics case: one download whose real mods sit a level down
+        // in META-INF/jarjar/. An indexer reading only top-level entries sees
+        // none of them.
+        let dir = temp_dir();
+        write_bundle(
+            &dir,
+            "aeronautics.jar",
+            &["assets/aeronautics/textures/item/wrench.png"],
+            &[(
+                "dev.simulated_team.simulated.simulated-neoforge-1.21.1-1.3.1.jar",
+                &["assets/simulated/textures/item/engine_assembly.png"],
+            )],
+        );
+
+        let index = build_index(&dir);
+
+        assert!(index.contains_key("aeronautics"), "the outer jar still counts");
+        assert!(
+            index.contains_key("simulated"),
+            "the bundled jar's namespace must be found: {:?}",
+            index.keys().collect::<Vec<_>>()
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_bundle_that_carries_no_assets_of_its_own_still_yields_its_children() {
+        // Common shape: the outer jar is pure wrapper.
+        let dir = temp_dir();
+        write_bundle(
+            &dir,
+            "bundle.jar",
+            &["META-INF/MANIFEST.MF"],
+            &[
+                ("a.jar", &["assets/offroad/textures/item/tyre.png"]),
+                ("b.jar", &["assets/simulated/textures/item/engine.png"]),
+            ],
+        );
+
+        let index = build_index(&dir);
+
+        assert_eq!(index.len(), 2, "got {:?}", index.keys().collect::<Vec<_>>());
+        assert!(index.contains_key("offroad") && index.contains_key("simulated"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn a_texture_is_read_out_of_a_bundled_jar() {
+        let dir = temp_dir();
+        write_bundle(
+            &dir,
+            "aeronautics.jar",
+            &[],
+            &[(
+                "simulated.jar",
+                &["assets/simulated/textures/item/engine_assembly.png"],
+            )],
+        );
+
+        let assets = ModAssets::new(dir.to_string_lossy().into_owned());
+        let found = assets
+            .get(
+                "simulated",
+                "engine_assembly",
+                vec!["item/engine_assembly.png".to_string()],
+            )
+            .await;
+
+        assert_eq!(found.as_deref(), Some(PNG), "indexing it is not enough — it has to be readable");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn a_model_is_read_out_of_a_bundled_jar() {
+        // Model resolution has to reach into bundles too, or a bundled mod
+        // resolves its textures by guesswork alone.
+        let dir = temp_dir();
+        write_bundle(
+            &dir,
+            "aeronautics.jar",
+            &[],
+            &[(
+                "simulated.jar",
+                &["assets/simulated/models/item/engine_assembly.json"],
+            )],
+        );
+
+        let assets = ModAssets::new(dir.to_string_lossy().into_owned());
+        let found = assets
+            .read_asset("simulated", "models/item/engine_assembly.json")
+            .await;
+
+        assert!(found.is_some());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_bundle_inside_a_bundle_does_not_recurse_forever() {
+        // Depth is capped rather than trusted: a jar that contains itself would
+        // otherwise index until it ran out of memory.
+        let dir = temp_dir();
+        write_bundle(
+            &dir,
+            "outer.jar",
+            &[],
+            &[("inner.jar", &["assets/deep/textures/item/thing.png"])],
+        );
+
+        // Completing at all is the assertion; the depth cap is what makes it
+        // terminate.
+        let index = build_index(&dir);
+        assert!(index.contains_key("deep"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_corrupt_bundled_jar_does_not_sink_its_siblings() {
+        let dir = temp_dir();
+        let path = dir.join("bundle.jar");
+        let file = std::fs::File::create(&path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+
+        zip.start_file::<_, ()>(
+            "META-INF/jarjar/broken.jar",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.write_all(b"not a zip").unwrap();
+
+        let mut good = std::io::Cursor::new(Vec::new());
+        {
+            let mut inner = zip::ZipWriter::new(&mut good);
+            inner
+                .start_file::<_, ()>(
+                    "assets/simulated/textures/item/engine.png",
+                    zip::write::SimpleFileOptions::default(),
+                )
+                .unwrap();
+            inner.write_all(PNG).unwrap();
+            inner.finish().unwrap();
+        }
+        zip.start_file::<_, ()>(
+            "META-INF/jarjar/good.jar",
+            zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored),
+        )
+        .unwrap();
+        zip.write_all(&good.into_inner()).unwrap();
+        zip.finish().unwrap();
+
+        let index = build_index(&dir);
+        assert!(index.contains_key("simulated"));
 
         std::fs::remove_dir_all(&dir).ok();
     }
