@@ -89,9 +89,48 @@ like a small success.
 | `ICON_SIZE` | `64`      | Rendered icon size in pixels                  |
 | `MODS_DIR`  | `/mods`   | Mount the server's mods directory here        |
 | `CACHE_DIR` | `/cache`  | Mount the API's `ITEM_TEXTURE_DIR` here       |
+| `TASKMASTER_WORKER` | `sync` | `fork` opts into the parallel worker pool -- faster, but see below |
 
 `MC_VERSION` is part of the cache path, so it has to match the API's
 `MINECRAFT_ASSETS_VERSION` or the icons land where nothing will look for them.
+
+## Why it renders in one process
+
+Renderchest farms items out to parallel workers by default, and that pool cannot
+report a failure. Taskmaster serializes the exception to send it back to the
+parent, PHP refuses to serialize the Closure in its stack trace, and the worker
+dies mid-message. The parent sees only `Could not read from socket`.
+
+The consequences are worse than slow:
+
+- One unrenderable item kills a whole worker.
+- The actual reason is never printed -- the error path crashes before it can say
+  anything useful.
+- Every failure emits a full fatal with stack trace. A few hundred modded items
+  produce thousands of lines of identical noise.
+
+So this runs with `TASKMASTER_WORKER=sync`: one process, no sockets, nothing to
+serialize. A failing item is recorded as a failed task with its real message and
+the run continues. It is slower, which is the right trade for a batch job that
+runs when the modpack changes.
+
+`TASKMASTER_WORKER=fork` restores the pool if you want the speed and can live
+with the above.
+
+## Reading the output
+
+Renderchest's full output goes to `<work>/logs/<namespace>.log`; the console
+gets a digest -- a progress line every 250 items, the first three failures, and
+a per-namespace tally:
+
+```
+    minecraft: 250 rendered
+    minecraft: 500 rendered
+    minecraft: 1721 rendered, 0 failed  (full log: /work/logs/minecraft.log)
+```
+
+A namespace that renders nothing is not fatal on its own -- a mod can ship no
+item models at all. The run fails only if *no* namespace produced anything.
 
 ## Automatic re-runs
 

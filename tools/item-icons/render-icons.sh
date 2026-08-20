@@ -38,6 +38,23 @@ export ICON_SIZE="${ICON_SIZE:-64}"
 export WORK="${WORK:-/work}"
 export POLL_INTERVAL="${POLL_INTERVAL:-300}"
 
+# Render in-process rather than across a pool of socket workers.
+#
+# Taskmaster cannot report a failure from a parallel worker: it serializes the
+# exception to send it back, PHP refuses to serialize the Closure in its stack
+# trace, and the worker dies mid-message. The parent then sees only "Could not
+# read from socket" -- so a single unrenderable item takes out a worker, and the
+# actual reason is never shown. Modded namespaces hit this on essentially every
+# item.
+#
+# The sync worker keeps everything in one process, so a failing item is recorded
+# as a failed task with its real message and the run carries on. Slower, and
+# worth it: this is a batch job that runs when the modpack changes, and a
+# correct slow answer beats a fast pile of stack traces.
+#
+# Set TASKMASTER_WORKER=fork to opt back into the parallel pool.
+export TASKMASTER_WORKER="${TASKMASTER_WORKER:-sync}"
+
 VANILLA_ASSETS="$WORK/vanilla/assets"
 MOD_ASSETS="$WORK/mods/assets"
 RENDER_OUT="$WORK/out"
@@ -160,6 +177,18 @@ render_namespace() {
   # `nice` costs nothing when the machine is otherwise idle (the renderer still
   # gets every spare cycle) and yields immediately when it is not, which is
   # exactly the trade a background batch job should make.
+  # Full output to a log; only a digest reaches the console.
+  #
+  # Renderchest is loud in normal operation (one line per item) and catastrophic
+  # in failure: an exception inside a parallel worker cannot be sent back to the
+  # parent, because taskmaster serializes it and PHP refuses to serialize the
+  # Closure in its stack trace. The worker dies mid-message, the parent reports
+  # "Could not read from socket", and every failing item emits a full fatal with
+  # stack trace. A few hundred modded items produce thousands of lines and bury
+  # everything useful.
+  mkdir -p "$WORK/logs"
+  local log="$WORK/logs/$ns.log"
+
   ( cd "$RENDERCHEST_HOME" && nice -n 19 php "$RENDERCHEST" \
       --assets "$VANILLA_ASSETS" \
       --assets "$MOD_ASSETS" \
@@ -167,7 +196,20 @@ render_namespace() {
       --output "$out" \
       --format png \
       --size "$ICON_SIZE" \
-  ) || echo "!! renderchest failed for namespace $ns (continuing)" >&2
+  ) > "$log" 2>&1 || true
+
+  # fflush keeps this streaming: awk block-buffers when its output is a pipe,
+  # which is exactly what a container log is, and a silent half hour reads as a
+  # hang.
+  awk -v ns="$ns" '
+    /^Rendered item/     { n++; if (n % 250 == 0) { printf "    %s: %d rendered\n", ns, n; fflush() } next }
+    /^Failed to render/  { f++; if (f <= 3)       { printf "    %s: %s\n", ns, $0;        fflush() } next }
+  ' "$log"
+
+  local ok bad
+  ok=$(grep -c '^Rendered item' "$log" 2>/dev/null || true)
+  bad=$(grep -c '^Failed to render' "$log" 2>/dev/null || true)
+  echo "    $ns: $ok rendered, $bad failed  (full log: $log)"
 }
 
 # Copy the rendered icons into the cache.
@@ -311,7 +353,15 @@ case "${1:-}" in
     # even when it found no real items, so the count that matters is the one in
     # the requested namespace's own directory.
     rendered=$(find "$RENDER_OUT/$ns/items/$ns" -maxdepth 1 -name '*.png' 2>/dev/null | wc -l)
-    log "rendered $rendered icon(s) for '$ns'"
+
+    # Distinct items, not files. An animated texture is written one file per
+    # frame, so the raw file count runs well ahead of the number of icons that
+    # actually get installed -- and `all` reporting a much smaller number
+    # afterwards would otherwise look like something had gone wrong.
+    items=$(find "$RENDER_OUT/$ns/items/$ns" -maxdepth 1 -name '*.png' 2>/dev/null \
+      | sed 's|.*/||; s|\.png$||; s|-[0-9][0-9]*$||' | sort -u | wc -l)
+
+    log "rendered $rendered file(s) for '$ns' -> $items distinct item(s) after collapsing animation frames"
 
     if [ "$rendered" -eq 0 ]; then
       echo "FAIL: Renderchest found no items in namespace '$ns'."
