@@ -29,9 +29,19 @@ RUN php -r 'exit(extension_loaded("imagick") ? 0 : 1);'
 
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
+# Pinnable. Renderchest 5.x targets recent Minecraft versions, and its own
+# builtin item definitions use the `assets/<ns>/items/` layout that only exists
+# from 1.21.4. If it turns out not to cope with an older server's assets, this
+# is the knob to turn rather than a rebuild from scratch.
+ARG RENDERCHEST_VERSION=^5.1
+
 WORKDIR /opt/renderchest
-RUN composer require aternos/renderchest --no-interaction --no-progress \
- && test -x vendor/bin/renderchest
+# The package publishes no `bin` entry, so composer never links anything into
+# vendor/bin -- checking there is what broke the previous build. The CLI is a
+# plain script at the package root, and it is checked for existence rather than
+# for the executable bit, which a zip-based install does not reliably preserve.
+RUN composer require "aternos/renderchest:${RENDERCHEST_VERSION}" --no-interaction --no-progress \
+ && test -f vendor/aternos/renderchest/renderchest
 
 COPY render-icons.sh /usr/local/bin/render-icons
 RUN chmod +x /usr/local/bin/render-icons

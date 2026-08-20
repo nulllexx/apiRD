@@ -30,7 +30,15 @@ POLL_INTERVAL="${POLL_INTERVAL:-300}"
 VANILLA_ASSETS="$WORK/vanilla/assets"
 MOD_ASSETS="$WORK/mods/assets"
 RENDER_OUT="$WORK/out"
-RENDERCHEST="/opt/renderchest/vendor/bin/renderchest"
+# The CLI is a plain script inside the installed package, not a composer bin.
+#
+# Two reasons it is run as `php <script>` from RENDERCHEST_HOME rather than
+# executed directly: its shebang is `#!/usr/bin/php`, while the official PHP
+# image puts php at /usr/local/bin/php; and it does
+# `require_once "vendor/autoload.php"` with a relative path, so it finds its
+# own dependencies only when the working directory is the project root.
+RENDERCHEST_HOME="${RENDERCHEST_HOME:-/opt/renderchest}"
+RENDERCHEST="$RENDERCHEST_HOME/vendor/aternos/renderchest/renderchest"
 
 log() { printf '\n== %s\n' "$*"; }
 
@@ -118,14 +126,14 @@ render_namespace() {
   # Vanilla assets come first: Renderchest requires the base game's assets to be
   # present regardless of which namespace is being rendered, because modded
   # models routinely inherit from vanilla parents.
-  "$RENDERCHEST" \
-    --assets "$VANILLA_ASSETS" \
-    --assets "$MOD_ASSETS" \
-    --namespace "$ns" \
-    --output "$out" \
-    --format png \
-    --size "$ICON_SIZE" \
-    || echo "!! renderchest failed for namespace $ns (continuing)" >&2
+  ( cd "$RENDERCHEST_HOME" && php "$RENDERCHEST" \
+      --assets "$VANILLA_ASSETS" \
+      --assets "$MOD_ASSETS" \
+      --namespace "$ns" \
+      --output "$out" \
+      --format png \
+      --size "$ICON_SIZE" \
+  ) || echo "!! renderchest failed for namespace $ns (continuing)" >&2
 }
 
 # Copy whatever was rendered into the cache, flattening any directory nesting.

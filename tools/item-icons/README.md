@@ -137,8 +137,37 @@ delete `<cache>/<version>/<namespace>/`.
 
 ## Known gaps
 
-Renderchest ships built-in models for **chests, shulker boxes and mob heads**,
-which the model system alone cannot draw. It does **not** list beds, shields or
-banners, so those may still render poorly or not at all — the panel falls back
-to its initials tile for anything missing, so a gap is cosmetic rather than
-broken.
+Renderchest carries its own definitions for the items the model system cannot
+draw, in `builtin/minecraft/items/`. Taken from the v5.1.0 file listing rather
+than from its README, which understates this:
+
+| Item              | Covered |
+|-------------------|---------|
+| chests (all)      | yes, 65 definitions including the copper variants |
+| shulker boxes     | yes, all colours |
+| banners           | yes, all colours |
+| mob heads         | yes, 208 definitions |
+| shield            | yes |
+| decorated pot     | yes |
+| conduit           | yes |
+| **beds**          | **no** |
+
+So beds are the one thing expected to stay as a flat texture. Anything missing
+falls back to the panel's own lookup and then to the initials tile, so a gap is
+cosmetic rather than broken.
+
+## If nothing renders on 1.21.1
+
+Renderchest 5.x targets recent Minecraft versions — its builtin definitions use
+the `assets/<ns>/items/` layout that only exists from 1.21.4, and its constants
+mention trim and armour materials newer than 1.21.1. Whether it copes with an
+older server's assets is untested here.
+
+If `inspect` renders nothing, that is the likely reason, and the fix is to pin
+an older major rather than to change anything else:
+
+```sh
+docker build --build-arg RENDERCHEST_VERSION='^4.0' -t item-icons tools/item-icons
+```
+
+Published majors run from 1.x to 5.x, so there is room to walk back.
