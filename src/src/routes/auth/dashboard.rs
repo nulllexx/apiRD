@@ -11,16 +11,9 @@ pub async fn serve_dashboard(
         return resp;
     }
 
-    let path = format!("{}/dashboard.html", state.config.private_dir);
-    match std::fs::read_to_string(&path) {
-        Ok(content) => HttpResponse::Ok()
-            .content_type("text/html; charset=utf-8")
-            .body(content),
-        Err(e) => {
-            log::error!("Error reading dashboard.html: {}", e);
-            HttpResponse::InternalServerError().body("Error loading dashboard")
-        }
-    }
+    HttpResponse::Found()
+        .append_header(("Location", "/rdadmin.html?page=status"))
+        .finish()
 }
 
 pub async fn serve_rdadmin(

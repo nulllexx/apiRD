@@ -6,6 +6,10 @@
     <meta name="theme-color" content="#f4f6f9" id="metaThemeColor">
     <title>RainDrippy Studios - Admin Dashboard</title>
     <link rel="icon" href="/raindrippy/rd.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="https://bakosmp.go.ro/raindrippy/index.css">
     <link rel="stylesheet" href="https://bakosmp.go.ro/cookie.css">
     <style>
@@ -93,27 +97,25 @@
         html { background: var(--bg) !important; }
 
         body, #topbar, #userTable, #moderationPanel, #overlayContent, #consoleOutput,
+        .card, .component-card, .incident-item,
         input, textarea, select, button {
             transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
         }
 
-        h1, h2, h3, p, label, td, th, div {
+        h1, h2, h3, h4, p, label, td, th, div {
             color: var(--text) !important;
         }
 
-        h1, h2, h3 {
+        h1, h2, h3, h4 {
             font-family: "Space Grotesk", "Inter", Arial, sans-serif;
             letter-spacing: -0.01em;
             color: var(--text) !important;
         }
 
-        h1 {
-            font-size: 1.5rem;
-            margin: 0 0 4px;
-        }
-
+        h1 { font-size: 1.5rem; margin: 0 0 4px; }
         h2 { font-size: 1.15rem; margin: 0 0 14px; }
         h3 { font-size: 0.95rem; margin: 0 0 10px; color: var(--text-muted) !important; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+        h4 { font-size: 0.88rem; margin: 12px 0 8px; color: var(--text-muted) !important; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
 
         a { color: var(--accent) !important; }
 
@@ -132,9 +134,6 @@
             border-bottom: 1px solid var(--line) !important;
         }
 
-        /* the "rain drip" signature: a faint streak that runs the width of
-           the topbar and pulses very slowly, echoing the studio name
-           without shouting about it */
         #topbar::after {
             content: "";
             position: absolute;
@@ -185,6 +184,7 @@
             background: var(--bg-raised) !important;
             font-size: 16px;
             line-height: 1;
+            cursor: pointer;
         }
 
         #themeToggle:hover { border-color: var(--accent-dim) !important; background: var(--accent-soft) !important; }
@@ -206,7 +206,7 @@
 
         /* ---------------------------------------------------------- Content */
 
-        #content {
+        #content, .container {
             max-width: 1080px;
             margin: 0 auto;
             padding: 24px 20px 60px;
@@ -254,17 +254,31 @@
         .tab-content { display: none; }
         .tab-content.active { display: block; }
 
-        /* ---------------------------------------------------------- Panels */
+        /* ---------------------------------------------------------- Panels & Cards */
 
-        #userTable, #moderationPanel {
+        #userTable, #moderationPanel, .card {
             background: var(--bg-panel) !important;
             border: 1px solid var(--line) !important;
             border-radius: var(--radius);
         }
 
+        .card {
+            padding: 24px;
+            box-shadow: var(--shadow);
+            margin-bottom: 24px;
+        }
+
+        .card-title {
+            font-size: 1.15rem;
+            margin: 0 0 18px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--line-soft);
+            color: var(--text) !important;
+        }
+
         #userTable { border-collapse: collapse; overflow: hidden; }
 
-        /* ---------------------------------------------------------- Search */
+        /* ---------------------------------------------------------- Form controls */
 
         #searchUser {
             width: 100%;
@@ -273,7 +287,16 @@
             margin-bottom: 16px;
         }
 
-        input[type="text"], input[type="search"], textarea, select {
+        .form-group { margin-bottom: 16px; }
+        .form-group label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 0.82rem;
+            color: var(--text-muted) !important;
+            font-weight: 500;
+        }
+
+        input[type="text"], input[type="search"], textarea, select, .form-control {
             background: var(--bg-input) !important;
             border: 1px solid var(--line) !important;
             color: var(--text) !important;
@@ -281,19 +304,25 @@
             padding: 10px 12px;
             font-size: 0.92rem;
             font-family: inherit;
+            width: 100%;
             transition: border-color 0.15s ease, box-shadow 0.15s ease;
         }
 
-        input[type="text"]:focus, input[type="search"]:focus, textarea:focus, select:focus,
+        input[type="text"]:focus, input[type="search"]:focus, textarea:focus, select:focus, .form-control:focus,
         button:focus-visible, .tab:focus-visible {
             outline: none;
             border-color: var(--accent) !important;
             box-shadow: 0 0 0 3px var(--accent-soft);
         }
 
+        textarea, textarea.form-control {
+            min-height: 80px;
+            resize: vertical;
+        }
+
         input::placeholder, textarea::placeholder { color: var(--text-faint) !important; }
 
-        /* ---------------------------------------------------------- Table */
+        /* ---------------------------------------------------------- Tables */
 
         table { width: 100%; border-collapse: collapse; }
 
@@ -329,7 +358,7 @@
         td:first-child, th:first-child { padding-left: 18px; }
         td:last-child, th:last-child { padding-right: 18px; }
 
-        .status-pill {
+        .status-pill, .incident-status, .component-status, .impact-badge {
             display: inline-block;
             padding: 3px 10px;
             border-radius: 999px;
@@ -338,16 +367,34 @@
             border: 1px solid transparent;
         }
 
-        .status-pill.status-ok {
+        .status-pill.status-ok, .status-operational, .status-monitoring {
             background: var(--ok-soft) !important;
             color: var(--ok) !important;
             border-color: rgba(28, 157, 111, 0.3) !important;
         }
 
-        .status-pill.status-bad {
+        .status-pill.status-bad, .status-disruption {
             background: var(--danger-soft) !important;
             color: var(--danger) !important;
             border-color: rgba(220, 53, 69, 0.3) !important;
+        }
+
+        .status-degraded, .status-investigating {
+            background: var(--warn-soft) !important;
+            color: var(--warn) !important;
+            border-color: rgba(183, 121, 31, 0.3) !important;
+        }
+
+        .status-identified, .impact-badge {
+            background: var(--accent-soft) !important;
+            color: var(--accent) !important;
+            border-color: rgba(8, 145, 178, 0.3) !important;
+        }
+
+        .status-resolved {
+            background: var(--bg-raised) !important;
+            color: var(--text-muted) !important;
+            border-color: var(--line) !important;
         }
 
         input[type="checkbox"] {
@@ -369,9 +416,14 @@
 
         /* ---------------------------------------------------------- Buttons */
 
-        button {
+        button, .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
             padding: 8px 14px;
             margin-right: 6px;
+            margin-bottom: 4px;
             border: 1px solid var(--line) !important;
             background: var(--bg-raised) !important;
             color: var(--text) !important;
@@ -383,24 +435,31 @@
             transition: border-color 0.15s ease, background 0.15s ease, transform 0.05s ease;
         }
 
-        button:hover { border-color: var(--accent-dim) !important; background: #1c2230 !important; }
-        button:active { transform: translateY(1px); }
-        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        button:hover, .btn:hover { border-color: var(--accent-dim) !important; background: var(--bg-panel) !important; transform: translateY(-1px); }
+        button:active, .btn:active { transform: translateY(1px); }
+        button:disabled, .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 
-        #applyBan, .genPWDreset {
+        #applyBan, .genPWDreset, .btn-primary {
             background: var(--accent) !important;
             border-color: var(--accent) !important;
             color: var(--accent-contrast) !important;
             font-weight: 600;
         }
-        #applyBan:hover, .genPWDreset:hover { background: #6adcff !important; }
+        #applyBan:hover, .genPWDreset:hover, .btn-primary:hover { background: var(--accent-dim) !important; border-color: var(--accent-dim) !important; }
 
-        .deleteBtn {
+        .btn-outline {
+            background: var(--bg-raised) !important;
+            border: 1px solid var(--line) !important;
+            color: var(--text) !important;
+        }
+        .btn-outline:hover { border-color: var(--accent) !important; color: var(--accent) !important; }
+
+        .deleteBtn, .btn-danger, .remove-component {
             background: transparent !important;
             border-color: rgba(255, 107, 107, 0.4) !important;
             color: var(--danger) !important;
         }
-        .deleteBtn:hover { background: var(--danger-soft) !important; border-color: var(--danger) !important; }
+        .deleteBtn:hover, .btn-danger:hover, .remove-component:hover { background: var(--danger-soft) !important; border-color: var(--danger) !important; }
 
         .unbanBtn { color: var(--text-muted) !important; }
 
@@ -410,6 +469,103 @@
             padding: 6px 10px;
         }
 
+        /* ---------------------------------------------------------- Status & Incidents UI */
+
+        .dashboard-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+
+        #current-time {
+            font-family: "JetBrains Mono", Consolas, monospace;
+            font-size: 0.85rem;
+            color: var(--text-muted) !important;
+        }
+
+        .component-updates {
+            background: var(--bg-raised) !important;
+            border: 1px solid var(--line) !important;
+            border-radius: var(--radius-sm);
+            padding: 14px;
+            margin: 10px 0 14px;
+        }
+
+        .component-update {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            align-items: center;
+        }
+        .component-update:last-child { margin-bottom: 0; }
+        .component-update select { flex: 1; }
+
+        .component-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+            margin-top: 16px;
+        }
+
+        .component-card {
+            background: var(--bg-raised) !important;
+            border: 1px solid var(--line) !important;
+            border-radius: var(--radius-sm);
+            padding: 18px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+        }
+
+        .component-name { font-size: 1.05rem; margin-bottom: 10px; }
+        .last-updated { font-size: 0.78rem; color: var(--text-muted) !important; margin-bottom: 14px; }
+        .component-card .form-group { margin-bottom: 12px; }
+
+        .incident-list { list-style: none; padding: 0; margin: 0; }
+
+        .incident-item {
+            background: var(--bg-raised) !important;
+            border: 1px solid var(--line) !important;
+            border-left: 4px solid var(--accent) !important;
+            border-radius: var(--radius-sm);
+            padding: 18px;
+            margin-bottom: 14px;
+        }
+
+        .incident-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 8px; }
+
+        .incident-meta {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 12px;
+            font-size: 0.82rem;
+            color: var(--text-muted) !important;
+            flex-wrap: wrap;
+        }
+
+        .incident-context { font-size: 0.92rem; line-height: 1.5; margin-bottom: 12px; color: var(--text) !important; }
+
+        .history-list { margin-top: 14px; border-top: 1px dashed var(--line); padding-top: 12px; }
+        .history-item { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--line-soft); }
+        .history-item:last-child { border-bottom: none; }
+        .history-time { font-size: 0.8rem; font-weight: 600; color: var(--text-muted) !important; }
+        .history-context { font-size: 0.88rem; color: var(--text) !important; }
+
+        .update-form { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+
+        .alert {
+            padding: 12px 16px;
+            border-radius: var(--radius-sm);
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.9rem;
+        }
+        .alert-success { background: var(--ok-soft) !important; color: var(--ok) !important; border: 1px solid rgba(28, 157, 111, 0.3) !important; }
+        .alert-error { background: var(--danger-soft) !important; color: var(--danger) !important; border: 1px solid rgba(220, 53, 69, 0.3) !important; }
+
         /* ---------------------------------------------------------- Moderation panel */
 
         #moderationPanel {
@@ -418,7 +574,6 @@
         }
 
         #moderationPanel > div { margin-bottom: 14px; }
-
         #moderationPanel label {
             display: block;
             margin-bottom: 6px;
@@ -507,14 +662,13 @@
         }
 
         #overlayContent input[type="text"] { width: 100%; }
-
         #overlayContent button { margin-top: 10px; padding: 10px 20px; cursor: pointer; }
 
         .copyBtn { background: var(--accent) !important; color: var(--accent-contrast) !important; border: none !important; font-weight: 600; }
-        .copyBtn:hover { background: #6adcff !important; }
+        .copyBtn:hover { background: var(--accent-dim) !important; }
 
         .closeBtn { background: var(--bg-raised) !important; color: var(--text) !important; border: 1px solid var(--line) !important; }
-        .closeBtn:hover { background: #1c2230 !important; }
+        .closeBtn:hover { background: var(--bg-panel) !important; }
 
         /* ---------------------------------------------------------- Console */
 
@@ -593,7 +747,7 @@
             color: var(--accent-contrast) !important;
             font-weight: 600;
         }
-        #consoleSend:hover { background: #6adcff !important; }
+        #consoleSend:hover { background: var(--accent-dim) !important; }
 
         #powerControls {
             display: flex;
@@ -660,8 +814,6 @@
         .stat-value.warn { color: var(--warn) !important; }
         .stat-value.bad { color: var(--danger) !important; }
 
-        /* Deliberately quieter than a real reading: an unavailable metric
-           should not look like a measurement of zero. */
         .stat-value.unknown {
             color: var(--text-faint) !important;
             font-size: 0.9rem;
@@ -712,8 +864,6 @@
         .badge-banned { background: var(--danger-soft) !important; color: var(--danger) !important; }
         .badge-whitelisted { background: var(--warn-soft) !important; color: var(--warn) !important; }
 
-        /* A player whose usercache entry has expired is listed by UUID; the
-           dimmer treatment says "we only half-know this one". */
         #playerTable .uuid-only {
             color: var(--text-faint) !important;
             font-family: "JetBrains Mono", Consolas, monospace;
@@ -726,14 +876,12 @@
         /* ---------------------------------------------------------- Mobile */
 
         @media (max-width: 720px) {
-            #content { padding: 16px 12px 48px; }
+            #content, .container { padding: 16px 12px 48px; }
             #topbar { padding: 10px 14px; }
             h1 { font-size: 1.25rem; }
 
             .tab { padding: 9px 12px; font-size: 0.86rem; }
 
-            /* Table becomes a stacked card list; data-label (added in JS)
-               supplies the field name that the header row would have shown. */
             #userTable thead { display: none; }
             #userTable, #userTable tbody, #userTable tr, #userTable td { display: block; width: 100%; }
 
@@ -777,7 +925,6 @@
             #userTable td:last-child button { margin: 0; width: 100%; }
 
             #consoleOutput { height: 48vh; font-size: 12px; }
-
             #statsStrip { grid-template-columns: repeat(2, 1fr); }
 
             #playerTable thead { display: none; }
@@ -797,8 +944,6 @@
                 padding: 10px 14px;
             }
 
-            /* data-label is set in JS, and stands in for the header row the
-               stacked layout drops. */
             #playerTable td::before {
                 content: attr(data-label);
                 color: var(--text-muted) !important;
@@ -830,15 +975,21 @@
             #modUsername, #banType, #modNote { max-width: none; }
 
             #overlayContent { padding: 20px; }
+
+            .dashboard-header { flex-direction: column; align-items: flex-start; gap: 6px; }
+            .component-grid { grid-template-columns: 1fr; }
+            .component-update { flex-direction: column; align-items: stretch; }
+            .component-update select { width: 100%; }
         }
     </style>
 </head>
 <body>
 
 <div id="topbar">
-    <img src="rd.png" alt="RainDrippy" class="logo" onclick="window.location.href='index.html'">
-    <span class="tpbar-txt" style="margin-left: 20px;">Admin Panel</span>
-    <a class="tpbar-txt" href="profile.html" style="margin-left: 2em;">Profile</a>
+    <img src="/raindrippy/rd.png" alt="RainDrippy" class="logo" onclick="window.location.href='/raindrippy/index.html'">
+    <span class="tpbar-txt" style="margin-left: 12px; font-weight: 600;">Admin Dashboard</span>
+    <a class="tpbar-txt" href="/status" style="margin-left: 2em;">Public Status</a>
+    <a class="tpbar-txt" href="/profile.html" style="margin-left: 1.5em;">Profile</a>
     <button type="button" id="themeToggle" aria-label="Switch to dark mode" title="Switch to dark mode">
         <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="12" cy="12" r="4.5"></circle>
@@ -853,73 +1004,175 @@
 <div id="content">
     <div class="tab-container">
         <div class="tab active" data-tab="users">Users</div>
+        <div class="tab" data-tab="status">Status & Incidents</div>
         <div class="tab" data-tab="console">Server Console</div>
+        <div class="tab" data-tab="players">Players</div>
     </div>
 
+    <!-- USERS TAB -->
     <div class="tab-content active" id="users-tab">
-    <h1>Manage User Accounts</h1>
-    <p class="page-hint">Search, moderate, and adjust access for every account on the server.</p>
+        <h1>Manage User Accounts</h1>
+        <p class="page-hint">Search, moderate, and adjust access for every account on the server.</p>
 
-    <input type="text" id="searchUser" placeholder="Search username..." />
+        <input type="text" id="searchUser" placeholder="Search username..." />
 
-    <table id="userTable">
-        <thead>
-            <tr>
-                <th>Username</th>
-                <th>Status</th>
-                <th>Admin</th>
-                <th>Member</th>
-                <th>RD Projects Access</th>
-                <th>Plex Access</th>
-                <th>OG</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-            <!-- user rows dynamically inserted here -->
-        </tbody>
-    </table>
+        <table id="userTable">
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Status</th>
+                    <th>Admin</th>
+                    <th>Member</th>
+                    <th>RD Projects Access</th>
+                    <th>Plex Access</th>
+                    <th>OG</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- user rows dynamically inserted here -->
+            </tbody>
+        </table>
 
-    <div id="pagination" style="margin-top: 10px; display: flex; justify-content: center;">
-        <button id="prevPageBtn" disabled>Previous</button>
-        <span id="currentPageSpan" style="margin: 0 10px;">Page 1</span>
-        <button id="nextPageBtn">Next</button>
-    </div>
-
-    <div id="moderationPanel">
-        <h2>Moderation Panel</h2>
-
-        <div>
-            <label for="modUsername">Username:</label>
-            <input type="text" id="modUsername" placeholder="Enter username...">
+        <div id="pagination" style="margin-top: 10px; display: flex; justify-content: center;">
+            <button id="prevPageBtn" disabled>Previous</button>
+            <span id="currentPageSpan" style="margin: 0 10px;">Page 1</span>
+            <button id="nextPageBtn">Next</button>
         </div>
 
-        <div>
-            <label for="banType">Ban Type:</label>
-            <select id="banType">
-            <option value="1d">1 Day</option>
-            <option value="3d">3 Days</option>
-            <option value="7d">7 Days</option>
-            <option value="perm">Permanent</option>
-            <option value="poison">Poison</option>
-            </select>
-        </div>
+        <div id="moderationPanel">
+            <h2>Moderation Panel</h2>
 
-        <div>
-            <label for="modNote">Reason / Moderator Note:</label>
-            <textarea id="modNote" placeholder="Reason for ban..." rows="3" cols="40"></textarea>
-        </div>
+            <div>
+                <label for="modUsername">Username:</label>
+                <input type="text" id="modUsername" placeholder="Enter username...">
+            </div>
 
-        <div id="incriminatorySection">
-            <h3>Incriminatory Content</h3>
-            <div id="incriminatoryList"></div>
-            <button type="button" id="addIncriminatory">+ Add Evidence</button>
-        </div>
+            <div>
+                <label for="banType">Ban Type:</label>
+                <select id="banType">
+                    <option value="1d">1 Day</option>
+                    <option value="3d">3 Days</option>
+                    <option value="7d">7 Days</option>
+                    <option value="perm">Permanent</option>
+                    <option value="poison">Poison</option>
+                </select>
+            </div>
 
-        <button id="applyBan" style="margin-top: 15px;">Apply Moderation</button>
-    </div>
+            <div>
+                <label for="modNote">Reason / Moderator Note:</label>
+                <textarea id="modNote" placeholder="Reason for ban..." rows="3" cols="40"></textarea>
+            </div>
+
+            <div id="incriminatorySection">
+                <h3>Incriminatory Content</h3>
+                <div id="incriminatoryList"></div>
+                <button type="button" id="addIncriminatory">+ Add Evidence</button>
+            </div>
+
+            <button id="applyBan" style="margin-top: 15px;">Apply Moderation</button>
+        </div>
     </div><!-- /users-tab -->
 
+    <!-- STATUS & INCIDENTS TAB -->
+    <div class="tab-content" id="status-tab">
+        <div class="dashboard-header">
+            <h1 class="dashboard-title">System Status & Incident Management</h1>
+            <div id="current-time"></div>
+        </div>
+
+        <div id="alert-box"></div>
+
+        <div class="card">
+            <h2 class="card-title">Create New Incident</h2>
+            <form id="create-incident-form">
+                <div class="form-group">
+                    <label for="incident-title">Incident Title</label>
+                    <input type="text" id="incident-title" class="form-control" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="incident-impact">Impact Level</label>
+                    <select id="incident-impact" class="form-control" required>
+                        <option value="minimal_outage">Minimal Outage</option>
+                        <option value="partial_outage" selected>Partial Outage</option>
+                        <option value="full_outage">Full Outage</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="incident-status">Initial Status</label>
+                    <select id="incident-status" class="form-control" required>
+                        <option value="investigating" selected>Investigating</option>
+                        <option value="identified">Identified</option>
+                        <option value="monitoring">Monitoring</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="incident-context">Status Context</label>
+                    <textarea id="incident-context" class="form-control" placeholder="Describe what you know about the issue"></textarea>
+                </div>
+                
+                <div class="form-group" style="display: none;">
+                    <label for="incident-update">Initial Update (Optional)</label>
+                    <textarea id="incident-update" class="form-control" placeholder="Provide more details about the incident"></textarea>
+                </div>
+                
+                <div class="form-group">
+                    <label>Component Status Updates (Optional)</label>
+                    <div class="component-updates" id="create-component-updates">
+                        <div class="component-update">
+                            <select class="form-control component-select">
+                                <option value="">Select a component</option>
+                                <!-- Options populated by JS -->
+                            </select>
+                            <select class="form-control status-select">
+                                <option value="operational">Operational</option>
+                                <option value="degraded">Degraded</option>
+                                <option value="disruption">Disruption</option>
+                            </select>
+                            <button type="button" class="remove-component btn-danger"><i class="fas fa-times"></i> Remove</button>
+                        </div>
+                    </div>
+                    <button type="button" id="add-component-update" class="btn btn-outline"><i class="fas fa-plus"></i> Add Component Update</button>
+                </div>
+                
+                <button type="submit" class="btn btn-primary">Create Incident</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h2 class="card-title">System Components</h2>
+            <div class="component-grid" id="components-container">
+                <!-- Components will be loaded here -->
+            </div>
+        </div>
+
+        <div class="card">
+            <h2 class="card-title">Incident History</h2>
+            
+            <div class="tab-container" style="margin-bottom: 16px;">
+                <div class="tab active" data-inc-tab="active">Active Incidents</div>
+                <div class="tab" data-inc-tab="resolved">Resolved Incidents</div>
+                <div class="tab" data-inc-tab="all">All Incidents</div>
+            </div>
+            
+            <div class="inc-tab-content active" id="active-incidents">
+                <ul class="incident-list" id="active-incidents-list"></ul>
+            </div>
+            
+            <div class="inc-tab-content" id="resolved-incidents" style="display: none;">
+                <ul class="incident-list" id="resolved-incidents-list"></ul>
+            </div>
+            
+            <div class="inc-tab-content" id="all-incidents" style="display: none;">
+                <ul class="incident-list" id="all-incidents-list"></ul>
+            </div>
+        </div>
+    </div><!-- /status-tab -->
+
+    <!-- SERVER CONSOLE TAB -->
     <div class="tab-content" id="console-tab">
         <h1>Server Console</h1>
         <p class="page-hint">Live output from the Minecraft server, with start / stop / restart control.</p>
@@ -1036,28 +1289,38 @@
         function applyTheme(theme) {
             if (theme === 'dark') {
                 root.setAttribute('data-theme', 'dark');
-                toggle.title = 'Switch to light mode';
-                toggle.setAttribute('aria-label', 'Switch to light mode');
+                if (toggle) {
+                    toggle.title = 'Switch to light mode';
+                    toggle.setAttribute('aria-label', 'Switch to light mode');
+                }
                 if (metaTheme) metaTheme.setAttribute('content', '#0e1116');
             } else {
                 root.removeAttribute('data-theme');
-                toggle.title = 'Switch to dark mode';
-                toggle.setAttribute('aria-label', 'Switch to dark mode');
+                if (toggle) {
+                    toggle.title = 'Switch to dark mode';
+                    toggle.setAttribute('aria-label', 'Switch to dark mode');
+                }
                 if (metaTheme) metaTheme.setAttribute('content', '#f4f6f9');
             }
         }
 
-        // Default is light unless the admin has explicitly chosen dark before.
         let saved = null;
-        try { saved = localStorage.getItem('rd-admin-theme'); } catch (err) { /* storage unavailable */ }
+        try { saved = localStorage.getItem('rd-admin-theme') || localStorage.getItem('rd-dashboard-theme'); } catch (err) {}
         applyTheme(saved === 'dark' ? 'dark' : 'light');
 
-        toggle.addEventListener('click', () => {
-            const next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-            applyTheme(next);
-            try { localStorage.setItem('rd-admin-theme', next); } catch (err) { /* storage unavailable */ }
-        });
+        if (toggle) {
+            toggle.addEventListener('click', () => {
+                const next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+                applyTheme(next);
+                try {
+                    localStorage.setItem('rd-admin-theme', next);
+                    localStorage.setItem('rd-dashboard-theme', next);
+                } catch (err) {}
+            });
+        }
     })();
+
+    /* --------------------------------------------------------- Users Tab & Overlay */
 
     const userTableBody = document.querySelector('#userTable tbody');
     const searchUser = document.getElementById('searchUser');
@@ -1068,7 +1331,6 @@
     let evidenceFields = [];
     let currentPage = 1;
 
-    // Overlay functions
     function showOverlay(title, message, buttons = []) {
         overlayTitle.textContent = title;
         overlayMessage.innerHTML = message;
@@ -1097,27 +1359,24 @@
         overlay.style.display = 'none';
     }
 
-    // Add evidence field functionality
     document.getElementById('addIncriminatory').addEventListener('click', function() {
         const incriminatoryList = document.getElementById('incriminatoryList');
         const evidenceDiv = document.createElement('div');
         evidenceDiv.innerHTML = `
-            <div style="margin: 10px 0; padding: 10px; border: 1px solid #ddd;">
+            <div style="margin: 10px 0; padding: 10px; border: 1px solid var(--line);">
                 <input type="text" placeholder="Reason (e.g. Spam, Harassment, etc.)" style="width: 100%; margin: 5px 0;">
                 <textarea placeholder="Content/Evidence (URLs, screenshots, descriptions, etc.)" style="width: 100%; margin: 5px 0; height: 60px;"></textarea>
-                <button type="button" onclick="this.parentNode.remove()">Remove Evidence</button>
+                <button type="button" class="btn-danger" onclick="this.parentNode.remove()">Remove Evidence</button>
             </div>
         `;
         incriminatoryList.appendChild(evidenceDiv);
     });
 
-    // Apply moderation functionality
     document.getElementById('applyBan').addEventListener('click', async function() {
         const username = document.getElementById('modUsername').value.trim();
         const type = document.getElementById('banType').value;
         const modNote = document.getElementById('modNote').value.trim();
         
-        // Collect evidence
         const evidenceDivs = document.querySelectorAll('#incriminatoryList > div');
         const incriminatory = [];
         evidenceDivs.forEach(div => {
@@ -1155,11 +1414,9 @@
             
             if (response.ok) {
                 showOverlay('Success', 'Moderation applied: ' + data.message);
-                // Clear form
                 document.getElementById('modUsername').value = '';
                 document.getElementById('modNote').value = '';
                 document.getElementById('incriminatoryList').innerHTML = '';
-                // Refresh users
                 fetchUsers(searchUser.value);
             } else {
                 showOverlay('Error', data.error || data.message);
@@ -1177,11 +1434,7 @@
 
             userTableBody.innerHTML = '';
             users.forEach(user => {
-                console.log(user); // Add this line for debug
                 const tr = document.createElement('tr');
-
-                // data-label attributes let the mobile stylesheet render
-                // each cell as a labelled row inside a stacked card.
                 const statusText = user.accountStatus || 'ok';
                 const statusClass = statusText.toLowerCase() === 'ok' ? 'status-ok' : 'status-bad';
 
@@ -1321,17 +1574,14 @@
                 const username = chk.dataset.username;
                 const isAdmin = chk.checked;
                 try {
-                    const response = await fetch('/api/update-admin-status', {
+                    await fetch('/api/update-admin-status', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         credentials: 'include',
                         body: JSON.stringify({ username, isAdmin })
                     });
-                    const data = await response.json();
                     fetchUsers(searchUser.value);
-                } catch (err) {
-                    console.error(err);
-                }
+                } catch (err) { console.error(err); }
             });
         });
 
@@ -1340,53 +1590,46 @@
                 const username = chk.dataset.username;
                 const isMember = chk.checked;
                 try {
-                    const response = await fetch('/api/admin/update-member-status', {
+                    await fetch('/api/admin/update-member-status', {
                         method: 'PATCH',
                         headers: { 'Content-Type': 'application/json' },
                         credentials: 'include',
                         body: JSON.stringify({ username, isMember })
                     });
-                    const data = await response.json();
                     fetchUsers(searchUser.value);
-                } catch (err) {
-                    console.error(err);
-                }
+                } catch (err) { console.error(err); }
             });
         });
+
         document.querySelectorAll('.projToggle').forEach(chk => {
             chk.addEventListener('change', async () => {
                 const username = chk.dataset.username;
                 const isAllowed = chk.checked;
                 try {
-                    const response = await fetch('/api/admin/update-proj-status', {
-                            method: 'PATCH',
-                            headers: { 'Content-Type': 'application/json' },
-                            credentials: 'include',
-                            body: JSON.stringify({ username, isAllowed })
+                    await fetch('/api/admin/update-proj-status', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({ username, isAllowed })
                     });
-                    const data = await response.json();
                     fetchUsers(searchUser.value);
-                } catch (err) {
-                    console.error(err);
-                }
+                } catch (err) { console.error(err); }
             });
         });
+
         document.querySelectorAll('.plexToggle').forEach(chk => {
             chk.addEventListener('change', async () => {
                 const username = chk.dataset.username;
                 const isAllowed = chk.checked;
                 try {
-                    const response = await fetch('/api/admin/update-plex-status', {
-                            method: 'PATCH',
-                            headers: { 'Content-Type': 'application/json' },
-                            credentials: 'include',
-                            body: JSON.stringify({ username, isAllowed })
+                    await fetch('/api/admin/update-plex-status', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({ username, isAllowed })
                     });
-                    const data = await response.json();
                     fetchUsers(searchUser.value);
-                } catch (err) {
-                    console.error(err);
-                }
+                } catch (err) { console.error(err); }
             });
         });
 
@@ -1395,20 +1638,18 @@
                 const username = chk.dataset.username;
                 const isOG = chk.checked;
                 try {
-                    const response = await fetch('/api/admin/update-og-status', {
+                    await fetch('/api/admin/update-og-status', {
                         method: 'PATCH',
                         headers: { 'Content-Type': 'application/json' },
                         credentials: 'include',
                         body: JSON.stringify({ username, isOG })
                     });
-                    const data = await response.json();
                     fetchUsers(searchUser.value);
-                } catch (err) {
-                    console.error(err);
-                }
+                } catch (err) { console.error(err); }
             });
         });
     }
+
     let SearchTimer;
     searchUser.addEventListener('input', () => {
         clearTimeout(SearchTimer);
@@ -1430,41 +1671,535 @@
         fetchUsers(searchUser.value, currentPage);
     });
 
-    // Close overlay when clicking outside
     overlay.addEventListener('click', (e) => {
-        if (e.target === overlay) {
-            hideOverlay();
-        }
+        if (e.target === overlay) hideOverlay();
     });
 
-    // initial fetch
     fetchUsers();
 
-    /* ---------------------------------------------------------------- Tabs */
+    /* --------------------------------------------------------- Tab Routing & URL Params */
 
-    document.querySelectorAll('.tab').forEach(tab => {
-        tab.addEventListener('click', () => {
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    function switchTab(tabName, updateUrl = true) {
+        let activeTabName = tabName.toLowerCase();
+        let targetContentId = activeTabName + '-tab';
+        let scrollToPlayers = false;
 
-            tab.classList.add('active');
-            document.getElementById(`${tab.dataset.tab}-tab`).classList.add('active');
+        // Alias routing
+        if (activeTabName === 'incidents' || activeTabName === 'dashboard') {
+            activeTabName = 'status';
+            targetContentId = 'status-tab';
+        } else if (activeTabName === 'server') {
+            activeTabName = 'console';
+            targetContentId = 'console-tab';
+        } else if (activeTabName === 'players') {
+            activeTabName = 'players';
+            targetContentId = 'console-tab';
+            scrollToPlayers = true;
+        }
 
-            // The console holds an open connection, so it is only attached
-            // while its tab is actually visible.
-            if (tab.dataset.tab === 'console') {
-                consoleConnect();
-                startStatusPolling();
+        // Update tab buttons
+        document.querySelectorAll('.tab-container > .tab').forEach(tab => {
+            if (tab.dataset.tab === activeTabName) {
+                tab.classList.add('active');
             } else {
-                consoleDisconnect();
-                stopStatusPolling();
+                tab.classList.remove('active');
             }
+        });
+
+        // Update tab content panels
+        document.querySelectorAll('#content > .tab-content').forEach(panel => {
+            panel.classList.remove('active');
+        });
+
+        const targetPanel = document.getElementById(targetContentId);
+        if (targetPanel) {
+            targetPanel.classList.add('active');
+        }
+
+        // Connection & stream lifecycle
+        if (activeTabName === 'console' || activeTabName === 'players') {
+            consoleConnect();
+            startStatusPolling();
+            if (scrollToPlayers) {
+                setTimeout(() => {
+                    const panel = document.getElementById('playersPanel');
+                    if (panel) panel.scrollIntoView({ behavior: 'smooth' });
+                }, 100);
+            }
+        } else {
+            consoleDisconnect();
+            stopStatusPolling();
+        }
+
+        if (activeTabName === 'status') {
+            initStatusDashboard();
+        }
+
+        // Update URL query parameters seamlessly
+        if (updateUrl) {
+            const url = new URL(window.location);
+            url.searchParams.set('page', activeTabName);
+            history.replaceState(null, '', url.toString());
+        }
+    }
+
+    document.querySelectorAll('.tab-container > .tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            switchTab(tab.dataset.tab);
         });
     });
 
+    window.addEventListener('popstate', () => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const page = urlParams.get('page') || urlParams.get('tab') || 'users';
+        switchTab(page, false);
+    });
+
+    // Initial page load routing
+    (function initRouting() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const page = urlParams.get('page') || urlParams.get('tab') || 'users';
+        switchTab(page, false);
+    })();
+
+    /* --------------------------------------------------------- Status & Incident Management JS */
+
+    const API_BASE = '/api/status';
+    const alertBox = document.getElementById('alert-box');
+    const currentTimeEl = document.getElementById('current-time');
+    const componentsContainer = document.getElementById('components-container');
+    const createIncidentForm = document.getElementById('create-incident-form');
+    const createComponentUpdates = document.getElementById('create-component-updates');
+    const addComponentButton = document.getElementById('add-component-update');
+    let componentsData = [];
+    let statusInited = false;
+
+    // Sub-tabs in Status & Incidents
+    document.querySelectorAll('#status-tab [data-inc-tab]').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('#status-tab [data-inc-tab]').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.inc-tab-content').forEach(c => { c.classList.remove('active'); c.style.display = 'none'; });
+
+            tab.classList.add('active');
+            const content = document.getElementById(`${tab.dataset.incTab}-incidents`);
+            if (content) {
+                content.classList.add('active');
+                content.style.display = 'block';
+            }
+
+            if (tab.dataset.incTab === 'active') loadActiveIncidents();
+            else if (tab.dataset.incTab === 'resolved') loadResolvedIncidents();
+            else if (tab.dataset.incTab === 'all') loadAllIncidents();
+        });
+    });
+
+    function showAlert(message, type = 'success') {
+        if (!alertBox) return;
+        alertBox.innerHTML = `
+            <div class="alert alert-${type}">
+                <i class="fas ${type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'}"></i>
+                <span>${message}</span>
+            </div>
+        `;
+        alertBox.style.display = 'block';
+        setTimeout(() => { alertBox.style.display = 'none'; }, 5000);
+    }
+
+    function formatTimeToPDT(isoString) {
+        const date = new Date(isoString);
+        const pdtTime = new Date(date.getTime() - (7 * 60 * 60 * 1000));
+        const hours = pdtTime.getUTCHours();
+        const minutes = pdtTime.getUTCMinutes();
+        const ampm = hours >= 12 ? 'PM' : 'AM';
+        const formattedHours = hours % 12 || 12;
+        return `${formattedHours}:${minutes.toString().padStart(2, '0')} ${ampm} (PDT)`;
+    }
+
+    async function loadComponents() {
+        try {
+            const response = await fetch(`${API_BASE}/status`);
+            const data = await response.json();
+            componentsData = data.components || [];
+            componentsContainer.innerHTML = '';
+
+            const componentSelects = document.querySelectorAll('.component-select');
+            componentSelects.forEach(select => {
+                const currentValue = select.value;
+                select.innerHTML = '<option value="">Select a component</option>';
+                componentsData.forEach(component => {
+                    const option = document.createElement('option');
+                    option.value = component.id;
+                    option.textContent = component.name;
+                    select.appendChild(option);
+                });
+                if (currentValue && componentsData.some(c => c.id === currentValue)) {
+                    select.value = currentValue;
+                }
+            });
+
+            componentsData.forEach(component => {
+                const statusClass = 
+                    component.status === 'operational' ? 'status-operational' :
+                    component.status === 'degraded' ? 'status-degraded' : 'status-disruption';
+
+                const componentEl = document.createElement('div');
+                componentEl.className = 'component-card';
+                componentEl.innerHTML = `
+                    <h3 class="component-name">${component.name}</h3>
+                    <div class="component-status ${statusClass}">${component.status}</div>
+                    <p class="last-updated">Last updated: ${formatTimeToPDT(component.last_updated)}</p>
+                    <div class="form-group">
+                        <select class="form-control component-status-select" data-component-id="${component.id}">
+                            <option value="operational" ${component.status === 'operational' ? 'selected' : ''}>Operational</option>
+                            <option value="degraded" ${component.status === 'degraded' ? 'selected' : ''}>Degraded</option>
+                            <option value="disruption" ${component.status === 'disruption' ? 'selected' : ''}>Disruption</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary update-component-btn" data-component-id="${component.id}">Update Status</button>
+                `;
+                componentsContainer.appendChild(componentEl);
+            });
+
+            document.querySelectorAll('.update-component-btn').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    const componentId = e.target.dataset.componentId;
+                    const statusSelect = document.querySelector(`.component-status-select[data-component-id="${componentId}"]`);
+                    const status = statusSelect.value;
+                    
+                    try {
+                        const response = await fetch(`${API_BASE}/components/${componentId}`, {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ status })
+                        });
+                        
+                        if (response.ok) {
+                            showAlert('Component status updated successfully');
+                            loadComponents();
+                        } else {
+                            showAlert('Failed to update component status', 'error');
+                        }
+                    } catch (error) {
+                        showAlert('Error updating component status', 'error');
+                        console.error(error);
+                    }
+                });
+            });
+        } catch (error) {
+            console.error('Error loading components:', error);
+            showAlert('Error loading components', 'error');
+        }
+    }
+
+    function addComponentUpdateField(container) {
+        const updateField = document.createElement('div');
+        updateField.className = 'component-update';
+        updateField.innerHTML = `
+            <select class="form-control component-select">
+                <option value="">Select a component</option>
+                ${componentsData.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}
+            </select>
+            <select class="form-control status-select">
+                <option value="operational">Operational</option>
+                <option value="degraded">Degraded</option>
+                <option value="disruption">Disruption</option>
+            </select>
+            <button type="button" class="remove-component btn-danger"><i class="fas fa-times"></i> Remove</button>
+        `;
+        container.appendChild(updateField);
+        updateField.querySelector('.remove-component').addEventListener('click', () => updateField.remove());
+    }
+
+    async function loadActiveIncidents() {
+        try {
+            const response = await fetch(`${API_BASE}/status`);
+            const data = await response.json();
+            const incidentsList = document.getElementById('active-incidents-list');
+            if (!incidentsList) return;
+            incidentsList.innerHTML = '';
+
+            if (data.incidents.length === 0) {
+                incidentsList.innerHTML = '<p style="color: var(--text-muted);">No active incidents</p>';
+                return;
+            }
+
+            data.incidents.forEach(incident => {
+                const incidentEl = document.createElement('li');
+                incidentEl.className = 'incident-item';
+                incidentEl.innerHTML = renderIncident(incident);
+                incidentsList.appendChild(incidentEl);
+
+                const updateForm = incidentEl.querySelector('.add-update-form');
+                if (updateForm) updateForm.addEventListener('submit', handleUpdateSubmit);
+            });
+        } catch (error) {
+            console.error('Error loading active incidents:', error);
+            showAlert('Error loading active incidents', 'error');
+        }
+    }
+
+    async function loadResolvedIncidents() {
+        try {
+            const response = await fetch(`${API_BASE}/incidentHistory`);
+            const incidents = await response.json();
+            const incidentsList = document.getElementById('resolved-incidents-list');
+            if (!incidentsList) return;
+            incidentsList.innerHTML = '';
+
+            if (incidents.length === 0) {
+                incidentsList.innerHTML = '<p style="color: var(--text-muted);">No resolved incidents</p>';
+                return;
+            }
+
+            incidents.forEach(incident => {
+                const incidentEl = document.createElement('li');
+                incidentEl.className = 'incident-item';
+                incidentEl.innerHTML = renderIncident(incident);
+                incidentsList.appendChild(incidentEl);
+            });
+        } catch (error) {
+            console.error('Error loading resolved incidents:', error);
+            showAlert('Error loading resolved incidents', 'error');
+        }
+    }
+
+    async function loadAllIncidents() {
+        try {
+            const response = await fetch(`${API_BASE}/incidents`);
+            const incidents = await response.json();
+            const incidentsList = document.getElementById('all-incidents-list');
+            if (!incidentsList) return;
+            incidentsList.innerHTML = '';
+
+            if (incidents.length === 0) {
+                incidentsList.innerHTML = '<p style="color: var(--text-muted);">No incidents</p>';
+                return;
+            }
+
+            incidents.forEach(incident => {
+                const incidentEl = document.createElement('li');
+                incidentEl.className = 'incident-item';
+                incidentEl.innerHTML = renderIncident(incident);
+                incidentsList.appendChild(incidentEl);
+
+                if (incident.status !== 'resolved') {
+                    const updateForm = incidentEl.querySelector('.add-update-form');
+                    if (updateForm) updateForm.addEventListener('submit', handleUpdateSubmit);
+                }
+            });
+        } catch (error) {
+            console.error('Error loading all incidents:', error);
+            showAlert('Error loading all incidents', 'error');
+        }
+    }
+
+    function renderIncident(incident) {
+        const statusClass = 
+            incident.status === 'investigating' ? 'status-investigating' :
+            incident.status === 'identified' ? 'status-identified' :
+            incident.status === 'monitoring' ? 'status-monitoring' : 'status-resolved';
+
+        let historyHTML = '';
+        if (incident.history_status && incident.history_status.length > 0) {
+            historyHTML = '<div class="history-list">';
+            incident.history_status.forEach(history => {
+                historyHTML += `
+                    <div class="history-item">
+                        <div class="history-time">${history.time} - ${history.status}</div>
+                        <div class="history-context">${history.context}</div>
+                    </div>
+                `;
+            });
+            historyHTML += '</div>';
+        }
+
+        return `
+            <div class="incident-title">${incident.title}</div>
+            <div class="incident-meta">
+                <span class="incident-status ${statusClass}">${incident.status}</span>
+                <span class="impact-badge">${incident.impact}</span>
+                <span>Started: ${formatTimeToPDT(incident.started_at)}</span>
+                ${incident.ended_at ? `<span>Ended: ${formatTimeToPDT(incident.ended_at)}</span>` : ''}
+            </div>
+            <div class="incident-context">${incident.status_text}</div>
+            ${historyHTML}
+            ${incident.status !== 'resolved' ? `
+            <div class="update-form">
+                <h4>Add Update</h4>
+                <form class="add-update-form" data-incident-id="${incident.id}">
+                    <div class="form-group">
+                        <textarea class="form-control update-body" placeholder="Provide an update" required></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Update Status (Optional)</label>
+                        <select class="form-control update-status">
+                            <option value="">Keep current status</option>
+                            <option value="investigating">Investigating</option>
+                            <option value="identified">Identified</option>
+                            <option value="monitoring">Monitoring</option>
+                            <option value="resolved">Resolved</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Component Status Updates (Optional)</label>
+                        <div class="component-updates" id="update-component-updates-${incident.id}">
+                            <div class="component-update">
+                                <select class="form-control component-select">
+                                    <option value="">Select a component</option>
+                                    ${componentsData.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}
+                                </select>
+                                <select class="form-control status-select">
+                                    <option value="operational">Operational</option>
+                                    <option value="degraded">Degraded</option>
+                                    <option value="disruption">Disruption</option>
+                                </select>
+                                <button type="button" class="remove-component btn-danger"><i class="fas fa-times"></i> Remove</button>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-outline add-update-component" data-target="update-component-updates-${incident.id}">
+                            <i class="fas fa-plus"></i> Add Component Update
+                        </button>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Add Update</button>
+                </form>
+            </div>
+            ` : ''}
+        `;
+    }
+
+    async function handleUpdateSubmit(e) {
+        e.preventDefault();
+        const incidentId = e.target.dataset.incidentId;
+        const body = e.target.querySelector('.update-body').value;
+        const status = e.target.querySelector('.update-status').value;
+
+        const componentUpdates = [];
+        const updateElements = e.target.querySelectorAll('.component-update');
+        updateElements.forEach(element => {
+            const componentId = element.querySelector('.component-select').value;
+            const status = element.querySelector('.status-select').value;
+            if (componentId && status) {
+                const component = componentsData.find(c => c.id === componentId);
+                componentUpdates.push({ componentId, status, name: component ? component.name : componentId });
+            }
+        });
+
+        try {
+            const requestBody = { body, status: status || undefined, status_text: body };
+            if (componentUpdates.length > 0) requestBody.componentUpdates = componentUpdates;
+
+            const response = await fetch(`${API_BASE}/incidents/${incidentId}/updates`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody)
+            });
+
+            if (response.ok) {
+                showAlert('Update added successfully');
+                e.target.reset();
+                loadActiveIncidents();
+                loadComponents();
+            } else {
+                const error = await response.json();
+                showAlert(error.error || 'Failed to add update', 'error');
+            }
+        } catch (error) {
+            showAlert('Error adding update', 'error');
+            console.error(error);
+        }
+    }
+
+    if (createIncidentForm) {
+        createIncidentForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const title = document.getElementById('incident-title').value;
+            const impact = document.getElementById('incident-impact').value;
+            const status = document.getElementById('incident-status').value;
+            const status_text = document.getElementById('incident-context').value;
+            const update = document.getElementById('incident-update').value;
+
+            const componentUpdates = [];
+            const updateElements = createComponentUpdates.querySelectorAll('.component-update');
+            updateElements.forEach(element => {
+                const componentId = element.querySelector('.component-select').value;
+                const status = element.querySelector('.status-select').value;
+                if (componentId && status) {
+                    const component = componentsData.find(c => c.id === componentId);
+                    componentUpdates.push({ componentId, status, name: component ? component.name : componentId });
+                }
+            });
+
+            try {
+                const requestBody = { title, impact, status, status_text, update: update || undefined };
+                if (componentUpdates.length > 0) requestBody.componentUpdates = componentUpdates;
+
+                const response = await fetch(`${API_BASE}/incidents`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestBody)
+                });
+
+                if (response.ok) {
+                    showAlert('Incident created successfully');
+                    createIncidentForm.reset();
+                    const updateElements = createComponentUpdates.querySelectorAll('.component-update');
+                    for (let i = 1; i < updateElements.length; i++) updateElements[i].remove();
+                    const firstUpdate = createComponentUpdates.querySelector('.component-update');
+                    if (firstUpdate) {
+                        firstUpdate.querySelector('.component-select').value = '';
+                        firstUpdate.querySelector('.status-select').value = 'operational';
+                    }
+                    loadActiveIncidents();
+                    loadComponents();
+                } else {
+                    const error = await response.json();
+                    showAlert(error.error || 'Failed to create incident', 'error');
+                }
+            } catch (error) {
+                showAlert('Error creating incident', 'error');
+                console.error(error);
+            }
+        });
+    }
+
+    if (addComponentButton) {
+        addComponentButton.addEventListener('click', () => addComponentUpdateField(createComponentUpdates));
+    }
+
+    document.addEventListener('click', (e) => {
+        if (e.target.classList.contains('add-update-component') || e.target.closest('.add-update-component')) {
+            const button = e.target.classList.contains('add-update-component') ? e.target : e.target.closest('.add-update-component');
+            const targetId = button.dataset.target;
+            const container = document.getElementById(targetId);
+            if (container) addComponentUpdateField(container);
+        }
+
+        if (e.target.classList.contains('remove-component') || e.target.closest('.remove-component')) {
+            const button = e.target.classList.contains('remove-component') ? e.target : e.target.closest('.remove-component');
+            const row = button.closest('.component-update');
+            if (row) row.remove();
+        }
+    });
+
+    function updateCurrentTime() {
+        if (currentTimeEl) {
+            const now = new Date();
+            currentTimeEl.textContent = now.toLocaleString();
+        }
+    }
+
+    function initStatusDashboard() {
+        if (statusInited) return;
+        statusInited = true;
+        updateCurrentTime();
+        setInterval(updateCurrentTime, 1000);
+        loadComponents();
+        loadActiveIncidents();
+    }
+
     /* ------------------------------------------------------------- Console */
 
-    const MAX_CONSOLE_LINES = 2000;   // past this the page starts to crawl
+    const MAX_CONSOLE_LINES = 2000;
     const consoleOutput = document.getElementById('consoleOutput');
     const consoleSource = document.getElementById('consoleSource');
     const consoleInput = document.getElementById('consoleInput');
@@ -1480,30 +2215,22 @@
     let historyIndex = 0;
 
     function setStatus(state, text) {
-        connDot.className = state;
-        connText.textContent = text;
+        if (connDot) connDot.className = state;
+        if (connText) connText.textContent = text;
     }
 
-    // Minecraft lines look like "[12:34:56] [Server thread/INFO]: message".
     function levelOf(line) {
         const match = line.match(/\[[^\]]*\/(\w+)\]/);
         return match ? match[1].toUpperCase() : '';
     }
 
-    // Minecraft's legacy formatting codes: a section sign followed by one
-    // character. Colours 0-f, styles k-o, r to reset.
     const MC_COLOURS = {
-        '0': '#000000', '1': '#0000aa', '2': '#00aa00', '3': '#00aaaa',
+        '0': '#000000', '1': '#00aa00', '2': '#00aa00', '3': '#00aaaa',
         '4': '#aa0000', '5': '#aa00aa', '6': '#ffaa00', '7': '#aaaaaa',
         '8': '#555555', '9': '#5555ff', 'a': '#55ff55', 'b': '#55ffff',
         'c': '#ff5555', 'd': '#ff55ff', 'e': '#ffff55', 'f': '#ffffff'
     };
 
-    // Render "§cred text" as coloured spans.
-    //
-    // Builds nodes with textContent rather than assembling an HTML string:
-    // these lines carry player chat and plugin output, so the formatting codes
-    // must never become a route to injecting markup.
     function renderMinecraftFormatting(container, text) {
         const parts = text.split('§');
         if (parts[0]) container.appendChild(document.createTextNode(parts[0]));
@@ -1520,16 +2247,14 @@
             if (code === 'r') {
                 colour = null; bold = italic = underline = strike = false;
             } else if (MC_COLOURS[code]) {
-                // A colour code also clears styles, matching the game.
                 colour = MC_COLOURS[code];
                 bold = italic = underline = strike = false;
             } else if (code === 'l') { bold = true;
             } else if (code === 'o') { italic = true;
             } else if (code === 'n') { underline = true;
             } else if (code === 'm') { strike = true;
-            } else if (code === 'k') { /* obfuscated: rendered as plain text */
+            } else if (code === 'k') {
             } else {
-                // Not a formatting code, so the section sign was literal text.
                 container.appendChild(document.createTextNode('§' + segment));
                 continue;
             }
@@ -1549,14 +2274,12 @@
     }
 
     function appendLine(text, forcedClass) {
+        if (!consoleOutput) return;
         const line = document.createElement('span');
         line.className = 'line ' + (forcedClass || 'lvl-' + levelOf(text));
         if (text.indexOf('§') !== -1) {
-            // Inline colours from the server win over the log-level class.
             renderMinecraftFormatting(line, text);
         } else {
-            // textContent, never innerHTML: log lines carry player chat, which
-            // is attacker-controlled and would otherwise inject markup.
             line.textContent = text;
         }
         consoleOutput.appendChild(line);
@@ -1565,17 +2288,17 @@
             consoleOutput.removeChild(consoleOutput.firstChild);
         }
 
-        if (autoscroll.checked && stuckToBottom) {
+        if (autoscroll && autoscroll.checked && stuckToBottom) {
             consoleOutput.scrollTop = consoleOutput.scrollHeight;
         }
     }
 
-    // Autoscroll pauses on its own when the operator scrolls up to read, and
-    // resumes once they return to the bottom.
-    consoleOutput.addEventListener('scroll', () => {
-        const distance = consoleOutput.scrollHeight - consoleOutput.scrollTop - consoleOutput.clientHeight;
-        stuckToBottom = distance < 40;
-    });
+    if (consoleOutput) {
+        consoleOutput.addEventListener('scroll', () => {
+            const distance = consoleOutput.scrollHeight - consoleOutput.scrollTop - consoleOutput.clientHeight;
+            stuckToBottom = distance < 40;
+        });
+    }
 
     function consoleDisconnect() {
         clearTimeout(retryTimer);
@@ -1590,7 +2313,7 @@
         consoleDisconnect();
         setStatus('connecting', 'Connecting…');
 
-        const source = new EventSource('/api/admin/console/stream?source=' + encodeURIComponent(consoleSource.value));
+        const source = new EventSource('/api/admin/console/stream?source=' + encodeURIComponent(consoleSource ? consoleSource.value : 'log'));
         evtSource = source;
 
         source.onopen = () => {
@@ -1599,20 +2322,13 @@
         };
 
         source.onmessage = (e) => {
-            // Filtered on arrival rather than hidden with CSS, so a filtered
-            // line never counts against the DOM cap. The trade is that
-            // un-ticking the box only reveals lines from that point on; the
-            // download link still carries the unfiltered file.
-            if (hideRconEcho.checked && isRconEcho(e.data)) return;
+            if (hideRconEcho && hideRconEcho.checked && isRconEcho(e.data)) return;
             appendLine(e.data);
         };
 
         source.onerror = () => {
-            // A non-200 (e.g. an expired session returning 401) closes the
-            // EventSource permanently, and the browser's own retry does not
-            // back off — so reconnection is handled here instead.
             source.close();
-            if (evtSource !== source) return;   // superseded by a newer connect
+            if (evtSource !== source) return;
             evtSource = null;
 
             setStatus('down', `Reconnecting in ${Math.round(retryDelay / 1000)}s…`);
@@ -1625,59 +2341,69 @@
         };
     }
 
-    consoleSource.addEventListener('change', () => {
-        appendLine(`── switched to ${consoleSource.options[consoleSource.selectedIndex].text} ──`, 'lvl-meta');
-        consoleConnect();
-    });
+    if (consoleSource) {
+        consoleSource.addEventListener('change', () => {
+            appendLine(`── switched to ${consoleSource.options[consoleSource.selectedIndex].text} ──`, 'lvl-meta');
+            consoleConnect();
+        });
+    }
 
-    document.getElementById('clearConsole').addEventListener('click', () => {
-        consoleOutput.innerHTML = '';
-    });
+    const clearConsoleBtn = document.getElementById('clearConsole');
+    if (clearConsoleBtn) {
+        clearConsoleBtn.addEventListener('click', () => {
+            if (consoleOutput) consoleOutput.innerHTML = '';
+        });
+    }
 
-    document.getElementById('consoleForm').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const command = consoleInput.value.trim();
-        if (!command) return;
+    const consoleForm = document.getElementById('consoleForm');
+    if (consoleForm) {
+        consoleForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const command = consoleInput.value.trim();
+            if (!command) return;
 
-        history.push(command);
-        historyIndex = history.length;
-        consoleInput.value = '';
-        appendLine('> ' + command, 'lvl-echo');
+            history.push(command);
+            historyIndex = history.length;
+            consoleInput.value = '';
+            appendLine('> ' + command, 'lvl-echo');
 
-        try {
-            const response = await fetch('/api/admin/console/command', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({ command })
-            });
-            const data = await response.json();
+            try {
+                const response = await fetch('/api/admin/console/command', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ command })
+                });
+                const data = await response.json();
 
-            if (!response.ok) {
-                appendLine(data.error || 'Command failed', 'lvl-ERROR');
-                return;
+                if (!response.ok) {
+                    appendLine(data.error || 'Command failed', 'lvl-ERROR');
+                    return;
+                }
+                if (data.output) {
+                    data.output.split('\n').forEach(line => appendLine(line, 'lvl-meta'));
+                }
+            } catch (err) {
+                console.error(err);
+                appendLine('Failed to reach the server', 'lvl-ERROR');
             }
-            if (data.output) {
-                data.output.split('\n').forEach(line => appendLine(line, 'lvl-meta'));
+        });
+    }
+
+    if (consoleInput) {
+        consoleInput.addEventListener('keydown', (e) => {
+            if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+            if (!history.length) return;
+            e.preventDefault();
+
+            if (e.key === 'ArrowUp') {
+                historyIndex = Math.max(0, historyIndex - 1);
+            } else {
+                historyIndex = Math.min(history.length, historyIndex + 1);
             }
-        } catch (err) {
-            console.error(err);
-            appendLine('Failed to reach the server', 'lvl-ERROR');
-        }
-    });
-
-    consoleInput.addEventListener('keydown', (e) => {
-        if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
-        if (!history.length) return;
-        e.preventDefault();
-
-        if (e.key === 'ArrowUp') {
-            historyIndex = Math.max(0, historyIndex - 1);
-        } else {
-            historyIndex = Math.min(history.length, historyIndex + 1);
-        }
-        consoleInput.value = historyIndex === history.length ? '' : history[historyIndex];
-    });
+            consoleInput.value = historyIndex === history.length ? '' : history[historyIndex];
+        });
+    }
 
     /* ------------------------------------------------------- Power control */
 
@@ -1689,37 +2415,29 @@
             const response = await fetch('/api/admin/console/power/status', { credentials: 'include' });
             if (!response.ok) throw new Error('status ' + response.status);
             const data = await response.json();
-            serverState.textContent = 'Server: ' + data.state;
-            serverState.className = 'state-' + data.state;
+            if (serverState) {
+                serverState.textContent = 'Server: ' + data.state;
+                serverState.className = 'state-' + data.state;
+            }
         } catch (err) {
-            // "unknown" means the sidecar isn't reporting — deliberately not
-            // shown as "stopped", which would be misleading.
-            serverState.textContent = 'Server: unknown';
-            serverState.className = 'state-unknown';
+            if (serverState) {
+                serverState.textContent = 'Server: unknown';
+                serverState.className = 'state-unknown';
+            }
         }
     }
 
-    // Everything the console tab polls, started and stopped together with the
-    // log stream so nothing keeps running against a tab nobody is looking at.
     function startStatusPolling() {
-        // Power state is a file the sidecar writes — free, and never reaches
-        // the game server.
         refreshStatus();
         clearInterval(statusTimer);
         statusTimer = setInterval(refreshStatus, 5000);
 
-        // One refresh on open regardless of the Live metrics setting: opening
-        // the tab is itself a request to see the numbers. The timer after it
-        // is what the setting governs.
         refreshStats();
         clearInterval(statsTimer);
         statsTimer = setInterval(() => {
             if (shouldPollMetrics()) refreshStats();
         }, STATS_INTERVAL);
 
-        // The roster reads four files and walks a directory, so it loads when
-        // the tab opens and whenever the operator asks — never on a timer. Its
-        // online badges are kept current by the cheap poll below instead.
         loadPlayers();
 
         refreshOnline();
@@ -1750,8 +2468,6 @@
                 const data = await response.json();
 
                 if (response.ok) {
-                    // The sidecar polls its spool directory, so this is queued
-                    // rather than done — the status pill reflects the result.
                     appendLine(`── ${action} queued ──`, 'lvl-meta');
                 } else {
                     appendLine(data.error || `Failed to ${action}`, 'lvl-ERROR');
@@ -1768,20 +2484,14 @@
 
     /* --------------------------------------------------------- Performance */
 
-    // Every metrics refresh is one RCON `tps`, and the server writes a line to
-    // latest.log for each one — the log this page is streaming. So: 30s, only
-    // while someone is actually looking, and switchable off entirely.
     const STATS_INTERVAL = 30000;
-    // A long-running server accumulates thousands of past players; rendering
-    // all of them at once is what would make the panel feel broken.
     const MAX_PLAYER_ROWS = 300;
 
     const liveMetrics = document.getElementById('liveMetrics');
     const hideRconEcho = document.getElementById('hideRconEcho');
 
-    // Both preferences are about noise in a log the operator owns, so they
-    // stick rather than resetting on every visit.
     [liveMetrics, hideRconEcho].forEach(box => {
+        if (!box) return;
         const saved = localStorage.getItem('rdadmin.' + box.id);
         if (saved !== null) box.checked = saved === '1';
         box.addEventListener('change', () => {
@@ -1789,26 +2499,22 @@
         });
     });
 
-    // The console already echoes every command it sends, along with the output,
-    // so the server's own log line for that command is a duplicate. Dropping it
-    // is what stops a metrics poll burying the log it sits next to.
     function isRconEcho(line) {
         return line.includes('Rcon issued server command:') || line.includes('[Rcon: ');
     }
 
     function shouldPollMetrics() {
-        return liveMetrics.checked
-            // A backgrounded browser tab is nobody looking, and a poll it
-            // cannot show is a log line spent for nothing.
+        return liveMetrics && liveMetrics.checked
             && document.visibilityState === 'visible'
             && document.getElementById('console-tab').classList.contains('active');
     }
 
-    liveMetrics.addEventListener('change', () => {
-        if (liveMetrics.checked) refreshStats();
-    });
+    if (liveMetrics) {
+        liveMetrics.addEventListener('change', () => {
+            if (liveMetrics.checked) refreshStats();
+        });
+    }
 
-    // Catch up immediately on returning, rather than waiting out the interval.
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState !== 'visible') return;
         if (document.getElementById('console-tab').classList.contains('active')) refreshOnline();
@@ -1826,6 +2532,7 @@
     let statsTimer = null;
 
     function setStat(element, text, tone) {
+        if (!element) return;
         element.textContent = text;
         element.className = 'stat-value' + (tone ? ' ' + tone : '');
     }
@@ -1845,8 +2552,8 @@
         setStat(statTps, '—', 'unknown');
         setStat(statCpu, '—', 'unknown');
         setStat(statMem, '—', 'unknown');
-        statCpuSub.textContent = '';
-        statMemSub.textContent = note || '';
+        if (statCpuSub) statCpuSub.textContent = '';
+        if (statMemSub) statMemSub.textContent = note || '';
     }
 
     function renderStats(data) {
@@ -1855,37 +2562,23 @@
             setStat(statTps, data.tps.map(v => v.toFixed(2)).join(' / '),
                 worst >= 19.5 ? 'good' : worst >= 15 ? 'warn' : 'bad');
         } else {
-            // Only the Spigot family has a `tps` command. "unavailable" rather
-            // than a zero, which would read as a server on fire.
             setStat(statTps, 'unavailable', 'unknown');
         }
 
-        // Docker sums CPU across cores, so its raw figure runs to 100×cores —
-        // 143.7% is a healthy server on four cores, but it reads as broken.
-        // Shown as a share of the whole machine, with the raw reading kept
-        // underneath so the number in `docker stats` is still recognisable.
         const container = data.container;
         if (container && container.cpuPercentOfHost !== null && container.cpuPercentOfHost !== undefined) {
             const share = container.cpuPercentOfHost;
             setStat(statCpu, share.toFixed(0) + '%',
                 share < 60 ? 'good' : share < 85 ? 'warn' : 'bad');
-            statCpuSub.textContent =
-                `${(container.cpuPercent / 100).toFixed(2)} of ${container.cpuCores} cores`;
+            if (statCpuSub) statCpuSub.textContent = `${(container.cpuPercent / 100).toFixed(2)} of ${container.cpuCores} cores`;
         } else if (container) {
-            // No core count to divide by, so the raw figure is all there is —
-            // labelled, rather than passed off as a percentage of the machine.
             setStat(statCpu, container.cpuPercent.toFixed(1) + '%', '');
-            statCpuSub.textContent = 'summed across cores';
+            if (statCpuSub) statCpuSub.textContent = 'summed across cores';
         } else {
             setStat(statCpu, '—', 'unknown');
-            statCpuSub.textContent = '';
+            if (statCpuSub) statCpuSub.textContent = '';
         }
 
-        // JVM heap first: it is what actually predicts an out-of-memory. The
-        // container's figure is resident set size, which this server's
-        // -Xms4G -XX:+AlwaysPreTouch pins near the limit from startup — real,
-        // but it never moves, so it answers nothing. Container memory is the
-        // fallback for when EssentialsX is not there to report heap.
         const heap = data.heap;
         const memory = heap
             ? { percent: heap.percent, used: heap.usedBytes, limit: heap.maxBytes, of: 'heap' }
@@ -1896,21 +2589,16 @@
         if (memory) {
             setStat(statMem, memory.percent.toFixed(0) + '%',
                 memory.percent < 80 ? 'good' : memory.percent < 92 ? 'warn' : 'bad');
-            // The source is named, so there is never a doubt about which of the
-            // two very different numbers is on screen.
-            statMemSub.textContent =
-                `${formatBytes(memory.used)} of ${formatBytes(memory.limit)} ${memory.of}`;
+            if (statMemSub) statMemSub.textContent = `${formatBytes(memory.used)} of ${formatBytes(memory.limit)} ${memory.of}`;
         } else {
             setStat(statMem, '—', 'unknown');
-            statMemSub.textContent = data.state === 'running'
-                ? 'mc-control is not reporting'
-                : 'server is not running';
+            if (statMemSub) statMemSub.textContent = data.state === 'running' ? 'mc-control is not reporting' : 'server is not running';
         }
 
-        // The players card is not touched here — /online owns it, on its own
-        // faster schedule.
-        statsNote.textContent = data.rconError || '';
-        statsNote.style.display = data.rconError ? '' : 'none';
+        if (statsNote) {
+            statsNote.textContent = data.rconError || '';
+            statsNote.style.display = data.rconError ? '' : 'none';
+        }
     }
 
     async function refreshStats() {
@@ -1936,12 +2624,7 @@
     let onlineTimer = null;
     let rosterLoadedAt = 0;
 
-    // Who is online is polled far more often than anything else here because it
-    // is free: the server tracks it from the log the console already tails, and
-    // only falls back to an RCON `list` when that has gone stale.
     const ONLINE_INTERVAL = 5000;
-    // Floor on how often an unrecognised name may trigger a roster reload, so
-    // a name the roster can never match cannot become a refetch loop.
     const ROSTER_RELOAD_FLOOR = 15000;
 
     async function refreshOnline() {
@@ -1953,9 +2636,7 @@
             setStat(statPlayers, data.count + ' / ' + data.max, '');
 
             const names = data.names || [];
-            // Re-rendering only on a real change keeps a click from landing on
-            // a button that a background refresh replaced underneath it.
-            const changed = names.join(' ') !== onlineNames.join(' ');
+            const changed = names.join(' ') !== onlineNames.join(' ');
             onlineNames = names;
             if (changed) applyOnline();
         } catch (err) {
@@ -1963,9 +2644,6 @@
         }
     }
 
-    // Fold the live set into the roster already on screen rather than refetching
-    // it: who *exists* changes rarely and costs a directory walk, while who is
-    // *on* changes constantly and costs nothing.
     function applyOnline() {
         const online = new Set(onlineNames.map(name => name.toLowerCase()));
         const known = new Set(roster.filter(p => p.name).map(p => p.name.toLowerCase()));
@@ -1975,15 +2653,12 @@
         });
         renderPlayers();
 
-        // Somebody is on that the roster has never heard of — a first-time
-        // join. Pull the roster again so they get a row of their own.
         const stranger = onlineNames.some(name => !known.has(name.toLowerCase()));
         if (stranger && Date.now() - rosterLoadedAt > ROSTER_RELOAD_FLOOR) {
             loadPlayers();
         }
     }
 
-    // A player whose usercache entry has expired is known only by UUID.
     function playerLabel(player) {
         return player.name || (player.uuid ? player.uuid.slice(0, 8) : 'unknown');
     }
@@ -2018,8 +2693,6 @@
         const button = document.createElement('button');
         button.type = 'button';
         button.textContent = label;
-        // Every action names the player in the command, so a UUID-only row has
-        // nothing to act on.
         button.disabled = !player.name;
         button.addEventListener('click', () => runPlayerAction(player.name, action, label));
         return button;
@@ -2030,7 +2703,7 @@
 
         if (action === 'kick' || action === 'ban') {
             reason = prompt(`${label} ${name} — reason (optional):`, '');
-            if (reason === null) return;    // cancelled
+            if (reason === null) return;
         } else if (!confirm(`Really ${label.toLowerCase()} ${name}?`)) {
             return;
         }
@@ -2049,8 +2722,6 @@
                 return;
             }
 
-            // Echoed into the terminal so the console stays a complete record
-            // of what was run, whether it was typed or clicked.
             appendLine('> ' + data.command, 'lvl-echo');
             if (data.output) {
                 data.output.split('\n').forEach(line => appendLine(line, 'lvl-meta'));
@@ -2061,26 +2732,27 @@
             return;
         }
 
-        // The server drops its cached view on every action, so this reflects
-        // the change rather than the pre-action state.
         loadPlayers();
         refreshOnline();
     }
 
     function renderPlayers() {
+        if (!playerTable) return;
         const body = playerTable.querySelector('tbody');
+        if (!body) return;
         body.innerHTML = '';
 
-        const term = playerSearch.value.trim().toLowerCase();
+        const term = playerSearch ? playerSearch.value.trim().toLowerCase() : '';
         const visible = roster.filter(player => {
-            if (onlineOnly.checked && !player.online) return false;
+            if (onlineOnly && onlineOnly.checked && !player.online) return false;
             if (!term) return true;
             return playerLabel(player).toLowerCase().includes(term)
                 || (player.uuid || '').includes(term);
         });
 
-        playersCount.textContent =
-            `${roster.filter(p => p.online).length} online · ${roster.length} on record`;
+        if (playersCount) {
+            playersCount.textContent = `${roster.filter(p => p.online).length} online · ${roster.length} on record`;
+        }
 
         visible.slice(0, MAX_PLAYER_ROWS).forEach(player => {
             const row = document.createElement('tr');
@@ -2088,8 +2760,6 @@
             const nameCell = document.createElement('td');
             nameCell.dataset.label = 'Player';
             const label = document.createElement('span');
-            // textContent throughout: these names come out of server files and
-            // must never be treated as markup.
             label.textContent = playerLabel(player);
             if (!player.name) {
                 label.className = 'uuid-only';
@@ -2131,8 +2801,10 @@
         } else if (!visible.length) {
             note = roster.length ? 'No players match that filter.' : 'No players on record yet.';
         }
-        playersNote.textContent = note;
-        playersNote.style.display = note ? '' : 'none';
+        if (playersNote) {
+            playersNote.textContent = note;
+            playersNote.style.display = note ? '' : 'none';
+        }
     }
 
     async function loadPlayers() {
@@ -2145,21 +2817,24 @@
             renderPlayers();
         } catch (err) {
             console.error(err);
-            playersNote.textContent = 'Could not load the player list.';
-            playersNote.style.display = '';
+            if (playersNote) {
+                playersNote.textContent = 'Could not load the player list.';
+                playersNote.style.display = '';
+            }
         }
     }
 
-    playerSearch.addEventListener('input', renderPlayers);
-    onlineOnly.addEventListener('change', renderPlayers);
-    document.getElementById('refreshPlayers').addEventListener('click', () => {
-        loadPlayers();
-        refreshOnline();
-        refreshStats();
-    });
+    if (playerSearch) playerSearch.addEventListener('input', renderPlayers);
+    if (onlineOnly) onlineOnly.addEventListener('change', renderPlayers);
+    const refreshPlayersBtn = document.getElementById('refreshPlayers');
+    if (refreshPlayersBtn) {
+        refreshPlayersBtn.addEventListener('click', () => {
+            loadPlayers();
+            refreshOnline();
+            refreshStats();
+        });
+    }
 
-    // Drop the connection when the tab is closed rather than leaving the
-    // server streaming into nothing.
     window.addEventListener('beforeunload', () => {
         consoleDisconnect();
         stopStatusPolling();

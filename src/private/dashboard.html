@@ -4,13 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#f4f6f9" id="metaThemeColor">
-    <title>RainDrippy - Status Dashboard</title>
-    <link rel="icon" type="image/png" href="https://bakosmp.go.ro/raindrippy/rd.png">
+    <title>RainDrippy Studios - Admin Dashboard</title>
+    <link rel="icon" href="/raindrippy/rd.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="https://bakosmp.go.ro/status/dashboard.css">
+    <link rel="stylesheet" href="https://bakosmp.go.ro/raindrippy/index.css">
     <link rel="stylesheet" href="https://bakosmp.go.ro/cookie.css">
     <style>
         :root {
@@ -96,12 +96,13 @@
 
         html { background: var(--bg) !important; }
 
-        body, #topbar, .card, .component-card, .incident-item, #overlayContent,
+        body, #topbar, #userTable, #moderationPanel, #overlayContent, #consoleOutput,
+        .card, .component-card, .incident-item,
         input, textarea, select, button {
             transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
         }
 
-        h1, h2, h3, h4, p, label, div {
+        h1, h2, h3, h4, p, label, td, th, div {
             color: var(--text) !important;
         }
 
@@ -111,10 +112,10 @@
             color: var(--text) !important;
         }
 
-        h1 { font-size: 1.5rem; margin: 0; }
-        h2 { font-size: 1.15rem; margin: 0 0 16px; }
-        h3 { font-size: 1rem; margin: 0 0 10px; }
-        h4 { font-size: 0.9rem; margin: 12px 0 8px; color: var(--text-muted) !important; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+        h1 { font-size: 1.5rem; margin: 0 0 4px; }
+        h2 { font-size: 1.15rem; margin: 0 0 14px; }
+        h3 { font-size: 0.95rem; margin: 0 0 10px; color: var(--text-muted) !important; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+        h4 { font-size: 0.88rem; margin: 12px 0 8px; color: var(--text-muted) !important; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
 
         a { color: var(--accent) !important; }
 
@@ -202,152 +203,18 @@
         html[data-theme="dark"] #themeToggle .icon-sun { display: block; }
         html[data-theme="dark"] #themeToggle .icon-moon { display: none; }
 
-        /* Layout & Container */
-        .container, #content {
+        /* Content */
+        #content, .container {
             max-width: 1080px;
             margin: 0 auto;
             padding: 24px 20px 60px;
         }
 
-        .dashboard-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 24px;
-        }
-
-        .dashboard-title {
-            margin: 0;
-            font-size: 1.5rem;
-        }
-
-        #current-time {
-            font-family: "JetBrains Mono", Consolas, monospace;
-            font-size: 0.85rem;
+        p.subtle, .page-hint {
             color: var(--text-muted) !important;
+            font-size: 0.9rem;
+            margin: 0 0 20px;
         }
-
-        /* Cards & Panels */
-        .card {
-            background: var(--bg-panel) !important;
-            border: 1px solid var(--line) !important;
-            border-radius: var(--radius);
-            padding: 24px;
-            box-shadow: var(--shadow);
-            margin-bottom: 24px;
-        }
-
-        .card-title {
-            font-size: 1.15rem;
-            margin: 0 0 18px;
-            padding-bottom: 12px;
-            border-bottom: 1px solid var(--line-soft);
-            color: var(--text) !important;
-        }
-
-        /* Form controls */
-        .form-group {
-            margin-bottom: 16px;
-        }
-
-        .form-group label {
-            display: block;
-            margin-bottom: 6px;
-            font-size: 0.82rem;
-            color: var(--text-muted) !important;
-            font-weight: 500;
-        }
-
-        input[type="text"], input[type="search"], textarea, select, .form-control {
-            width: 100%;
-            background: var(--bg-input) !important;
-            border: 1px solid var(--line) !important;
-            color: var(--text) !important;
-            border-radius: var(--radius-sm);
-            padding: 10px 12px;
-            font-size: 0.92rem;
-            font-family: inherit;
-            transition: border-color 0.15s ease, box-shadow 0.15s ease;
-        }
-
-        input[type="text"]:focus, input[type="search"]:focus, textarea:focus, select:focus, .form-control:focus,
-        button:focus-visible, .tab:focus-visible {
-            outline: none;
-            border-color: var(--accent) !important;
-            box-shadow: 0 0 0 3px var(--accent-soft);
-        }
-
-        textarea, textarea.form-control {
-            min-height: 90px;
-            resize: vertical;
-        }
-
-        input::placeholder, textarea::placeholder { color: var(--text-faint) !important; }
-
-        /* Buttons */
-        button, .btn {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 6px;
-            padding: 8px 16px;
-            border: 1px solid var(--line) !important;
-            background: var(--bg-raised) !important;
-            color: var(--text) !important;
-            border-radius: var(--radius-sm);
-            font-family: inherit;
-            font-size: 0.85rem;
-            font-weight: 500;
-            cursor: pointer;
-            transition: border-color 0.15s ease, background 0.15s ease, transform 0.05s ease;
-            margin-right: 6px;
-            margin-bottom: 6px;
-        }
-
-        button:hover, .btn:hover { border-color: var(--accent-dim) !important; background: var(--bg-panel) !important; transform: translateY(-1px); }
-        button:active, .btn:active { transform: translateY(1px); }
-        button:disabled, .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-
-        .btn-primary {
-            background: var(--accent) !important;
-            border-color: var(--accent) !important;
-            color: var(--accent-contrast) !important;
-            font-weight: 600;
-        }
-        .btn-primary:hover { background: var(--accent-dim) !important; border-color: var(--accent-dim) !important; }
-
-        .btn-outline {
-            background: var(--bg-raised) !important;
-            border: 1px solid var(--line) !important;
-            color: var(--text) !important;
-        }
-        .btn-outline:hover { border-color: var(--accent) !important; color: var(--accent) !important; }
-
-        .btn-danger, .remove-component {
-            background: transparent !important;
-            border-color: rgba(255, 107, 107, 0.4) !important;
-            color: var(--danger) !important;
-        }
-        .btn-danger:hover, .remove-component:hover { background: var(--danger-soft) !important; border-color: var(--danger) !important; }
-
-        /* Dynamic component update form rows */
-        .component-updates {
-            background: var(--bg-raised) !important;
-            border: 1px solid var(--line) !important;
-            border-radius: var(--radius-sm);
-            padding: 14px;
-            margin: 10px 0 14px;
-        }
-
-        .component-update {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 10px;
-            align-items: center;
-        }
-        .component-update:last-child { margin-bottom: 0; }
-
-        .component-update select { flex: 1; }
 
         /* Tabs */
         .tab-container {
@@ -384,7 +251,248 @@
         .tab-content { display: none; }
         .tab-content.active { display: block; }
 
-        /* Components grid & cards */
+        /* Panels & Cards */
+        #userTable, #moderationPanel, .card {
+            background: var(--bg-panel) !important;
+            border: 1px solid var(--line) !important;
+            border-radius: var(--radius);
+        }
+
+        .card {
+            padding: 24px;
+            box-shadow: var(--shadow);
+            margin-bottom: 24px;
+        }
+
+        .card-title {
+            font-size: 1.15rem;
+            margin: 0 0 18px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--line-soft);
+            color: var(--text) !important;
+        }
+
+        #userTable { border-collapse: collapse; overflow: hidden; }
+
+        /* Form controls */
+        #searchUser {
+            width: 100%;
+            max-width: 360px;
+            display: block;
+            margin-bottom: 16px;
+        }
+
+        .form-group { margin-bottom: 16px; }
+        .form-group label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 0.82rem;
+            color: var(--text-muted) !important;
+            font-weight: 500;
+        }
+
+        input[type="text"], input[type="search"], textarea, select, .form-control {
+            background: var(--bg-input) !important;
+            border: 1px solid var(--line) !important;
+            color: var(--text) !important;
+            border-radius: var(--radius-sm);
+            padding: 10px 12px;
+            font-size: 0.92rem;
+            font-family: inherit;
+            width: 100%;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        input[type="text"]:focus, input[type="search"]:focus, textarea:focus, select:focus, .form-control:focus,
+        button:focus-visible, .tab:focus-visible {
+            outline: none;
+            border-color: var(--accent) !important;
+            box-shadow: 0 0 0 3px var(--accent-soft);
+        }
+
+        textarea, textarea.form-control {
+            min-height: 80px;
+            resize: vertical;
+        }
+
+        input::placeholder, textarea::placeholder { color: var(--text-faint) !important; }
+
+        /* Tables */
+        table { width: 100%; border-collapse: collapse; }
+
+        th, td {
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--line-soft);
+            text-align: left;
+            font-size: 0.88rem;
+            vertical-align: middle;
+        }
+
+        thead th {
+            background: var(--bg-raised) !important;
+            color: var(--text-muted) !important;
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            font-weight: 600;
+            border-bottom: 1px solid var(--line);
+        }
+
+        tbody tr:last-child td { border-bottom: none; }
+        tbody tr:hover { background: rgba(79, 209, 255, 0.035) !important; }
+        #userTable tbody tr, 
+        #userTable tbody tr:nth-child(even), 
+        #userTable tbody tr:nth-child(odd) {
+            background: transparent !important;
+        }
+
+        #userTable tbody tr:hover { 
+            background: rgba(79, 209, 255, 0.035) !important; 
+        }
+        td:first-child, th:first-child { padding-left: 18px; }
+        td:last-child, th:last-child { padding-right: 18px; }
+
+        .status-pill, .incident-status, .component-status, .impact-badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            border: 1px solid transparent;
+        }
+
+        .status-pill.status-ok, .status-operational, .status-monitoring {
+            background: var(--ok-soft) !important;
+            color: var(--ok) !important;
+            border-color: rgba(28, 157, 111, 0.3) !important;
+        }
+
+        .status-pill.status-bad, .status-disruption {
+            background: var(--danger-soft) !important;
+            color: var(--danger) !important;
+            border-color: rgba(220, 53, 69, 0.3) !important;
+        }
+
+        .status-degraded, .status-investigating {
+            background: var(--warn-soft) !important;
+            color: var(--warn) !important;
+            border-color: rgba(183, 121, 31, 0.3) !important;
+        }
+
+        .status-identified, .impact-badge {
+            background: var(--accent-soft) !important;
+            color: var(--accent) !important;
+            border-color: rgba(8, 145, 178, 0.3) !important;
+        }
+
+        .status-resolved {
+            background: var(--bg-raised) !important;
+            color: var(--text-muted) !important;
+            border-color: var(--line) !important;
+        }
+
+        input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            accent-color: var(--accent);
+            cursor: pointer;
+        }
+
+        #pagination {
+            margin-top: 14px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 4px;
+        }
+
+        #currentPageSpan { color: var(--text-muted) !important; font-size: 0.85rem; margin: 0 6px; }
+
+        /* Buttons */
+        button, .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 8px 14px;
+            margin-right: 6px;
+            margin-bottom: 4px;
+            border: 1px solid var(--line) !important;
+            background: var(--bg-raised) !important;
+            color: var(--text) !important;
+            border-radius: var(--radius-sm);
+            font-family: inherit;
+            font-size: 0.85rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: border-color 0.15s ease, background 0.15s ease, transform 0.05s ease;
+        }
+
+        button:hover, .btn:hover { border-color: var(--accent-dim) !important; background: var(--bg-panel) !important; transform: translateY(-1px); }
+        button:active, .btn:active { transform: translateY(1px); }
+        button:disabled, .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+        #applyBan, .genPWDreset, .btn-primary {
+            background: var(--accent) !important;
+            border-color: var(--accent) !important;
+            color: var(--accent-contrast) !important;
+            font-weight: 600;
+        }
+        #applyBan:hover, .genPWDreset:hover, .btn-primary:hover { background: var(--accent-dim) !important; border-color: var(--accent-dim) !important; }
+
+        .btn-outline {
+            background: var(--bg-raised) !important;
+            border: 1px solid var(--line) !important;
+            color: var(--text) !important;
+        }
+        .btn-outline:hover { border-color: var(--accent) !important; color: var(--accent) !important; }
+
+        .deleteBtn, .btn-danger, .remove-component {
+            background: transparent !important;
+            border-color: rgba(255, 107, 107, 0.4) !important;
+            color: var(--danger) !important;
+        }
+        .deleteBtn:hover, .btn-danger:hover, .remove-component:hover { background: var(--danger-soft) !important; border-color: var(--danger) !important; }
+
+        .unbanBtn { color: var(--text-muted) !important; }
+
+        td .unbanBtn, td .deleteBtn, td .genPWDreset {
+            margin: 2px 4px 2px 0;
+            font-size: 0.78rem;
+            padding: 6px 10px;
+        }
+
+        /* Status & Incidents UI */
+        .dashboard-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+
+        #current-time {
+            font-family: "JetBrains Mono", Consolas, monospace;
+            font-size: 0.85rem;
+            color: var(--text-muted) !important;
+        }
+
+        .component-updates {
+            background: var(--bg-raised) !important;
+            border: 1px solid var(--line) !important;
+            border-radius: var(--radius-sm);
+            padding: 14px;
+            margin: 10px 0 14px;
+        }
+
+        .component-update {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            align-items: center;
+        }
+        .component-update:last-child { margin-bottom: 0; }
+        .component-update select { flex: 1; }
+
         .component-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -401,25 +509,11 @@
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
         }
 
-        .component-name {
-            font-size: 1.05rem;
-            margin-bottom: 10px;
-        }
-
-        .last-updated {
-            font-size: 0.78rem;
-            color: var(--text-muted) !important;
-            margin-bottom: 14px;
-        }
-
+        .component-name { font-size: 1.05rem; margin-bottom: 10px; }
+        .last-updated { font-size: 0.78rem; color: var(--text-muted) !important; margin-bottom: 14px; }
         .component-card .form-group { margin-bottom: 12px; }
 
-        /* Incidents list & items */
-        .incident-list {
-            list-style: none;
-            padding: 0;
-            margin: 0;
-        }
+        .incident-list { list-style: none; padding: 0; margin: 0; }
 
         .incident-item {
             background: var(--bg-raised) !important;
@@ -430,11 +524,7 @@
             margin-bottom: 14px;
         }
 
-        .incident-title {
-            font-size: 1.1rem;
-            font-weight: 600;
-            margin-bottom: 8px;
-        }
+        .incident-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 8px; }
 
         .incident-meta {
             display: flex;
@@ -446,86 +536,16 @@
             flex-wrap: wrap;
         }
 
-        .incident-context {
-            font-size: 0.92rem;
-            line-height: 1.5;
-            margin-bottom: 12px;
-            color: var(--text) !important;
-        }
+        .incident-context { font-size: 0.92rem; line-height: 1.5; margin-bottom: 12px; color: var(--text) !important; }
 
-        /* Status Badges & Pills */
-        .incident-status, .component-status, .impact-badge {
-            display: inline-block;
-            padding: 3px 10px;
-            border-radius: 999px;
-            font-size: 0.78rem;
-            font-weight: 600;
-            border: 1px solid transparent;
-        }
-
-        .status-operational, .status-monitoring {
-            background: var(--ok-soft) !important;
-            color: var(--ok) !important;
-            border-color: rgba(28, 157, 111, 0.3) !important;
-        }
-
-        .status-degraded, .status-investigating {
-            background: var(--warn-soft) !important;
-            color: var(--warn) !important;
-            border-color: rgba(183, 121, 31, 0.3) !important;
-        }
-
-        .status-disruption {
-            background: var(--danger-soft) !important;
-            color: var(--danger) !important;
-            border-color: rgba(220, 53, 69, 0.3) !important;
-        }
-
-        .status-identified, .impact-badge {
-            background: var(--accent-soft) !important;
-            color: var(--accent) !important;
-            border-color: rgba(8, 145, 178, 0.3) !important;
-        }
-
-        .status-resolved {
-            background: var(--bg-raised) !important;
-            color: var(--text-muted) !important;
-            border-color: var(--line) !important;
-        }
-
-        /* History list */
-        .history-list {
-            margin-top: 14px;
-            border-top: 1px dashed var(--line);
-            padding-top: 12px;
-        }
-
-        .history-item {
-            margin-bottom: 8px;
-            padding-bottom: 8px;
-            border-bottom: 1px solid var(--line-soft);
-        }
+        .history-list { margin-top: 14px; border-top: 1px dashed var(--line); padding-top: 12px; }
+        .history-item { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--line-soft); }
         .history-item:last-child { border-bottom: none; }
+        .history-time { font-size: 0.8rem; font-weight: 600; color: var(--text-muted) !important; }
+        .history-context { font-size: 0.88rem; color: var(--text) !important; }
 
-        .history-time {
-            font-size: 0.8rem;
-            font-weight: 600;
-            color: var(--text-muted) !important;
-        }
+        .update-form { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
 
-        .history-context {
-            font-size: 0.88rem;
-            color: var(--text) !important;
-        }
-
-        /* Update form in incidents */
-        .update-form {
-            margin-top: 16px;
-            padding-top: 16px;
-            border-top: 1px solid var(--line);
-        }
-
-        /* Alert Box */
         .alert {
             padding: 12px 16px;
             border-radius: var(--radius-sm);
@@ -535,22 +555,413 @@
             gap: 10px;
             font-size: 0.9rem;
         }
+        .alert-success { background: var(--ok-soft) !important; color: var(--ok) !important; border: 1px solid rgba(28, 157, 111, 0.3) !important; }
+        .alert-error { background: var(--danger-soft) !important; color: var(--danger) !important; border: 1px solid rgba(220, 53, 69, 0.3) !important; }
 
-        .alert-success {
-            background: var(--ok-soft) !important;
-            color: var(--ok) !important;
-            border: 1px solid rgba(28, 157, 111, 0.3) !important;
+        /* Moderation panel */
+        #moderationPanel {
+            margin: 28px 0 0;
+            padding: 20px;
         }
 
-        .alert-error {
-            background: var(--danger-soft) !important;
+        #moderationPanel > div { margin-bottom: 14px; }
+        #moderationPanel label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 0.8rem;
+            color: var(--text-muted) !important;
+            font-weight: 500;
+        }
+
+        #modUsername, #banType, #modNote { width: 100%; max-width: 420px; }
+        #modNote { resize: vertical; min-height: 70px; }
+
+        #incriminatorySection {
+            border-top: 1px dashed var(--line);
+            padding-top: 16px;
+            margin-top: 16px;
+        }
+
+        #incriminatoryList > div {
+            background: var(--bg-raised) !important;
+            border: 1px solid var(--line) !important;
+            border-radius: var(--radius-sm);
+            padding: 12px !important;
+            margin: 10px 0 !important;
+        }
+
+        #incriminatoryList input, #incriminatoryList textarea {
+            width: 100%;
+            max-width: none !important;
+            margin: 5px 0 !important;
+        }
+
+        #incriminatoryList button {
+            background: transparent !important;
+            border-color: rgba(255, 107, 107, 0.35) !important;
             color: var(--danger) !important;
-            border: 1px solid rgba(220, 53, 69, 0.3) !important;
+            font-size: 0.78rem;
+            padding: 5px 10px;
         }
 
+        #addIncriminatory {
+            border-style: dashed;
+            color: var(--text-muted) !important;
+        }
+
+        #applyBan { margin-top: 4px; padding: 10px 20px; }
+
+        /* Overlay */
+        #overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(6, 8, 12, 0.72) !important;
+            backdrop-filter: blur(2px);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        #overlayContent {
+            background: var(--bg-panel) !important;
+            border: 1px solid var(--line) !important;
+            padding: 26px;
+            border-radius: var(--radius);
+            max-width: 460px;
+            width: 100%;
+            box-shadow: var(--shadow);
+        }
+
+        #overlayContent h3 {
+            margin-top: 0;
+            color: var(--text) !important;
+            text-transform: none;
+            font-size: 1.05rem;
+            letter-spacing: normal;
+            font-weight: 600;
+        }
+
+        #overlayContent p {
+            margin: 15px 0;
+            word-break: break-all;
+            color: var(--text-muted) !important;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+
+        #overlayContent input[type="text"] { width: 100%; }
+        #overlayContent button { margin-top: 10px; padding: 10px 20px; cursor: pointer; }
+
+        .copyBtn { background: var(--accent) !important; color: var(--accent-contrast) !important; border: none !important; font-weight: 600; }
+        .copyBtn:hover { background: var(--accent-dim) !important; }
+
+        .closeBtn { background: var(--bg-raised) !important; color: var(--text) !important; border: 1px solid var(--line) !important; }
+        .closeBtn:hover { background: var(--bg-panel) !important; }
+
+        /* Console */
+        #consoleToolbar {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        #consoleToolbar label { display: flex; align-items: center; gap: 6px; color: var(--text-muted) !important; font-size: 0.85rem; }
+
+        #connStatus {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            color: var(--text-muted) !important;
+        }
+
+        #connDot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: var(--text-faint) !important;
+            box-shadow: 0 0 0 3px transparent;
+            transition: box-shadow 0.2s ease;
+        }
+
+        #connDot.live { background: var(--ok) !important; box-shadow: 0 0 0 3px var(--ok-soft); }
+        #connDot.connecting { background: var(--warn) !important; box-shadow: 0 0 0 3px var(--warn-soft); }
+        #connDot.down { background: var(--danger) !important; box-shadow: 0 0 0 3px var(--danger-soft); }
+
+        #consoleOutput {
+            background: #0a0d12 !important;
+            border: 1px solid var(--line) !important;
+            color: #d6dbe3 !important;
+            font-family: "JetBrains Mono", Consolas, "Courier New", monospace;
+            font-size: 12.5px;
+            line-height: 1.5;
+            padding: 14px;
+            border-radius: var(--radius);
+            height: 55vh;
+            overflow-y: auto;
+            overflow-x: auto;
+            white-space: pre;
+        }
+
+        #consoleOutput::-webkit-scrollbar { width: 10px; height: 10px; }
+        #consoleOutput::-webkit-scrollbar-track { background: transparent !important; }
+        #consoleOutput::-webkit-scrollbar-thumb { background: var(--line) !important; border-radius: 6px; }
+        #consoleOutput::-webkit-scrollbar-thumb:hover { background: var(--accent-dim) !important; }
+
+        #consoleOutput .line { display: block; color: #d6dbe3 !important; }
+        #consoleOutput .lvl-WARN { color: var(--warn) !important; }
+        #consoleOutput .lvl-ERROR, #consoleOutput .lvl-FATAL { color: var(--danger) !important; }
+        #consoleOutput .lvl-meta { color: var(--text-faint) !important; font-style: italic; }
+        #consoleOutput .lvl-echo { color: var(--accent) !important; font-weight: bold; }
+
+        #consoleForm {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        #consoleInput {
+            flex: 1;
+            padding: 11px 12px;
+            font-family: "JetBrains Mono", Consolas, "Courier New", monospace;
+        }
+
+        #consoleSend {
+            background: var(--accent) !important;
+            border-color: var(--accent) !important;
+            color: var(--accent-contrast) !important;
+            font-weight: 600;
+        }
+        #consoleSend:hover { background: var(--accent-dim) !important; }
+
+        #powerControls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        #serverState {
+            font-weight: 600;
+            padding: 5px 12px;
+            border-radius: 999px;
+            margin-right: 4px;
+            font-size: 0.8rem;
+            border: 1px solid transparent !important;
+        }
+
+        .state-running { background: var(--ok-soft) !important; color: var(--ok) !important; border-color: rgba(52, 211, 153, 0.3) !important; }
+        .state-stopped { background: var(--danger-soft) !important; color: var(--danger) !important; border-color: rgba(255, 107, 107, 0.3) !important; }
+        .state-unknown { background: var(--bg-raised) !important; color: var(--text-muted) !important; border-color: var(--line) !important; }
+
+        .powerBtn[data-action="start"] { border-color: rgba(52, 211, 153, 0.35) !important; color: var(--ok) !important; }
+        .powerBtn[data-action="start"]:hover { background: var(--ok-soft) !important; }
+        .powerBtn[data-action="stop"] { border-color: rgba(255, 107, 107, 0.35) !important; color: var(--danger) !important; }
+        .powerBtn[data-action="stop"]:hover { background: var(--danger-soft) !important; }
+        .powerBtn[data-action="restart"] { border-color: rgba(240, 198, 116, 0.35) !important; color: var(--warn) !important; }
+        .powerBtn[data-action="restart"]:hover { background: var(--warn-soft) !important; }
+
+        /* Performance */
+        #statsStrip {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin: 12px 0;
+        }
+
+        .stat {
+            background: var(--bg-panel) !important;
+            border: 1px solid var(--line) !important;
+            border-radius: var(--radius);
+            padding: 12px 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+        }
+
+        .stat-label {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            font-weight: 600;
+            color: var(--text-muted) !important;
+        }
+
+        .stat-value {
+            font-size: 1.2rem;
+            font-weight: 600;
+            font-family: "JetBrains Mono", Consolas, "Courier New", monospace;
+        }
+
+        .stat-value.good { color: var(--ok) !important; }
+        .stat-value.warn { color: var(--warn) !important; }
+        .stat-value.bad { color: var(--danger) !important; }
+
+        .stat-value.unknown {
+            color: var(--text-faint) !important;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+
+        .stat-sub {
+            font-size: 0.75rem;
+            color: var(--text-muted) !important;
+        }
+
+        #statsNote {
+            margin: -4px 0 10px;
+            color: var(--danger) !important;
+            font-size: 0.85rem;
+        }
+
+        /* Players */
+        #playersPanel { margin-top: 24px; }
+
+        #playersHeader {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 8px;
+        }
+
+        #playersHeader h2 { margin: 0; }
+        #playersHeader .spacer { flex: 1; }
+        #playerSearch { max-width: 220px; margin: 0; }
+        #playersNote { margin: 0 0 8px; }
+
+        .badge {
+            display: inline-block;
+            font-size: 0.7rem;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 999px;
+            margin: 0 4px 2px 0;
+            border: 1px solid transparent !important;
+        }
+
+        .badge-online { background: var(--ok-soft) !important; color: var(--ok) !important; }
+        .badge-offline { background: var(--bg-raised) !important; color: var(--text-faint) !important; border-color: var(--line) !important; }
+        .badge-op { background: var(--accent-soft) !important; color: var(--accent) !important; }
+        .badge-banned { background: var(--danger-soft) !important; color: var(--danger) !important; }
+        .badge-whitelisted { background: var(--warn-soft) !important; color: var(--warn) !important; }
+
+        #playerTable .uuid-only {
+            color: var(--text-faint) !important;
+            font-family: "JetBrains Mono", Consolas, monospace;
+            font-size: 0.85rem;
+        }
+
+        #playerTable td button { margin: 0 4px 4px 0; }
+        #playerTable td button[disabled] { opacity: 0.45; cursor: not-allowed; }
+
+        /* Mobile */
         @media (max-width: 720px) {
-            .container, #content { padding: 16px 12px 48px; }
+            #content, .container { padding: 16px 12px 48px; }
             #topbar { padding: 10px 14px; }
+            h1 { font-size: 1.25rem; }
+
+            .tab { padding: 9px 12px; font-size: 0.86rem; }
+
+            #userTable thead { display: none; }
+            #userTable, #userTable tbody, #userTable tr, #userTable td { display: block; width: 100%; }
+
+            #userTable tr {
+                border-bottom: 8px solid var(--bg);
+                padding: 4px 0;
+            }
+
+            #userTable td {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 12px;
+                border-bottom: 1px solid var(--line-soft);
+                padding: 10px 14px;
+            }
+
+            #userTable td::before {
+                content: attr(data-label);
+                color: var(--text-muted) !important;
+                font-size: 0.72rem;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                font-weight: 600;
+                flex-shrink: 0;
+            }
+
+            #userTable td:first-child {
+                background: var(--bg-raised) !important;
+                font-weight: 600;
+                font-size: 0.95rem;
+            }
+            #userTable td:first-child::before { content: ""; }
+
+            #userTable td:last-child {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 6px;
+            }
+            #userTable td:last-child::before { display: none; }
+            #userTable td:last-child button { margin: 0; width: 100%; }
+
+            #consoleOutput { height: 48vh; font-size: 12px; }
+            #statsStrip { grid-template-columns: repeat(2, 1fr); }
+
+            #playerTable thead { display: none; }
+            #playerTable, #playerTable tbody, #playerTable tr, #playerTable td { display: block; width: 100%; }
+
+            #playerTable tr {
+                border-bottom: 8px solid var(--bg);
+                padding: 4px 0;
+            }
+
+            #playerTable td {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 12px;
+                border-bottom: 1px solid var(--line-soft);
+                padding: 10px 14px;
+            }
+
+            #playerTable td::before {
+                content: attr(data-label);
+                color: var(--text-muted) !important;
+                font-size: 0.72rem;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                font-weight: 600;
+                flex-shrink: 0;
+            }
+
+            #playerTable td:first-child {
+                background: var(--bg-raised) !important;
+                font-weight: 600;
+            }
+            #playerTable td:first-child::before { content: ""; }
+
+            #playerTable td:last-child { flex-wrap: wrap; justify-content: flex-start; }
+            #playerTable td:last-child::before { flex-basis: 100%; }
+
+            #playerSearch { max-width: none; flex: 1; }
+
+            #consoleForm { flex-direction: column; }
+            #consoleSend { width: 100%; }
+
+            #powerControls { width: 100%; }
+            #powerControls .powerBtn { flex: 1; }
+
+            #moderationPanel { padding: 16px; margin-left: 0; margin-right: 0; }
+            #modUsername, #banType, #modNote { max-width: none; }
+
+            #overlayContent { padding: 20px; }
+
             .dashboard-header { flex-direction: column; align-items: flex-start; gap: 6px; }
             .component-grid { grid-template-columns: 1fr; }
             .component-update { flex-direction: column; align-items: stretch; }
@@ -559,24 +970,100 @@
     </style>
 </head>
 <body>
-    <div id="topbar">
-        <img src="https://bakosmp.go.ro/raindrippy/rd.png" alt="RainDrippy Logo" class="logo" onclick="window.location.href='/raindrippy/index.html'">
-        <span class="tpbar-txt" style="margin-left: 12px; font-weight: 600;">Status Dashboard</span>
-        <a href="/status" class="tpbar-txt" style="margin-left: 2em;">Public Status</a>
-        <button type="button" id="themeToggle" aria-label="Switch to dark mode" title="Switch to dark mode">
-            <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true">
-                <circle cx="12" cy="12" r="4.5"></circle>
-                <path d="M12 2.5v2.5M12 19v2.5M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M2.5 12H5M19 12h2.5M4.6 19.4l1.8-1.8M17.6 6.4l1.8-1.8"></path>
-            </svg>
-            <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.8 6.8 0 0 0 10.5 10.5Z"></path>
-            </svg>
-        </button>
+
+<div id="topbar">
+    <img src="/raindrippy/rd.png" alt="RainDrippy" class="logo" onclick="window.location.href='/raindrippy/index.html'">
+    <span class="tpbar-txt" style="margin-left: 12px; font-weight: 600;">Admin Dashboard</span>
+    <a class="tpbar-txt" href="/status" style="margin-left: 2em;">Public Status</a>
+    <a class="tpbar-txt" href="/profile.html" style="margin-left: 1.5em;">Profile</a>
+    <button type="button" id="themeToggle" aria-label="Switch to dark mode" title="Switch to dark mode">
+        <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="4.5"></circle>
+            <path d="M12 2.5v2.5M12 19v2.5M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M2.5 12H5M19 12h2.5M4.6 19.4l1.8-1.8M17.6 6.4l1.8-1.8"></path>
+        </svg>
+        <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.8 6.8 0 0 0 10.5 10.5Z"></path>
+        </svg>
+    </button>
+</div>
+
+<div id="content">
+    <div class="tab-container">
+        <div class="tab" data-tab="users">Users</div>
+        <div class="tab active" data-tab="status">Status & Incidents</div>
+        <div class="tab" data-tab="console">Server Console</div>
+        <div class="tab" data-tab="players">Players</div>
     </div>
 
-    <div class="container">
+    <!-- USERS TAB -->
+    <div class="tab-content" id="users-tab">
+        <h1>Manage User Accounts</h1>
+        <p class="page-hint">Search, moderate, and adjust access for every account on the server.</p>
+
+        <input type="text" id="searchUser" placeholder="Search username..." />
+
+        <table id="userTable">
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Status</th>
+                    <th>Admin</th>
+                    <th>Member</th>
+                    <th>RD Projects Access</th>
+                    <th>Plex Access</th>
+                    <th>OG</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- user rows dynamically inserted here -->
+            </tbody>
+        </table>
+
+        <div id="pagination" style="margin-top: 10px; display: flex; justify-content: center;">
+            <button id="prevPageBtn" disabled>Previous</button>
+            <span id="currentPageSpan" style="margin: 0 10px;">Page 1</span>
+            <button id="nextPageBtn">Next</button>
+        </div>
+
+        <div id="moderationPanel">
+            <h2>Moderation Panel</h2>
+
+            <div>
+                <label for="modUsername">Username:</label>
+                <input type="text" id="modUsername" placeholder="Enter username...">
+            </div>
+
+            <div>
+                <label for="banType">Ban Type:</label>
+                <select id="banType">
+                    <option value="1d">1 Day</option>
+                    <option value="3d">3 Days</option>
+                    <option value="7d">7 Days</option>
+                    <option value="perm">Permanent</option>
+                    <option value="poison">Poison</option>
+                </select>
+            </div>
+
+            <div>
+                <label for="modNote">Reason / Moderator Note:</label>
+                <textarea id="modNote" placeholder="Reason for ban..." rows="3" cols="40"></textarea>
+            </div>
+
+            <div id="incriminatorySection">
+                <h3>Incriminatory Content</h3>
+                <div id="incriminatoryList"></div>
+                <button type="button" id="addIncriminatory">+ Add Evidence</button>
+            </div>
+
+            <button id="applyBan" style="margin-top: 15px;">Apply Moderation</button>
+        </div>
+    </div><!-- /users-tab -->
+
+    <!-- STATUS & INCIDENTS TAB -->
+    <div class="tab-content active" id="status-tab">
         <div class="dashboard-header">
-            <h1 class="dashboard-title">Status Dashboard</h1>
+            <h1 class="dashboard-title">System Status & Incident Management</h1>
             <div id="current-time"></div>
         </div>
 
@@ -624,7 +1111,7 @@
                         <div class="component-update">
                             <select class="form-control component-select">
                                 <option value="">Select a component</option>
-                                <!-- Options will be populated by JavaScript -->
+                                <!-- Options populated by JS -->
                             </select>
                             <select class="form-control status-select">
                                 <option value="operational">Operational</option>
@@ -649,485 +1136,962 @@
         </div>
 
         <div class="card">
-            <h2 class="card-title">Incident Management</h2>
+            <h2 class="card-title">Incident History</h2>
             
-            <div class="tab-container">
-                <div class="tab active" data-tab="active">Active Incidents</div>
-                <div class="tab" data-tab="resolved">Resolved Incidents</div>
-                <div class="tab" data-tab="all">All Incidents</div>
+            <div class="tab-container" style="margin-bottom: 16px;">
+                <div class="tab active" data-inc-tab="active">Active Incidents</div>
+                <div class="tab" data-inc-tab="resolved">Resolved Incidents</div>
+                <div class="tab" data-inc-tab="all">All Incidents</div>
             </div>
             
-            <div class="tab-content active" id="active-incidents">
-                <ul class="incident-list" id="active-incidents-list">
-                    <!-- Active incidents will be loaded here -->
-                </ul>
+            <div class="inc-tab-content active" id="active-incidents">
+                <ul class="incident-list" id="active-incidents-list"></ul>
             </div>
             
-            <div class="tab-content" id="resolved-incidents">
-                <ul class="incident-list" id="resolved-incidents-list">
-                    <!-- Resolved incidents will be loaded here -->
-                </ul>
+            <div class="inc-tab-content" id="resolved-incidents" style="display: none;">
+                <ul class="incident-list" id="resolved-incidents-list"></ul>
             </div>
             
-            <div class="tab-content" id="all-incidents">
-                <ul class="incident-list" id="all-incidents-list">
-                    <!-- All incidents will be loaded here -->
-                </ul>
+            <div class="inc-tab-content" id="all-incidents" style="display: none;">
+                <ul class="incident-list" id="all-incidents-list"></ul>
             </div>
         </div>
+    </div><!-- /status-tab -->
+
+    <!-- SERVER CONSOLE TAB -->
+    <div class="tab-content" id="console-tab">
+        <h1>Server Console</h1>
+        <p class="page-hint">Live output from the Minecraft server, with start / stop / restart control.</p>
+
+        <div id="consoleToolbar">
+            <span id="powerControls">
+                <span id="serverState" class="state-unknown">Server: unknown</span>
+                <button type="button" class="powerBtn" data-action="start">Start</button>
+                <button type="button" class="powerBtn" data-action="stop">Stop</button>
+                <button type="button" class="powerBtn" data-action="restart">Restart</button>
+            </span>
+        </div>
+
+        <div id="statsStrip">
+            <div class="stat">
+                <span class="stat-label">TPS (1m / 5m / 15m)</span>
+                <span class="stat-value unknown" id="statTps">&mdash;</span>
+            </div>
+            <div class="stat">
+                <span class="stat-label">CPU</span>
+                <span class="stat-value unknown" id="statCpu">&mdash;</span>
+                <span class="stat-sub" id="statCpuSub"></span>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Memory</span>
+                <span class="stat-value unknown" id="statMem">&mdash;</span>
+                <span class="stat-sub" id="statMemSub"></span>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Players online</span>
+                <span class="stat-value unknown" id="statPlayers">&mdash;</span>
+            </div>
+        </div>
+
+        <p id="statsNote" style="display: none;"></p>
+
+        <div id="consoleToolbar">
+            <label for="consoleSource">Source:
+                <select id="consoleSource">
+                    <option value="log">latest.log</option>
+                    <option value="stdout">Container stdout</option>
+                </select>
+            </label>
+
+            <span id="connStatus"><span id="connDot"></span><span id="connText">Disconnected</span></span>
+
+            <label><input type="checkbox" id="autoscroll" checked> Autoscroll</label>
+
+            <label title="The console already echoes every command it sends, with its output, so the server's own log line for the same command is a duplicate.">
+                <input type="checkbox" id="hideRconEcho" checked> Hide RCON echo
+            </label>
+
+            <label title="Refreshes TPS and memory every 30s. Each refresh is one RCON command, which the server writes to latest.log — turn this off to leave the log completely alone and refresh only on demand.">
+                <input type="checkbox" id="liveMetrics" checked> Live metrics
+            </label>
+
+            <button type="button" id="clearConsole">Clear</button>
+            <a href="/api/admin/console/download"><button type="button">Download latest.log</button></a>
+        </div>
+
+        <div id="consoleOutput" aria-live="polite"></div>
+
+        <form id="consoleForm" autocomplete="off">
+            <input type="text" id="consoleInput" placeholder="Type a command (e.g. list) and press Enter…">
+            <button type="submit" id="consoleSend">Send</button>
+        </form>
+
+        <section id="playersPanel">
+            <div id="playersHeader">
+                <h2>Players</h2>
+                <span id="playersCount" class="page-hint"></span>
+                <span class="spacer"></span>
+                <input type="text" id="playerSearch" placeholder="Search players&hellip;">
+                <label><input type="checkbox" id="onlineOnly"> Online only</label>
+                <button type="button" id="refreshPlayers">Refresh</button>
+            </div>
+
+            <p id="playersNote" class="page-hint" style="display: none;"></p>
+
+            <table id="playerTable">
+                <thead>
+                    <tr>
+                        <th>Player</th>
+                        <th>Status</th>
+                        <th>Last seen</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- player rows dynamically inserted here -->
+                </tbody>
+            </table>
+        </section>
+    </div><!-- /console-tab -->
+</div>
+
+<!-- Overlay for messages -->
+<div id="overlay">
+    <div id="overlayContent">
+        <h3 id="overlayTitle">Message</h3>
+        <p id="overlayMessage"></p>
+        <div id="overlayButtons"></div>
     </div>
-    <script>
-        /* --------------------------------------------------------- Theme Toggle */
-        (function initTheme() {
-            const root = document.documentElement;
-            const toggle = document.getElementById('themeToggle');
-            const metaTheme = document.getElementById('metaThemeColor');
+</div>
 
-            function applyTheme(theme) {
-                if (theme === 'dark') {
-                    root.setAttribute('data-theme', 'dark');
-                    if (toggle) {
-                        toggle.title = 'Switch to light mode';
-                        toggle.setAttribute('aria-label', 'Switch to light mode');
-                    }
-                    if (metaTheme) metaTheme.setAttribute('content', '#0e1116');
-                } else {
-                    root.removeAttribute('data-theme');
-                    if (toggle) {
-                        toggle.title = 'Switch to dark mode';
-                        toggle.setAttribute('aria-label', 'Switch to dark mode');
-                    }
-                    if (metaTheme) metaTheme.setAttribute('content', '#f4f6f9');
+<script>
+    /* --------------------------------------------------------- Theme */
+
+    (function initTheme() {
+        const root = document.documentElement;
+        const toggle = document.getElementById('themeToggle');
+        const metaTheme = document.getElementById('metaThemeColor');
+
+        function applyTheme(theme) {
+            if (theme === 'dark') {
+                root.setAttribute('data-theme', 'dark');
+                if (toggle) {
+                    toggle.title = 'Switch to light mode';
+                    toggle.setAttribute('aria-label', 'Switch to light mode');
                 }
+                if (metaTheme) metaTheme.setAttribute('content', '#0e1116');
+            } else {
+                root.removeAttribute('data-theme');
+                if (toggle) {
+                    toggle.title = 'Switch to dark mode';
+                    toggle.setAttribute('aria-label', 'Switch to dark mode');
+                }
+                if (metaTheme) metaTheme.setAttribute('content', '#f4f6f9');
             }
+        }
 
-            let saved = null;
-            try { saved = localStorage.getItem('rd-dashboard-theme') || localStorage.getItem('rd-admin-theme'); } catch (err) {}
-            applyTheme(saved === 'dark' ? 'dark' : 'light');
+        let saved = null;
+        try { saved = localStorage.getItem('rd-admin-theme') || localStorage.getItem('rd-dashboard-theme'); } catch (err) {}
+        applyTheme(saved === 'dark' ? 'dark' : 'light');
 
-            if (toggle) {
-                toggle.addEventListener('click', () => {
-                    const next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-                    applyTheme(next);
-                    try {
-                        localStorage.setItem('rd-dashboard-theme', next);
-                        localStorage.setItem('rd-admin-theme', next);
-                    } catch (err) {}
+        if (toggle) {
+            toggle.addEventListener('click', () => {
+                const next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+                applyTheme(next);
+                try {
+                    localStorage.setItem('rd-admin-theme', next);
+                    localStorage.setItem('rd-dashboard-theme', next);
+                } catch (err) {}
+            });
+        }
+    })();
+
+    /* --------------------------------------------------------- Users Tab & Overlay */
+
+    const userTableBody = document.querySelector('#userTable tbody');
+    const searchUser = document.getElementById('searchUser');
+    const overlay = document.getElementById('overlay');
+    const overlayTitle = document.getElementById('overlayTitle');
+    const overlayMessage = document.getElementById('overlayMessage');
+    const overlayButtons = document.getElementById('overlayButtons');
+    let evidenceFields = [];
+    let currentPage = 1;
+
+    function showOverlay(title, message, buttons = []) {
+        overlayTitle.textContent = title;
+        overlayMessage.innerHTML = message;
+        overlayButtons.innerHTML = '';
+        
+        if (buttons.length === 0) {
+            buttons.push({
+                text: 'Close',
+                class: 'closeBtn',
+                onClick: hideOverlay
+            });
+        }
+        
+        buttons.forEach(btn => {
+            const button = document.createElement('button');
+            button.textContent = btn.text;
+            button.className = btn.class || 'closeBtn';
+            button.onclick = btn.onClick;
+            overlayButtons.appendChild(button);
+        });
+        
+        overlay.style.display = 'flex';
+    }
+
+    function hideOverlay() {
+        overlay.style.display = 'none';
+    }
+
+    document.getElementById('addIncriminatory').addEventListener('click', function() {
+        const incriminatoryList = document.getElementById('incriminatoryList');
+        const evidenceDiv = document.createElement('div');
+        evidenceDiv.innerHTML = `
+            <div style="margin: 10px 0; padding: 10px; border: 1px solid var(--line);">
+                <input type="text" placeholder="Reason (e.g. Spam, Harassment, etc.)" style="width: 100%; margin: 5px 0;">
+                <textarea placeholder="Content/Evidence (URLs, screenshots, descriptions, etc.)" style="width: 100%; margin: 5px 0; height: 60px;"></textarea>
+                <button type="button" class="btn-danger" onclick="this.parentNode.remove()">Remove Evidence</button>
+            </div>
+        `;
+        incriminatoryList.appendChild(evidenceDiv);
+    });
+
+    document.getElementById('applyBan').addEventListener('click', async function() {
+        const username = document.getElementById('modUsername').value.trim();
+        const type = document.getElementById('banType').value;
+        const modNote = document.getElementById('modNote').value.trim();
+        
+        const evidenceDivs = document.querySelectorAll('#incriminatoryList > div');
+        const incriminatory = [];
+        evidenceDivs.forEach(div => {
+            const reasonInput = div.querySelector('input');
+            const contentTextarea = div.querySelector('textarea');
+            if (reasonInput && contentTextarea && reasonInput.value.trim() && contentTextarea.value.trim()) {
+                incriminatory.push({
+                    reason: reasonInput.value.trim(),
+                    content: contentTextarea.value.trim()
                 });
             }
-        })();
+        });
 
-        const API_BASE = '/api/status';
+        if (!username) {
+            showOverlay('Error', 'Please enter a username');
+            return;
+        }
 
-        // DOM elements
-        const alertBox = document.getElementById('alert-box');
-        const currentTimeEl = document.getElementById('current-time');
-        const componentsContainer = document.getElementById('components-container');
-        const createIncidentForm = document.getElementById('create-incident-form');
-        const createComponentUpdates = document.getElementById('create-component-updates');
-        const addComponentButton = document.getElementById('add-component-update');
+        try {
+            const response = await fetch('/api/admin/moderate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    username,
+                    type,
+                    modNote,
+                    incriminatory: incriminatory.length > 0 ? incriminatory : null,
+                    poisonHWID: null,
+                    makeAdmin: false
+                })
+            });
 
-        // Component data cache
-        let componentsData = [];
+            const data = await response.json();
+            
+            if (response.ok) {
+                showOverlay('Success', 'Moderation applied: ' + data.message);
+                document.getElementById('modUsername').value = '';
+                document.getElementById('modNote').value = '';
+                document.getElementById('incriminatoryList').innerHTML = '';
+                fetchUsers(searchUser.value);
+            } else {
+                showOverlay('Error', data.error || data.message);
+            }
+        } catch (err) {
+            console.error('Error:', err);
+            showOverlay('Error', 'Server error occurred');
+        }
+    });
 
-        // Tab functionality
-        document.querySelectorAll('.tab').forEach(tab => {
-            tab.addEventListener('click', () => {
-                // Remove active class from all tabs and contents
-                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    async function fetchUsers(query = '', page = currentPage) {
+        try {
+            const response = await fetch('/api/admin/list-users?search=' + encodeURIComponent(query) + '&page=' + page, { credentials: 'include' });
+            const users = await response.json();
 
-                // Add active class to clicked tab and corresponding content
-                tab.classList.add('active');
-                document.getElementById(`${tab.dataset.tab}-incidents`).classList.add('active');
+            userTableBody.innerHTML = '';
+            users.forEach(user => {
+                const tr = document.createElement('tr');
+                const statusText = user.accountStatus || 'ok';
+                const statusClass = statusText.toLowerCase() === 'ok' ? 'status-ok' : 'status-bad';
 
-                // Load data for the selected tab
-                if (tab.dataset.tab === 'active') {
-                    loadActiveIncidents();
-                } else if (tab.dataset.tab === 'resolved') {
-                    loadResolvedIncidents();
-                } else if (tab.dataset.tab === 'all') {
-                    loadAllIncidents();
+                tr.innerHTML = `
+                    <td data-label="Username">${user.username}</td>
+                    <td data-label="Status"><span class="status-pill ${statusClass}">${statusText}</span></td>
+                    <td data-label="Admin">
+                        <input type="checkbox" class="adminToggle" data-username="${user.username}" ${user.isAdmin ? 'checked' : ''}>
+                    </td>
+                    <td data-label="Member">
+                        <input type="checkbox" class="memberToggle" data-username="${user.username}" ${user.isMember ? 'checked' : ''}>
+                    </td>
+                    <td data-label="RD Projects">
+                        <input type="checkbox" class="projToggle" data-username="${user.username}" ${user.isProjAllowed ? 'checked' : ''}> 
+                    </td>
+                    <td data-label="Plex">
+                        <input type="checkbox" class="plexToggle" data-username="${user.username}" ${user.isPlexAllowed ? 'checked' : ''}>
+                    </td>
+                    <td data-label="OG">
+                        <input type="checkbox" class="ogToggle" data-username="${user.username}" ${user.isOG ? 'checked' : ''}>
+                    </td>
+                    <td data-label="Actions">
+                        <button class="unbanBtn" data-username="${user.username}">Unban / Clear Moderation</button>
+                        <button class="deleteBtn" data-username="${user.username}">Delete Account</button>
+                        <button class="genPWDreset" data-username="${user.username}">Generate Password Reset</button>
+                    </td>
+                `;
+                userTableBody.appendChild(tr);
+            });
+
+            document.getElementById('currentPageSpan').textContent = `Page ${page}`;
+            document.getElementById('prevPageBtn').disabled = page === 1;
+            document.getElementById('nextPageBtn').disabled = users.length < 10;
+
+            attachEvents();
+        } catch (err) {
+            console.error('Error fetching users:', err);
+        }
+    }
+
+    function attachEvents() {
+        document.querySelectorAll('.unbanBtn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const username = btn.dataset.username;
+                try {
+                    const response = await fetch('/api/admin/unban', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({ username })
+                    });
+                    const data = await response.json();
+                    showOverlay('Success', data.message || 'User unbanned successfully');
+                    fetchUsers(searchUser.value);
+                } catch (err) {
+                    console.error(err);
+                    showOverlay('Error', 'Server error occurred');
                 }
             });
         });
 
-        // Show alert message
-        function showAlert(message, type = 'success') {
-            alertBox.innerHTML = `
-                <div class="alert alert-${type}">
-                    <i class="fas ${type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'}"></i>
-                    <span>${message}</span>
-                </div>
-            `;
-            alertBox.style.display = 'block';
-
-            // Hide alert after 5 seconds
-            setTimeout(() => {
-                alertBox.style.display = 'none';
-            }, 5000);
-        }
-
-        // Format date to PDT
-        function formatTimeToPDT(isoString) {
-            const date = new Date(isoString);
-            // Convert to PDT (UTC-7)
-            const pdtTime = new Date(date.getTime() - (7 * 60 * 60 * 1000));
-            const hours = pdtTime.getUTCHours();
-            const minutes = pdtTime.getUTCMinutes();
-            const ampm = hours >= 12 ? 'PM' : 'AM';
-            const formattedHours = hours % 12 || 12;
-            return `${formattedHours}:${minutes.toString().padStart(2, '0')} ${ampm} (PDT)`;
-        }
-
-        // Load components
-        async function loadComponents() {
-            try {
-                const response = await fetch(`${API_BASE}/status`);
-                const data = await response.json();
-
-                componentsData = data.components;
-                componentsContainer.innerHTML = '';
-
-                // Populate component dropdowns
-                const componentSelects = document.querySelectorAll('.component-select');
-                componentSelects.forEach(select => {
-                    // Save current selection
-                    const currentValue = select.value;
-
-                    // Clear options
-                    select.innerHTML = '<option value="">Select a component</option>';
-
-                    // Add components
-                    componentsData.forEach(component => {
-                        const option = document.createElement('option');
-                        option.value = component.id;
-                        option.textContent = component.name;
-                        select.appendChild(option);
+        document.querySelectorAll('.deleteBtn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const username = btn.dataset.username;
+                if (!confirm(`Are you sure you want to delete the account "${username}"? This action cannot be undone.`)) {
+                    return;
+                }
+                try {
+                    const response = await fetch('/api/admin/delete-user', {
+                        method: 'DELETE',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({ username })
                     });
+                    const data = await response.json();
+                    showOverlay('Success', data.message || 'User deleted successfully');
+                    fetchUsers(searchUser.value);
+                } catch (err) {
+                    console.error(err);
+                    showOverlay('Error', 'Server error occurred');
+                }
+            });
+        });
 
-                    // Restore selection if still valid
-                    if (currentValue && componentsData.some(c => c.id === currentValue)) {
-                        select.value = currentValue;
-                    }
-                });
-
-                // Display components
-                componentsData.forEach(component => {
-                    const statusClass = 
-                        component.status === 'operational' ? 'status-operational' :
-                        component.status === 'degraded' ? 'status-degraded' : 'status-disruption';
-
-                    const componentEl = document.createElement('div');
-                    componentEl.className = 'component-card';
-                    componentEl.innerHTML = `
-                        <h3 class="component-name">${component.name}</h3>
-                        <div class="component-status ${statusClass}">${component.status}</div>
-                        <p class="last-updated">Last updated: ${formatTimeToPDT(component.last_updated)}</p>
-                        <div class="form-group">
-                            <select class="form-control component-status-select" data-component-id="${component.id}">
-                                <option value="operational" ${component.status === 'operational' ? 'selected' : ''}>Operational</option>
-                                <option value="degraded" ${component.status === 'degraded' ? 'selected' : ''}>Degraded</option>
-                                <option value="disruption" ${component.status === 'disruption' ? 'selected' : ''}>Disruption</option>
-                            </select>
-                        </div>
-                        <button class="btn btn-primary update-component-btn" data-component-id="${component.id}">Update Status</button>
-                    `;
-
-                    componentsContainer.appendChild(componentEl);
-                });
-
-                // Add event listeners to update buttons
-                document.querySelectorAll('.update-component-btn').forEach(btn => {
-                    btn.addEventListener('click', async (e) => {
-                        const componentId = e.target.dataset.componentId;
-                        const statusSelect = document.querySelector(`.component-status-select[data-component-id="${componentId}"]`);
-                        const status = statusSelect.value;
+        document.querySelectorAll('.genPWDreset').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const username = btn.dataset.username;
+                try {
+                    const response = await fetch('/api/admin/gen-pwd-reset', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({ username })
+                    });
+                    const data = await response.json();
+                    
+                    if (response.ok && data.resetSession) {
+                        const resetLink = `https://bakosmp.go.ro/reset-pwd?session=${data.resetSession}`;
+                        const expiresAt = data.expiresAt ? new Date(data.expiresAt).toLocaleString() : 'N/A';
                         
-                        try {
-                            const response = await fetch(`${API_BASE}/components/${componentId}`, {
-                                method: 'PATCH',
-                                headers: {
-                                    'Content-Type': 'application/json'
+                        showOverlay(
+                            'Password Reset Link Generated',
+                            `<strong>Message:</strong> ${data.message}<br><br>
+                             <strong>Reset Link:</strong><br>
+                             <input type="text" id="resetLinkInput" value="${resetLink}" readonly style="width: 100%; padding: 8px; margin: 10px 0; font-size: 12px;">
+                             <br><strong>Expires At:</strong> ${expiresAt}`,
+                            [
+                                {
+                                    text: 'Copy Link',
+                                    class: 'copyBtn',
+                                    onClick: () => {
+                                        const input = document.getElementById('resetLinkInput');
+                                        input.select();
+                                        document.execCommand('copy');
+                                        showOverlay('Success', 'Link copied to clipboard!');
+                                    }
                                 },
-                                body: JSON.stringify({ status })
-                            });
-                            
-                            if (response.ok) {
-                                showAlert('Component status updated successfully');
-                                loadComponents(); // Reload components
-                            } else {
-                                showAlert('Failed to update component status', 'error');
-                            }
-                        } catch (error) {
-                            showAlert('Error updating component status', 'error');
-                            console.error('Error:', error);
-                        }
-                    });
-                });
-            } catch (error) {
-                console.error('Error loading components:', error);
-                showAlert('Error loading components', 'error');
-            }
-        }
-
-        // Add component update field
-        function addComponentUpdateField(container) {
-            const updateField = document.createElement('div');
-            updateField.className = 'component-update';
-            updateField.innerHTML = `
-                <select class="form-control component-select">
-                    <option value="">Select a component</option>
-                    ${componentsData.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}
-                </select>
-                <select class="form-control status-select">
-                    <option value="operational">Operational</option>
-                    <option value="degraded">Degraded</option>
-                    <option value="disruption">Disruption</option>
-                </select>
-                <button type="button" class="remove-component btn-danger"><i class="fas fa-times"></i> Remove</button>
-            `;
-
-            container.appendChild(updateField);
-
-            // Add event listener to remove button
-            updateField.querySelector('.remove-component').addEventListener('click', () => {
-                updateField.remove();
-            });
-        }
-
-        // Load active incidents
-        async function loadActiveIncidents() {
-            try {
-                const response = await fetch(`${API_BASE}/status`);
-                const data = await response.json();
-
-                const incidentsList = document.getElementById('active-incidents-list');
-                incidentsList.innerHTML = '';
-
-                if (data.incidents.length === 0) {
-                    incidentsList.innerHTML = '<p style="color: var(--text-muted);">No active incidents</p>';
-                    return;
+                                {
+                                    text: 'Close',
+                                    class: 'closeBtn',
+                                    onClick: hideOverlay
+                                }
+                            ]
+                        );
+                    } else {
+                        showOverlay('Error', data.error || data.message || 'Failed to generate reset link');
+                    }
+                } catch (err) {
+                    console.error(err);
+                    showOverlay('Error', 'Server error occurred');
                 }
+            });
+        });
 
-                data.incidents.forEach(incident => {
-                    const incidentEl = document.createElement('li');
-                    incidentEl.className = 'incident-item';
-                    incidentEl.innerHTML = renderIncident(incident);
-                    incidentsList.appendChild(incidentEl);
+        document.querySelectorAll('.adminToggle').forEach(chk => {
+            chk.addEventListener('change', async () => {
+                const username = chk.dataset.username;
+                const isAdmin = chk.checked;
+                try {
+                    await fetch('/api/update-admin-status', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({ username, isAdmin })
+                    });
+                    fetchUsers(searchUser.value);
+                } catch (err) { console.error(err); }
+            });
+        });
 
-                    // Add event listener to update form
+        document.querySelectorAll('.memberToggle').forEach(chk => {
+            chk.addEventListener('change', async () => {
+                const username = chk.dataset.username;
+                const isMember = chk.checked;
+                try {
+                    await fetch('/api/admin/update-member-status', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({ username, isMember })
+                    });
+                    fetchUsers(searchUser.value);
+                } catch (err) { console.error(err); }
+            });
+        });
+
+        document.querySelectorAll('.projToggle').forEach(chk => {
+            chk.addEventListener('change', async () => {
+                const username = chk.dataset.username;
+                const isAllowed = chk.checked;
+                try {
+                    await fetch('/api/admin/update-proj-status', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({ username, isAllowed })
+                    });
+                    fetchUsers(searchUser.value);
+                } catch (err) { console.error(err); }
+            });
+        });
+
+        document.querySelectorAll('.plexToggle').forEach(chk => {
+            chk.addEventListener('change', async () => {
+                const username = chk.dataset.username;
+                const isAllowed = chk.checked;
+                try {
+                    await fetch('/api/admin/update-plex-status', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({ username, isAllowed })
+                    });
+                    fetchUsers(searchUser.value);
+                } catch (err) { console.error(err); }
+            });
+        });
+
+        document.querySelectorAll('.ogToggle').forEach(chk => {
+            chk.addEventListener('change', async () => {
+                const username = chk.dataset.username;
+                const isOG = chk.checked;
+                try {
+                    await fetch('/api/admin/update-og-status', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({ username, isOG })
+                    });
+                    fetchUsers(searchUser.value);
+                } catch (err) { console.error(err); }
+            });
+        });
+    }
+
+    let SearchTimer;
+    searchUser.addEventListener('input', () => {
+        clearTimeout(SearchTimer);
+        SearchTimer = setTimeout(() => {
+            currentPage = 1;
+            fetchUsers(searchUser.value, currentPage);
+        }, 500);
+    });
+
+    document.getElementById('prevPageBtn').addEventListener('click', () => {
+        if (currentPage > 1) {
+            currentPage--;
+            fetchUsers(searchUser.value, currentPage);
+        }
+    });
+
+    document.getElementById('nextPageBtn').addEventListener('click', () => {
+        currentPage++;
+        fetchUsers(searchUser.value, currentPage);
+    });
+
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) hideOverlay();
+    });
+
+    fetchUsers();
+
+    /* --------------------------------------------------------- Tab Routing & URL Params */
+
+    function switchTab(tabName, updateUrl = true) {
+        let activeTabName = tabName.toLowerCase();
+        let targetContentId = activeTabName + '-tab';
+        let scrollToPlayers = false;
+
+        if (activeTabName === 'incidents' || activeTabName === 'dashboard') {
+            activeTabName = 'status';
+            targetContentId = 'status-tab';
+        } else if (activeTabName === 'server') {
+            activeTabName = 'console';
+            targetContentId = 'console-tab';
+        } else if (activeTabName === 'players') {
+            activeTabName = 'players';
+            targetContentId = 'console-tab';
+            scrollToPlayers = true;
+        }
+
+        document.querySelectorAll('.tab-container > .tab').forEach(tab => {
+            if (tab.dataset.tab === activeTabName) {
+                tab.classList.add('active');
+            } else {
+                tab.classList.remove('active');
+            }
+        });
+
+        document.querySelectorAll('#content > .tab-content').forEach(panel => {
+            panel.classList.remove('active');
+        });
+
+        const targetPanel = document.getElementById(targetContentId);
+        if (targetPanel) {
+            targetPanel.classList.add('active');
+        }
+
+        if (activeTabName === 'console' || activeTabName === 'players') {
+            consoleConnect();
+            startStatusPolling();
+            if (scrollToPlayers) {
+                setTimeout(() => {
+                    const panel = document.getElementById('playersPanel');
+                    if (panel) panel.scrollIntoView({ behavior: 'smooth' });
+                }, 100);
+            }
+        } else {
+            consoleDisconnect();
+            stopStatusPolling();
+        }
+
+        if (activeTabName === 'status') {
+            initStatusDashboard();
+        }
+
+        if (updateUrl) {
+            const url = new URL(window.location);
+            url.searchParams.set('page', activeTabName);
+            history.replaceState(null, '', url.toString());
+        }
+    }
+
+    document.querySelectorAll('.tab-container > .tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            switchTab(tab.dataset.tab);
+        });
+    });
+
+    window.addEventListener('popstate', () => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const page = urlParams.get('page') || urlParams.get('tab') || 'status';
+        switchTab(page, false);
+    });
+
+    // Initial page load routing for dashboard.html default to 'status'
+    (function initRouting() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const page = urlParams.get('page') || urlParams.get('tab') || 'status';
+        switchTab(page, false);
+    })();
+
+    /* --------------------------------------------------------- Status & Incident Management JS */
+
+    const API_BASE = '/api/status';
+    const alertBox = document.getElementById('alert-box');
+    const currentTimeEl = document.getElementById('current-time');
+    const componentsContainer = document.getElementById('components-container');
+    const createIncidentForm = document.getElementById('create-incident-form');
+    const createComponentUpdates = document.getElementById('create-component-updates');
+    const addComponentButton = document.getElementById('add-component-update');
+    let componentsData = [];
+    let statusInited = false;
+
+    document.querySelectorAll('#status-tab [data-inc-tab]').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('#status-tab [data-inc-tab]').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.inc-tab-content').forEach(c => { c.classList.remove('active'); c.style.display = 'none'; });
+
+            tab.classList.add('active');
+            const content = document.getElementById(`${tab.dataset.incTab}-incidents`);
+            if (content) {
+                content.classList.add('active');
+                content.style.display = 'block';
+            }
+
+            if (tab.dataset.incTab === 'active') loadActiveIncidents();
+            else if (tab.dataset.incTab === 'resolved') loadResolvedIncidents();
+            else if (tab.dataset.incTab === 'all') loadAllIncidents();
+        });
+    });
+
+    function showAlert(message, type = 'success') {
+        if (!alertBox) return;
+        alertBox.innerHTML = `
+            <div class="alert alert-${type}">
+                <i class="fas ${type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'}"></i>
+                <span>${message}</span>
+            </div>
+        `;
+        alertBox.style.display = 'block';
+        setTimeout(() => { alertBox.style.display = 'none'; }, 5000);
+    }
+
+    function formatTimeToPDT(isoString) {
+        const date = new Date(isoString);
+        const pdtTime = new Date(date.getTime() - (7 * 60 * 60 * 1000));
+        const hours = pdtTime.getUTCHours();
+        const minutes = pdtTime.getUTCMinutes();
+        const ampm = hours >= 12 ? 'PM' : 'AM';
+        const formattedHours = hours % 12 || 12;
+        return `${formattedHours}:${minutes.toString().padStart(2, '0')} ${ampm} (PDT)`;
+    }
+
+    async function loadComponents() {
+        try {
+            const response = await fetch(`${API_BASE}/status`);
+            const data = await response.json();
+            componentsData = data.components || [];
+            componentsContainer.innerHTML = '';
+
+            const componentSelects = document.querySelectorAll('.component-select');
+            componentSelects.forEach(select => {
+                const currentValue = select.value;
+                select.innerHTML = '<option value="">Select a component</option>';
+                componentsData.forEach(component => {
+                    const option = document.createElement('option');
+                    option.value = component.id;
+                    option.textContent = component.name;
+                    select.appendChild(option);
+                });
+                if (currentValue && componentsData.some(c => c.id === currentValue)) {
+                    select.value = currentValue;
+                }
+            });
+
+            componentsData.forEach(component => {
+                const statusClass = 
+                    component.status === 'operational' ? 'status-operational' :
+                    component.status === 'degraded' ? 'status-degraded' : 'status-disruption';
+
+                const componentEl = document.createElement('div');
+                componentEl.className = 'component-card';
+                componentEl.innerHTML = `
+                    <h3 class="component-name">${component.name}</h3>
+                    <div class="component-status ${statusClass}">${component.status}</div>
+                    <p class="last-updated">Last updated: ${formatTimeToPDT(component.last_updated)}</p>
+                    <div class="form-group">
+                        <select class="form-control component-status-select" data-component-id="${component.id}">
+                            <option value="operational" ${component.status === 'operational' ? 'selected' : ''}>Operational</option>
+                            <option value="degraded" ${component.status === 'degraded' ? 'selected' : ''}>Degraded</option>
+                            <option value="disruption" ${component.status === 'disruption' ? 'selected' : ''}>Disruption</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary update-component-btn" data-component-id="${component.id}">Update Status</button>
+                `;
+                componentsContainer.appendChild(componentEl);
+            });
+
+            document.querySelectorAll('.update-component-btn').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    const componentId = e.target.dataset.componentId;
+                    const statusSelect = document.querySelector(`.component-status-select[data-component-id="${componentId}"]`);
+                    const status = statusSelect.value;
+                    
+                    try {
+                        const response = await fetch(`${API_BASE}/components/${componentId}`, {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ status })
+                        });
+                        
+                        if (response.ok) {
+                            showAlert('Component status updated successfully');
+                            loadComponents();
+                        } else {
+                            showAlert('Failed to update component status', 'error');
+                        }
+                    } catch (error) {
+                        showAlert('Error updating component status', 'error');
+                        console.error(error);
+                    }
+                });
+            });
+        } catch (error) {
+            console.error('Error loading components:', error);
+            showAlert('Error loading components', 'error');
+        }
+    }
+
+    function addComponentUpdateField(container) {
+        const updateField = document.createElement('div');
+        updateField.className = 'component-update';
+        updateField.innerHTML = `
+            <select class="form-control component-select">
+                <option value="">Select a component</option>
+                ${componentsData.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}
+            </select>
+            <select class="form-control status-select">
+                <option value="operational">Operational</option>
+                <option value="degraded">Degraded</option>
+                <option value="disruption">Disruption</option>
+            </select>
+            <button type="button" class="remove-component btn-danger"><i class="fas fa-times"></i> Remove</button>
+        `;
+        container.appendChild(updateField);
+        updateField.querySelector('.remove-component').addEventListener('click', () => updateField.remove());
+    }
+
+    async function loadActiveIncidents() {
+        try {
+            const response = await fetch(`${API_BASE}/status`);
+            const data = await response.json();
+            const incidentsList = document.getElementById('active-incidents-list');
+            if (!incidentsList) return;
+            incidentsList.innerHTML = '';
+
+            if (data.incidents.length === 0) {
+                incidentsList.innerHTML = '<p style="color: var(--text-muted);">No active incidents</p>';
+                return;
+            }
+
+            data.incidents.forEach(incident => {
+                const incidentEl = document.createElement('li');
+                incidentEl.className = 'incident-item';
+                incidentEl.innerHTML = renderIncident(incident);
+                incidentsList.appendChild(incidentEl);
+
+                const updateForm = incidentEl.querySelector('.add-update-form');
+                if (updateForm) updateForm.addEventListener('submit', handleUpdateSubmit);
+            });
+        } catch (error) {
+            console.error('Error loading active incidents:', error);
+            showAlert('Error loading active incidents', 'error');
+        }
+    }
+
+    async function loadResolvedIncidents() {
+        try {
+            const response = await fetch(`${API_BASE}/incidentHistory`);
+            const incidents = await response.json();
+            const incidentsList = document.getElementById('resolved-incidents-list');
+            if (!incidentsList) return;
+            incidentsList.innerHTML = '';
+
+            if (incidents.length === 0) {
+                incidentsList.innerHTML = '<p style="color: var(--text-muted);">No resolved incidents</p>';
+                return;
+            }
+
+            incidents.forEach(incident => {
+                const incidentEl = document.createElement('li');
+                incidentEl.className = 'incident-item';
+                incidentEl.innerHTML = renderIncident(incident);
+                incidentsList.appendChild(incidentEl);
+            });
+        } catch (error) {
+            console.error('Error loading resolved incidents:', error);
+            showAlert('Error loading resolved incidents', 'error');
+        }
+    }
+
+    async function loadAllIncidents() {
+        try {
+            const response = await fetch(`${API_BASE}/incidents`);
+            const incidents = await response.json();
+            const incidentsList = document.getElementById('all-incidents-list');
+            if (!incidentsList) return;
+            incidentsList.innerHTML = '';
+
+            if (incidents.length === 0) {
+                incidentsList.innerHTML = '<p style="color: var(--text-muted);">No incidents</p>';
+                return;
+            }
+
+            incidents.forEach(incident => {
+                const incidentEl = document.createElement('li');
+                incidentEl.className = 'incident-item';
+                incidentEl.innerHTML = renderIncident(incident);
+                incidentsList.appendChild(incidentEl);
+
+                if (incident.status !== 'resolved') {
                     const updateForm = incidentEl.querySelector('.add-update-form');
-                    if (updateForm) {
-                        updateForm.addEventListener('submit', handleUpdateSubmit);
-                    }
-                });
-            } catch (error) {
-                console.error('Error loading active incidents:', error);
-                showAlert('Error loading active incidents', 'error');
-            }
-        }
-
-        // Load resolved incidents
-        async function loadResolvedIncidents() {
-            try {
-                const response = await fetch(`${API_BASE}/incidentHistory`);
-                const incidents = await response.json();
-
-                const incidentsList = document.getElementById('resolved-incidents-list');
-                incidentsList.innerHTML = '';
-
-                if (incidents.length === 0) {
-                    incidentsList.innerHTML = '<p style="color: var(--text-muted);">No resolved incidents</p>';
-                    return;
-                }
-
-                incidents.forEach(incident => {
-                    const incidentEl = document.createElement('li');
-                    incidentEl.className = 'incident-item';
-                    incidentEl.innerHTML = renderIncident(incident);
-                    incidentsList.appendChild(incidentEl);
-                });
-            } catch (error) {
-                console.error('Error loading resolved incidents:', error);
-                showAlert('Error loading resolved incidents', 'error');
-            }
-        }
-
-        // Load all incidents
-        async function loadAllIncidents() {
-            try {
-                const response = await fetch(`${API_BASE}/incidents`);
-                const incidents = await response.json();
-
-                const incidentsList = document.getElementById('all-incidents-list');
-                incidentsList.innerHTML = '';
-
-                if (incidents.length === 0) {
-                    incidentsList.innerHTML = '<p style="color: var(--text-muted);">No incidents</p>';
-                    return;
-                }
-
-                incidents.forEach(incident => {
-                    const incidentEl = document.createElement('li');
-                    incidentEl.className = 'incident-item';
-                    incidentEl.innerHTML = renderIncident(incident);
-                    incidentsList.appendChild(incidentEl);
-
-                    // Add event listener to update form if incident is not resolved
-                    if (incident.status !== 'resolved') {
-                        const updateForm = incidentEl.querySelector('.add-update-form');
-                        if (updateForm) {
-                            updateForm.addEventListener('submit', handleUpdateSubmit);
-                        }
-                    }
-                });
-            } catch (error) {
-                console.error('Error loading all incidents:', error);
-                showAlert('Error loading all incidents', 'error');
-            }
-        }
-
-        // Render incident HTML
-        function renderIncident(incident) {
-            const statusClass = 
-                incident.status === 'investigating' ? 'status-investigating' :
-                incident.status === 'identified' ? 'status-identified' :
-                incident.status === 'monitoring' ? 'status-monitoring' : 'status-resolved';
-
-            let historyHTML = '';
-            if (incident.history_status && incident.history_status.length > 0) {
-                historyHTML = '<div class="history-list">';
-                incident.history_status.forEach(history => {
-                    historyHTML += `
-                        <div class="history-item">
-                            <div class="history-time">${history.time} - ${history.status}</div>
-                            <div class="history-context">${history.context}</div>
-                        </div>
-                    `;
-                });
-                historyHTML += '</div>';
-            }
-
-            return `
-                <div class="incident-title">${incident.title}</div>
-                <div class="incident-meta">
-                    <span class="incident-status ${statusClass}">${incident.status}</span>
-                    <span class="impact-badge">${incident.impact}</span>
-                    <span>Started: ${formatTimeToPDT(incident.started_at)}</span>
-                    ${incident.ended_at ? `<span>Ended: ${formatTimeToPDT(incident.ended_at)}</span>` : ''}
-                </div>
-                <div class="incident-context">${incident.status_text}</div>
-                ${historyHTML}
-                ${incident.status !== 'resolved' ? `
-                <div class="update-form">
-                    <h4>Add Update</h4>
-                    <form class="add-update-form" data-incident-id="${incident.id}">
-                        <div class="form-group">
-                            <textarea class="form-control update-body" placeholder="Provide an update" required></textarea>
-                        </div>
-                        <div class="form-group">
-                            <label>Update Status (Optional)</label>
-                            <select class="form-control update-status">
-                                <option value="">Keep current status</option>
-                                <option value="investigating">Investigating</option>
-                                <option value="identified">Identified</option>
-                                <option value="monitoring">Monitoring</option>
-                                <option value="resolved">Resolved</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Component Status Updates (Optional)</label>
-                            <div class="component-updates" id="update-component-updates-${incident.id}">
-                                <div class="component-update">
-                                    <select class="form-control component-select">
-                                        <option value="">Select a component</option>
-                                        ${componentsData.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}
-                                    </select>
-                                    <select class="form-control status-select">
-                                        <option value="operational">Operational</option>
-                                        <option value="degraded">Degraded</option>
-                                        <option value="disruption">Disruption</option>
-                                    </select>
-                                    <button type="button" class="remove-component btn-danger"><i class="fas fa-times"></i> Remove</button>
-                                </div>
-                            </div>
-                            <button type="button" class="btn btn-outline add-update-component" data-target="update-component-updates-${incident.id}">
-                                <i class="fas fa-plus"></i> Add Component Update
-                            </button>
-                        </div>
-                        <button type="submit" class="btn btn-primary">Add Update</button>
-                    </form>
-                </div>
-                ` : ''}
-            `;
-        }
-
-        // Handle update form submission
-        async function handleUpdateSubmit(e) {
-            e.preventDefault();
-
-            const incidentId = e.target.dataset.incidentId;
-            const body = e.target.querySelector('.update-body').value;
-            const status = e.target.querySelector('.update-status').value;
-
-            // Get component updates
-            const componentUpdates = [];
-            const updateElements = e.target.querySelectorAll('.component-update');
-
-            updateElements.forEach(element => {
-                const componentId = element.querySelector('.component-select').value;
-                const status = element.querySelector('.status-select').value;
-
-                if (componentId && status) {
-                    const component = componentsData.find(c => c.id === componentId);
-                    componentUpdates.push({
-                        componentId,
-                        status,
-                        name: component ? component.name : componentId
-                    });
+                    if (updateForm) updateForm.addEventListener('submit', handleUpdateSubmit);
                 }
             });
+        } catch (error) {
+            console.error('Error loading all incidents:', error);
+            showAlert('Error loading all incidents', 'error');
+        }
+    }
 
-            try {
-                const requestBody = {
-                    body,
-                    status: status || undefined,
-                    status_text: body
-                };
+    function renderIncident(incident) {
+        const statusClass = 
+            incident.status === 'investigating' ? 'status-investigating' :
+            incident.status === 'identified' ? 'status-identified' :
+            incident.status === 'monitoring' ? 'status-monitoring' : 'status-resolved';
 
-                if (componentUpdates.length > 0) {
-                    requestBody.componentUpdates = componentUpdates;
-                }
-
-                const response = await fetch(`${API_BASE}/incidents/${incidentId}/updates`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(requestBody)
-                });
-
-                if (response.ok) {
-                    showAlert('Update added successfully');
-                    e.target.reset();
-
-                    loadActiveIncidents();
-                    loadComponents();
-                } else {
-                    const error = await response.json();
-                    showAlert(error.error || 'Failed to add update', 'error');
-                }
-            } catch (error) {
-                showAlert('Error adding update', 'error');
-                console.error('Error:', error);
-            }
+        let historyHTML = '';
+        if (incident.history_status && incident.history_status.length > 0) {
+            historyHTML = '<div class="history-list">';
+            incident.history_status.forEach(history => {
+                historyHTML += `
+                    <div class="history-item">
+                        <div class="history-time">${history.time} - ${history.status}</div>
+                        <div class="history-context">${history.context}</div>
+                    </div>
+                `;
+            });
+            historyHTML += '</div>';
         }
 
-        // Create new incident
+        return `
+            <div class="incident-title">${incident.title}</div>
+            <div class="incident-meta">
+                <span class="incident-status ${statusClass}">${incident.status}</span>
+                <span class="impact-badge">${incident.impact}</span>
+                <span>Started: ${formatTimeToPDT(incident.started_at)}</span>
+                ${incident.ended_at ? `<span>Ended: ${formatTimeToPDT(incident.ended_at)}</span>` : ''}
+            </div>
+            <div class="incident-context">${incident.status_text}</div>
+            ${historyHTML}
+            ${incident.status !== 'resolved' ? `
+            <div class="update-form">
+                <h4>Add Update</h4>
+                <form class="add-update-form" data-incident-id="${incident.id}">
+                    <div class="form-group">
+                        <textarea class="form-control update-body" placeholder="Provide an update" required></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Update Status (Optional)</label>
+                        <select class="form-control update-status">
+                            <option value="">Keep current status</option>
+                            <option value="investigating">Investigating</option>
+                            <option value="identified">Identified</option>
+                            <option value="monitoring">Monitoring</option>
+                            <option value="resolved">Resolved</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Component Status Updates (Optional)</label>
+                        <div class="component-updates" id="update-component-updates-${incident.id}">
+                            <div class="component-update">
+                                <select class="form-control component-select">
+                                    <option value="">Select a component</option>
+                                    ${componentsData.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}
+                                </select>
+                                <select class="form-control status-select">
+                                    <option value="operational">Operational</option>
+                                    <option value="degraded">Degraded</option>
+                                    <option value="disruption">Disruption</option>
+                                </select>
+                                <button type="button" class="remove-component btn-danger"><i class="fas fa-times"></i> Remove</button>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-outline add-update-component" data-target="update-component-updates-${incident.id}">
+                            <i class="fas fa-plus"></i> Add Component Update
+                        </button>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Add Update</button>
+                </form>
+            </div>
+            ` : ''}
+        `;
+    }
+
+    async function handleUpdateSubmit(e) {
+        e.preventDefault();
+        const incidentId = e.target.dataset.incidentId;
+        const body = e.target.querySelector('.update-body').value;
+        const status = e.target.querySelector('.update-status').value;
+
+        const componentUpdates = [];
+        const updateElements = e.target.querySelectorAll('.component-update');
+        updateElements.forEach(element => {
+            const componentId = element.querySelector('.component-select').value;
+            const status = element.querySelector('.status-select').value;
+            if (componentId && status) {
+                const component = componentsData.find(c => c.id === componentId);
+                componentUpdates.push({ componentId, status, name: component ? component.name : componentId });
+            }
+        });
+
+        try {
+            const requestBody = { body, status: status || undefined, status_text: body };
+            if (componentUpdates.length > 0) requestBody.componentUpdates = componentUpdates;
+
+            const response = await fetch(`${API_BASE}/incidents/${incidentId}/updates`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody)
+            });
+
+            if (response.ok) {
+                showAlert('Update added successfully');
+                e.target.reset();
+                loadActiveIncidents();
+                loadComponents();
+            } else {
+                const error = await response.json();
+                showAlert(error.error || 'Failed to add update', 'error');
+            }
+        } catch (error) {
+            showAlert('Error adding update', 'error');
+            console.error(error);
+        }
+    }
+
+    if (createIncidentForm) {
         createIncidentForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-
             const title = document.getElementById('incident-title').value;
             const impact = document.getElementById('incident-impact').value;
             const status = document.getElementById('incident-status').value;
@@ -1136,56 +2100,35 @@
 
             const componentUpdates = [];
             const updateElements = createComponentUpdates.querySelectorAll('.component-update');
-
             updateElements.forEach(element => {
                 const componentId = element.querySelector('.component-select').value;
                 const status = element.querySelector('.status-select').value;
-
                 if (componentId && status) {
                     const component = componentsData.find(c => c.id === componentId);
-                    componentUpdates.push({
-                        componentId,
-                        status,
-                        name: component ? component.name : componentId
-                    });
+                    componentUpdates.push({ componentId, status, name: component ? component.name : componentId });
                 }
             });
 
             try {
-                const requestBody = {
-                    title,
-                    impact,
-                    status,
-                    status_text,
-                    update: update || undefined
-                };
-
-                if (componentUpdates.length > 0) {
-                    requestBody.componentUpdates = componentUpdates;
-                }
+                const requestBody = { title, impact, status, status_text, update: update || undefined };
+                if (componentUpdates.length > 0) requestBody.componentUpdates = componentUpdates;
 
                 const response = await fetch(`${API_BASE}/incidents`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(requestBody)
                 });
 
                 if (response.ok) {
                     showAlert('Incident created successfully');
                     createIncidentForm.reset();
-
                     const updateElements = createComponentUpdates.querySelectorAll('.component-update');
-                    for (let i = 1; i < updateElements.length; i++) {
-                        updateElements[i].remove();
-                    }
+                    for (let i = 1; i < updateElements.length; i++) updateElements[i].remove();
                     const firstUpdate = createComponentUpdates.querySelector('.component-update');
                     if (firstUpdate) {
                         firstUpdate.querySelector('.component-select').value = '';
                         firstUpdate.querySelector('.status-select').value = 'operational';
                     }
-
                     loadActiveIncidents();
                     loadComponents();
                 } else {
@@ -1194,48 +2137,691 @@
                 }
             } catch (error) {
                 showAlert('Error creating incident', 'error');
-                console.error('Error:', error);
+                console.error(error);
             }
         });
+    }
 
-        // Add component update field when button is clicked
-        addComponentButton.addEventListener('click', () => {
-            addComponentUpdateField(createComponentUpdates);
-        });
+    if (addComponentButton) {
+        addComponentButton.addEventListener('click', () => addComponentUpdateField(createComponentUpdates));
+    }
 
-        // Delegate event for dynamically added buttons
-        document.addEventListener('click', (e) => {
-            if (e.target.classList.contains('add-update-component') || e.target.closest('.add-update-component')) {
-                const button = e.target.classList.contains('add-update-component') ? e.target : e.target.closest('.add-update-component');
-                const targetId = button.dataset.target;
-                const container = document.getElementById(targetId);
-                if (container) addComponentUpdateField(container);
-            }
+    document.addEventListener('click', (e) => {
+        if (e.target.classList.contains('add-update-component') || e.target.closest('.add-update-component')) {
+            const button = e.target.classList.contains('add-update-component') ? e.target : e.target.closest('.add-update-component');
+            const targetId = button.dataset.target;
+            const container = document.getElementById(targetId);
+            if (container) addComponentUpdateField(container);
+        }
 
-            if (e.target.classList.contains('remove-component') || e.target.closest('.remove-component')) {
-                const button = e.target.classList.contains('remove-component') ? e.target : e.target.closest('.remove-component');
-                const row = button.closest('.component-update');
-                if (row) row.remove();
-            }
-        });
+        if (e.target.classList.contains('remove-component') || e.target.closest('.remove-component')) {
+            const button = e.target.classList.contains('remove-component') ? e.target : e.target.closest('.remove-component');
+            const row = button.closest('.component-update');
+            if (row) row.remove();
+        }
+    });
 
-        // Update current time
-        function updateCurrentTime() {
+    function updateCurrentTime() {
+        if (currentTimeEl) {
             const now = new Date();
             currentTimeEl.textContent = now.toLocaleString();
         }
+    }
 
-        // Initialize dashboard
-        async function initDashboard() {
-            updateCurrentTime();
-            setInterval(updateCurrentTime, 1000);
+    function initStatusDashboard() {
+        if (statusInited) return;
+        statusInited = true;
+        updateCurrentTime();
+        setInterval(updateCurrentTime, 1000);
+        loadComponents();
+        loadActiveIncidents();
+    }
 
-            await loadComponents();
-            await loadActiveIncidents();
+    /* ------------------------------------------------------------- Console */
+
+    const MAX_CONSOLE_LINES = 2000;
+    const consoleOutput = document.getElementById('consoleOutput');
+    const consoleSource = document.getElementById('consoleSource');
+    const consoleInput = document.getElementById('consoleInput');
+    const autoscroll = document.getElementById('autoscroll');
+    const connDot = document.getElementById('connDot');
+    const connText = document.getElementById('connText');
+
+    let evtSource = null;
+    let retryDelay = 1000;
+    let retryTimer = null;
+    let stuckToBottom = true;
+    const history = [];
+    let historyIndex = 0;
+
+    function setStatus(state, text) {
+        if (connDot) connDot.className = state;
+        if (connText) connText.textContent = text;
+    }
+
+    function levelOf(line) {
+        const match = line.match(/\[[^\]]*\/(\w+)\]/);
+        return match ? match[1].toUpperCase() : '';
+    }
+
+    const MC_COLOURS = {
+        '0': '#000000', '1': '#00aa00', '2': '#00aa00', '3': '#00aaaa',
+        '4': '#aa0000', '5': '#aa00aa', '6': '#ffaa00', '7': '#aaaaaa',
+        '8': '#555555', '9': '#5555ff', 'a': '#55ff55', 'b': '#55ffff',
+        'c': '#ff5555', 'd': '#ff55ff', 'e': '#ffff55', 'f': '#ffffff'
+    };
+
+    function renderMinecraftFormatting(container, text) {
+        const parts = text.split('§');
+        if (parts[0]) container.appendChild(document.createTextNode(parts[0]));
+
+        let colour = null, bold = false, italic = false, underline = false, strike = false;
+
+        for (let i = 1; i < parts.length; i++) {
+            const segment = parts[i];
+            if (!segment) continue;
+
+            const code = segment[0].toLowerCase();
+            const rest = segment.slice(1);
+
+            if (code === 'r') {
+                colour = null; bold = italic = underline = strike = false;
+            } else if (MC_COLOURS[code]) {
+                colour = MC_COLOURS[code];
+                bold = italic = underline = strike = false;
+            } else if (code === 'l') { bold = true;
+            } else if (code === 'o') { italic = true;
+            } else if (code === 'n') { underline = true;
+            } else if (code === 'm') { strike = true;
+            } else if (code === 'k') {
+            } else {
+                container.appendChild(document.createTextNode('§' + segment));
+                continue;
+            }
+
+            if (!rest) continue;
+            const span = document.createElement('span');
+            if (colour) span.style.color = colour;
+            if (bold) span.style.fontWeight = 'bold';
+            if (italic) span.style.fontStyle = 'italic';
+            const decoration = [];
+            if (underline) decoration.push('underline');
+            if (strike) decoration.push('line-through');
+            if (decoration.length) span.style.textDecoration = decoration.join(' ');
+            span.textContent = rest;
+            container.appendChild(span);
+        }
+    }
+
+    function appendLine(text, forcedClass) {
+        if (!consoleOutput) return;
+        const line = document.createElement('span');
+        line.className = 'line ' + (forcedClass || 'lvl-' + levelOf(text));
+        if (text.indexOf('§') !== -1) {
+            renderMinecraftFormatting(line, text);
+        } else {
+            line.textContent = text;
+        }
+        consoleOutput.appendChild(line);
+
+        while (consoleOutput.childElementCount > MAX_CONSOLE_LINES) {
+            consoleOutput.removeChild(consoleOutput.firstChild);
         }
 
-        // Start the dashboard
-        initDashboard();
-    </script>
+        if (autoscroll && autoscroll.checked && stuckToBottom) {
+            consoleOutput.scrollTop = consoleOutput.scrollHeight;
+        }
+    }
+
+    if (consoleOutput) {
+        consoleOutput.addEventListener('scroll', () => {
+            const distance = consoleOutput.scrollHeight - consoleOutput.scrollTop - consoleOutput.clientHeight;
+            stuckToBottom = distance < 40;
+        });
+    }
+
+    function consoleDisconnect() {
+        clearTimeout(retryTimer);
+        if (evtSource) {
+            evtSource.close();
+            evtSource = null;
+        }
+        setStatus('', 'Disconnected');
+    }
+
+    function consoleConnect() {
+        consoleDisconnect();
+        setStatus('connecting', 'Connecting…');
+
+        const source = new EventSource('/api/admin/console/stream?source=' + encodeURIComponent(consoleSource ? consoleSource.value : 'log'));
+        evtSource = source;
+
+        source.onopen = () => {
+            retryDelay = 1000;
+            setStatus('live', 'Live');
+        };
+
+        source.onmessage = (e) => {
+            if (hideRconEcho && hideRconEcho.checked && isRconEcho(e.data)) return;
+            appendLine(e.data);
+        };
+
+        source.onerror = () => {
+            source.close();
+            if (evtSource !== source) return;
+            evtSource = null;
+
+            setStatus('down', `Reconnecting in ${Math.round(retryDelay / 1000)}s…`);
+            retryTimer = setTimeout(() => {
+                if (document.getElementById('console-tab').classList.contains('active')) {
+                    consoleConnect();
+                }
+            }, retryDelay);
+            retryDelay = Math.min(retryDelay * 2, 30000);
+        };
+    }
+
+    if (consoleSource) {
+        consoleSource.addEventListener('change', () => {
+            appendLine(`── switched to ${consoleSource.options[consoleSource.selectedIndex].text} ──`, 'lvl-meta');
+            consoleConnect();
+        });
+    }
+
+    const clearConsoleBtn = document.getElementById('clearConsole');
+    if (clearConsoleBtn) {
+        clearConsoleBtn.addEventListener('click', () => {
+            if (consoleOutput) consoleOutput.innerHTML = '';
+        });
+    }
+
+    const consoleForm = document.getElementById('consoleForm');
+    if (consoleForm) {
+        consoleForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const command = consoleInput.value.trim();
+            if (!command) return;
+
+            history.push(command);
+            historyIndex = history.length;
+            consoleInput.value = '';
+            appendLine('> ' + command, 'lvl-echo');
+
+            try {
+                const response = await fetch('/api/admin/console/command', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ command })
+                });
+                const data = await response.json();
+
+                if (!response.ok) {
+                    appendLine(data.error || 'Command failed', 'lvl-ERROR');
+                    return;
+                }
+                if (data.output) {
+                    data.output.split('\n').forEach(line => appendLine(line, 'lvl-meta'));
+                }
+            } catch (err) {
+                console.error(err);
+                appendLine('Failed to reach the server', 'lvl-ERROR');
+            }
+        });
+    }
+
+    if (consoleInput) {
+        consoleInput.addEventListener('keydown', (e) => {
+            if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+            if (!history.length) return;
+            e.preventDefault();
+
+            if (e.key === 'ArrowUp') {
+                historyIndex = Math.max(0, historyIndex - 1);
+            } else {
+                historyIndex = Math.min(history.length, historyIndex + 1);
+            }
+            consoleInput.value = historyIndex === history.length ? '' : history[historyIndex];
+        });
+    }
+
+    /* ------------------------------------------------------- Power control */
+
+    const serverState = document.getElementById('serverState');
+    let statusTimer = null;
+
+    async function refreshStatus() {
+        try {
+            const response = await fetch('/api/admin/console/power/status', { credentials: 'include' });
+            if (!response.ok) throw new Error('status ' + response.status);
+            const data = await response.json();
+            if (serverState) {
+                serverState.textContent = 'Server: ' + data.state;
+                serverState.className = 'state-' + data.state;
+            }
+        } catch (err) {
+            if (serverState) {
+                serverState.textContent = 'Server: unknown';
+                serverState.className = 'state-unknown';
+            }
+        }
+    }
+
+    function startStatusPolling() {
+        refreshStatus();
+        clearInterval(statusTimer);
+        statusTimer = setInterval(refreshStatus, 5000);
+
+        refreshStats();
+        clearInterval(statsTimer);
+        statsTimer = setInterval(() => {
+            if (shouldPollMetrics()) refreshStats();
+        }, STATS_INTERVAL);
+
+        loadPlayers();
+
+        refreshOnline();
+        clearInterval(onlineTimer);
+        onlineTimer = setInterval(() => {
+            if (document.visibilityState === 'visible') refreshOnline();
+        }, ONLINE_INTERVAL);
+    }
+
+    function stopStatusPolling() {
+        clearInterval(statusTimer);
+        clearInterval(statsTimer);
+        clearInterval(onlineTimer);
+        statusTimer = statsTimer = onlineTimer = null;
+    }
+
+    document.querySelectorAll('.powerBtn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const action = btn.dataset.action;
+            if (action !== 'start' && !confirm(`Really ${action} the Minecraft server?`)) return;
+
+            document.querySelectorAll('.powerBtn').forEach(b => b.disabled = true);
+            try {
+                const response = await fetch('/api/admin/console/power/' + action, {
+                    method: 'POST',
+                    credentials: 'include'
+                });
+                const data = await response.json();
+
+                if (response.ok) {
+                    appendLine(`── ${action} queued ──`, 'lvl-meta');
+                } else {
+                    appendLine(data.error || `Failed to ${action}`, 'lvl-ERROR');
+                }
+            } catch (err) {
+                console.error(err);
+                appendLine(`Failed to reach the server to ${action}`, 'lvl-ERROR');
+            } finally {
+                document.querySelectorAll('.powerBtn').forEach(b => b.disabled = false);
+                setTimeout(refreshStatus, 1500);
+            }
+        });
+    });
+
+    /* --------------------------------------------------------- Performance */
+
+    const STATS_INTERVAL = 30000;
+    const MAX_PLAYER_ROWS = 300;
+
+    const liveMetrics = document.getElementById('liveMetrics');
+    const hideRconEcho = document.getElementById('hideRconEcho');
+
+    [liveMetrics, hideRconEcho].forEach(box => {
+        if (!box) return;
+        const saved = localStorage.getItem('rdadmin.' + box.id);
+        if (saved !== null) box.checked = saved === '1';
+        box.addEventListener('change', () => {
+            localStorage.setItem('rdadmin.' + box.id, box.checked ? '1' : '0');
+        });
+    });
+
+    function isRconEcho(line) {
+        return line.includes('Rcon issued server command:') || line.includes('[Rcon: ');
+    }
+
+    function shouldPollMetrics() {
+        return liveMetrics && liveMetrics.checked
+            && document.visibilityState === 'visible'
+            && document.getElementById('console-tab').classList.contains('active');
+    }
+
+    if (liveMetrics) {
+        liveMetrics.addEventListener('change', () => {
+            if (liveMetrics.checked) refreshStats();
+        });
+    }
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'visible') return;
+        if (document.getElementById('console-tab').classList.contains('active')) refreshOnline();
+        if (shouldPollMetrics()) refreshStats();
+    });
+
+    const statTps = document.getElementById('statTps');
+    const statCpu = document.getElementById('statCpu');
+    const statCpuSub = document.getElementById('statCpuSub');
+    const statMem = document.getElementById('statMem');
+    const statMemSub = document.getElementById('statMemSub');
+    const statPlayers = document.getElementById('statPlayers');
+    const statsNote = document.getElementById('statsNote');
+
+    let statsTimer = null;
+
+    function setStat(element, text, tone) {
+        if (!element) return;
+        element.textContent = text;
+        element.className = 'stat-value' + (tone ? ' ' + tone : '');
+    }
+
+    function formatBytes(bytes) {
+        if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+        const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+        let value = bytes, unit = 0;
+        while (value >= 1024 && unit < units.length - 1) {
+            value /= 1024;
+            unit++;
+        }
+        return value.toFixed(unit === 0 || value >= 100 ? 0 : 1) + ' ' + units[unit];
+    }
+
+    function clearStats(note) {
+        setStat(statTps, '—', 'unknown');
+        setStat(statCpu, '—', 'unknown');
+        setStat(statMem, '—', 'unknown');
+        if (statCpuSub) statCpuSub.textContent = '';
+        if (statMemSub) statMemSub.textContent = note || '';
+    }
+
+    function renderStats(data) {
+        if (data.tps && data.tps.length) {
+            const worst = data.tps[0];
+            setStat(statTps, data.tps.map(v => v.toFixed(2)).join(' / '),
+                worst >= 19.5 ? 'good' : worst >= 15 ? 'warn' : 'bad');
+        } else {
+            setStat(statTps, 'unavailable', 'unknown');
+        }
+
+        const container = data.container;
+        if (container && container.cpuPercentOfHost !== null && container.cpuPercentOfHost !== undefined) {
+            const share = container.cpuPercentOfHost;
+            setStat(statCpu, share.toFixed(0) + '%',
+                share < 60 ? 'good' : share < 85 ? 'warn' : 'bad');
+            if (statCpuSub) statCpuSub.textContent = `${(container.cpuPercent / 100).toFixed(2)} of ${container.cpuCores} cores`;
+        } else if (container) {
+            setStat(statCpu, container.cpuPercent.toFixed(1) + '%', '');
+            if (statCpuSub) statCpuSub.textContent = 'summed across cores';
+        } else {
+            setStat(statCpu, '—', 'unknown');
+            if (statCpuSub) statCpuSub.textContent = '';
+        }
+
+        const heap = data.heap;
+        const memory = heap
+            ? { percent: heap.percent, used: heap.usedBytes, limit: heap.maxBytes, of: 'heap' }
+            : container
+                ? { percent: container.memoryPercent, used: container.memoryUsedBytes, limit: container.memoryLimitBytes, of: 'container' }
+                : null;
+
+        if (memory) {
+            setStat(statMem, memory.percent.toFixed(0) + '%',
+                memory.percent < 80 ? 'good' : memory.percent < 92 ? 'warn' : 'bad');
+            if (statMemSub) statMemSub.textContent = `${formatBytes(memory.used)} of ${formatBytes(memory.limit)} ${memory.of}`;
+        } else {
+            setStat(statMem, '—', 'unknown');
+            if (statMemSub) statMemSub.textContent = data.state === 'running' ? 'mc-control is not reporting' : 'server is not running';
+        }
+
+        if (statsNote) {
+            statsNote.textContent = data.rconError || '';
+            statsNote.style.display = data.rconError ? '' : 'none';
+        }
+    }
+
+    async function refreshStats() {
+        try {
+            const response = await fetch('/api/admin/console/stats', { credentials: 'include' });
+            if (!response.ok) throw new Error('stats ' + response.status);
+            renderStats(await response.json());
+        } catch (err) {
+            clearStats('');
+        }
+    }
+
+    /* ------------------------------------------------------------- Players */
+
+    const playerTable = document.getElementById('playerTable');
+    const playerSearch = document.getElementById('playerSearch');
+    const onlineOnly = document.getElementById('onlineOnly');
+    const playersNote = document.getElementById('playersNote');
+    const playersCount = document.getElementById('playersCount');
+
+    let roster = [];
+    let onlineNames = [];
+    let onlineTimer = null;
+    let rosterLoadedAt = 0;
+
+    const ONLINE_INTERVAL = 5000;
+    const ROSTER_RELOAD_FLOOR = 15000;
+
+    async function refreshOnline() {
+        try {
+            const response = await fetch('/api/admin/console/online', { credentials: 'include' });
+            if (!response.ok) throw new Error('online ' + response.status);
+            const data = await response.json();
+
+            setStat(statPlayers, data.count + ' / ' + data.max, '');
+
+            const names = data.names || [];
+            const changed = names.join(' ') !== onlineNames.join(' ');
+            onlineNames = names;
+            if (changed) applyOnline();
+        } catch (err) {
+            setStat(statPlayers, '—', 'unknown');
+        }
+    }
+
+    function applyOnline() {
+        const online = new Set(onlineNames.map(name => name.toLowerCase()));
+        const known = new Set(roster.filter(p => p.name).map(p => p.name.toLowerCase()));
+
+        roster.forEach(player => {
+            player.online = !!player.name && online.has(player.name.toLowerCase());
+        });
+        renderPlayers();
+
+        const stranger = onlineNames.some(name => !known.has(name.toLowerCase()));
+        if (stranger && Date.now() - rosterLoadedAt > ROSTER_RELOAD_FLOOR) {
+            loadPlayers();
+        }
+    }
+
+    function playerLabel(player) {
+        return player.name || (player.uuid ? player.uuid.slice(0, 8) : 'unknown');
+    }
+
+    function relativeTime(iso) {
+        if (!iso) return 'never';
+        const then = Date.parse(iso);
+        if (Number.isNaN(then)) return 'unknown';
+
+        let value = Math.max(0, (Date.now() - then) / 1000);
+        if (value < 45) return 'moments ago';
+
+        for (const [name, size] of [['second', 60], ['minute', 60], ['hour', 24], ['day', 30], ['month', 12]]) {
+            if (value < size) {
+                const whole = Math.max(1, Math.floor(value));
+                return whole === 1 ? `1 ${name} ago` : `${whole} ${name}s ago`;
+            }
+            value /= size;
+        }
+        const years = Math.max(1, Math.floor(value));
+        return years === 1 ? '1 year ago' : `${years} years ago`;
+    }
+
+    function badge(text, kind) {
+        const span = document.createElement('span');
+        span.className = 'badge badge-' + kind;
+        span.textContent = text;
+        return span;
+    }
+
+    function actionButton(player, label, action) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = label;
+        button.disabled = !player.name;
+        button.addEventListener('click', () => runPlayerAction(player.name, action, label));
+        return button;
+    }
+
+    async function runPlayerAction(name, action, label) {
+        let reason = null;
+
+        if (action === 'kick' || action === 'ban') {
+            reason = prompt(`${label} ${name} — reason (optional):`, '');
+            if (reason === null) return;
+        } else if (!confirm(`Really ${label.toLowerCase()} ${name}?`)) {
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/admin/console/players/' + encodeURIComponent(action), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ player: name, reason })
+            });
+            const data = await response.json();
+
+            if (!response.ok) {
+                appendLine(data.error || `Failed to ${action} ${name}`, 'lvl-ERROR');
+                return;
+            }
+
+            appendLine('> ' + data.command, 'lvl-echo');
+            if (data.output) {
+                data.output.split('\n').forEach(line => appendLine(line, 'lvl-meta'));
+            }
+        } catch (err) {
+            console.error(err);
+            appendLine('Failed to reach the server', 'lvl-ERROR');
+            return;
+        }
+
+        loadPlayers();
+        refreshOnline();
+    }
+
+    function renderPlayers() {
+        if (!playerTable) return;
+        const body = playerTable.querySelector('tbody');
+        if (!body) return;
+        body.innerHTML = '';
+
+        const term = playerSearch ? playerSearch.value.trim().toLowerCase() : '';
+        const visible = roster.filter(player => {
+            if (onlineOnly && onlineOnly.checked && !player.online) return false;
+            if (!term) return true;
+            return playerLabel(player).toLowerCase().includes(term)
+                || (player.uuid || '').includes(term);
+        });
+
+        if (playersCount) {
+            playersCount.textContent = `${roster.filter(p => p.online).length} online · ${roster.length} on record`;
+        }
+
+        visible.slice(0, MAX_PLAYER_ROWS).forEach(player => {
+            const row = document.createElement('tr');
+
+            const nameCell = document.createElement('td');
+            nameCell.dataset.label = 'Player';
+            const label = document.createElement('span');
+            label.textContent = playerLabel(player);
+            if (!player.name) {
+                label.className = 'uuid-only';
+                label.title = player.uuid || '';
+            }
+            nameCell.appendChild(label);
+            row.appendChild(nameCell);
+
+            const statusCell = document.createElement('td');
+            statusCell.dataset.label = 'Status';
+            statusCell.appendChild(badge(player.online ? 'Online' : 'Offline', player.online ? 'online' : 'offline'));
+            if (player.op) statusCell.appendChild(badge(player.opLevel ? 'Op ' + player.opLevel : 'Op', 'op'));
+            if (player.banned) statusCell.appendChild(badge('Banned', 'banned'));
+            if (player.whitelisted) statusCell.appendChild(badge('Whitelisted', 'whitelisted'));
+            row.appendChild(statusCell);
+
+            const seenCell = document.createElement('td');
+            seenCell.dataset.label = 'Last seen';
+            seenCell.textContent = player.online ? 'now' : relativeTime(player.lastSeen);
+            if (player.lastSeen) seenCell.title = player.lastSeen;
+            row.appendChild(seenCell);
+
+            const actionCell = document.createElement('td');
+            actionCell.dataset.label = 'Actions';
+            actionCell.appendChild(actionButton(player, player.op ? 'De-op' : 'Op', player.op ? 'deop' : 'op'));
+            if (player.online) {
+                actionCell.appendChild(actionButton(player, 'Kick', 'kick'));
+                actionCell.appendChild(actionButton(player, 'Clear inv', 'clear'));
+            }
+            actionCell.appendChild(actionButton(player, player.banned ? 'Unban' : 'Ban', player.banned ? 'pardon' : 'ban'));
+            row.appendChild(actionCell);
+
+            body.appendChild(row);
+        });
+
+        let note = '';
+        if (visible.length > MAX_PLAYER_ROWS) {
+            note = `Showing the first ${MAX_PLAYER_ROWS} of ${visible.length} matches — narrow the search to see the rest.`;
+        } else if (!visible.length) {
+            note = roster.length ? 'No players match that filter.' : 'No players on record yet.';
+        }
+        if (playersNote) {
+            playersNote.textContent = note;
+            playersNote.style.display = note ? '' : 'none';
+        }
+    }
+
+    async function loadPlayers() {
+        try {
+            const response = await fetch('/api/admin/console/players', { credentials: 'include' });
+            if (!response.ok) throw new Error('players ' + response.status);
+            const data = await response.json();
+            roster = data.players || [];
+            rosterLoadedAt = Date.now();
+            renderPlayers();
+        } catch (err) {
+            console.error(err);
+            if (playersNote) {
+                playersNote.textContent = 'Could not load the player list.';
+                playersNote.style.display = '';
+            }
+        }
+    }
+
+    if (playerSearch) playerSearch.addEventListener('input', renderPlayers);
+    if (onlineOnly) onlineOnly.addEventListener('change', renderPlayers);
+    const refreshPlayersBtn = document.getElementById('refreshPlayers');
+    if (refreshPlayersBtn) {
+        refreshPlayersBtn.addEventListener('click', () => {
+            loadPlayers();
+            refreshOnline();
+            refreshStats();
+        });
+    }
+
+    window.addEventListener('beforeunload', () => {
+        consoleDisconnect();
+        stopStatusPolling();
+    });
+</script>
+
+<script src="https://bakosmp.go.ro/js/topbar-show.js"></script>
+
 </body>
 </html>
