@@ -141,17 +141,26 @@ pub async fn read_container_stats(control_dir: &str, max_age: Duration) -> Optio
     parse_container_stats(&tokio::fs::read_to_string(&path).await.ok()?)
 }
 
-/// Read the tick rates out of a Spigot-family `tps` reply.
+/// Read the tick rates out of a `tps` reply.
 ///
 /// Returns the values in the order the server gave them, which is 1m / 5m / 15m
 /// on every implementation that has the command. Anything that does not look
 /// like tick rates — `Unknown or incomplete command`, most often, on a server
 /// without it — is `None`, which the UI shows as unavailable.
+///
+/// The reply is searched line by line because EssentialsX answers `tps` with
+/// several: tick rates, then memory, then disk. Requiring the word "TPS" on the
+/// line is what stops the others being mined for numbers that merely happen to
+/// parse — `Free disk space: 20` would otherwise pass for a perfect tick rate.
 pub fn parse_tps(raw: &str) -> Option<Vec<f32>> {
     let plain = super::strip_formatting(raw);
-    let colon = plain.rfind(':')?;
 
-    let values: Option<Vec<f32>> = plain[colon + 1..]
+    let line = plain
+        .lines()
+        .find(|line| line.to_ascii_lowercase().contains("tps"))?;
+    let colon = line.rfind(':')?;
+
+    let values: Option<Vec<f32>> = line[colon + 1..]
         .split(',')
         // Spigot marks a reading it considers degraded with a leading asterisk.
         .map(|value| value.trim().trim_start_matches('*').trim())
@@ -172,11 +181,122 @@ pub fn parse_tps(raw: &str) -> Option<Vec<f32>> {
     Some(values)
 }
 
+/// JVM heap usage, as EssentialsX reports it alongside the tick rates.
+///
+/// Worth having in addition to the container's memory: the container figure is
+/// resident set size, which a JVM launched with `-Xms4G -XX:+AlwaysPreTouch`
+/// pins near its limit from the moment it starts. It is real, but it never
+/// moves, so it cannot answer "is the server running out of memory?" — heap
+/// can.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct HeapUsage {
+    #[serde(rename = "usedBytes")]
+    pub used: u64,
+    /// Heap the JVM currently has committed, which grows towards `max`.
+    #[serde(rename = "allocatedBytes")]
+    pub allocated: u64,
+    /// The `-Xmx` ceiling.
+    #[serde(rename = "maxBytes")]
+    pub max: u64,
+    /// `used` as a share of `max`, computed here so the UI has no chance to
+    /// divide by a zero it did not expect.
+    pub percent: f32,
+}
+
+/// Leading numeric run of a string, ignoring whatever follows it.
+fn leading_number(raw: &str) -> Option<f64> {
+    let trimmed = raw.trim_start();
+    let end = trimmed
+        .find(|c: char| !c.is_ascii_digit() && c != '.')
+        .unwrap_or(trimmed.len());
+
+    let value: f64 = trimmed[..end].parse().ok()?;
+    value.is_finite().then_some(value)
+}
+
+/// First alphabetic run of a string — the unit word after a number.
+fn unit_of(raw: &str) -> &str {
+    let trimmed = raw.trim();
+    let start = trimmed
+        .find(|c: char| c.is_ascii_alphabetic())
+        .unwrap_or(trimmed.len());
+
+    let rest = &trimmed[start..];
+    let end = rest
+        .find(|c: char| !c.is_ascii_alphabetic())
+        .unwrap_or(rest.len());
+    &rest[..end]
+}
+
+/// EssentialsX labels its figures `mb` but computes them by dividing twice by
+/// 1024, so they are mebibytes. Every unit here is read as binary — the JVM
+/// deals in powers of two, and treating `mb` as a megabyte would overstate a
+/// 4 GiB heap by nearly 200 MiB.
+fn heap_scale(unit: &str) -> u64 {
+    match unit.to_ascii_lowercase().as_str() {
+        "kb" | "kib" => 1024,
+        "gb" | "gib" => 1024 * 1024 * 1024,
+        // `mb`, and the default for an unlabelled figure.
+        _ => 1024 * 1024,
+    }
+}
+
+/// Read JVM heap usage out of an EssentialsX `tps` (or `gc`) reply.
+///
+/// The line looks like `Current Memory Usage: 1485/4096 mb (Max: 4096 mb)` —
+/// used, then committed, then the `-Xmx` ceiling. A server without EssentialsX
+/// simply has no such line, which is `None` rather than an error.
+pub fn parse_heap(raw: &str) -> Option<HeapUsage> {
+    let plain = super::strip_formatting(raw);
+
+    let line = plain
+        .lines()
+        .find(|line| line.to_ascii_lowercase().contains("memory usage"))?;
+
+    // Split off the parenthesised maximum before touching the used/committed
+    // pair, so the `Max:` colon cannot be mistaken for the field separator.
+    let (_, values) = line.split_once(':')?;
+    let (pair, tail) = match values.split_once('(') {
+        Some((pair, tail)) => (pair, Some(tail)),
+        None => (values, None),
+    };
+
+    let (used_text, allocated_text) = pair.split_once('/')?;
+    // Both figures on the line share a unit, so one reading covers all three.
+    let scale = heap_scale(unit_of(allocated_text)) as f64;
+
+    let used = (leading_number(used_text)? * scale) as u64;
+    let allocated = (leading_number(allocated_text)? * scale) as u64;
+
+    let max = tail
+        .and_then(|tail| tail.split_once(':'))
+        .and_then(|(_, value)| leading_number(value))
+        .map(|value| (value * scale) as u64)
+        .filter(|max| *max > 0)
+        // A reply without the `(Max: …)` suffix still gives a usable ratio
+        // against what the JVM has committed.
+        .unwrap_or(allocated);
+
+    if max == 0 {
+        return None;
+    }
+
+    Some(HeapUsage {
+        used,
+        allocated,
+        max,
+        percent: used as f32 / max as f32 * 100.0,
+    })
+}
+
 /// What one probe of the game server yields.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Snapshot {
     /// `None` when the server has no `tps` command, or is not reachable.
     pub tps: Option<Vec<f32>>,
+    /// `None` without EssentialsX, which is what puts heap figures in the
+    /// `tps` reply.
+    pub heap: Option<HeapUsage>,
     pub online: Vec<String>,
     /// Set when the probe could not talk to the server at all, so the UI can
     /// say why the numbers are missing instead of showing a silent blank.
@@ -248,6 +368,9 @@ async fn probe(rcon: &RconClient) -> Snapshot {
 
     if let Ok(output) = rcon.execute("tps").await {
         snapshot.tps = parse_tps(&output);
+        // EssentialsX answers `tps` with heap usage on a following line, so
+        // this costs nothing beyond the command already being run.
+        snapshot.heap = parse_heap(&output);
     }
 
     snapshot
@@ -274,6 +397,59 @@ mod tests {
             parse_tps("TPS from last 1m, 5m, 15m: *18.42, *19.01, 20.0"),
             Some(vec![18.42, 19.01, 20.0])
         );
+    }
+
+    /// The exact reply this server gives. EssentialsX puts a memory line after
+    /// the tick rates, and its last colon is the one inside `(Max: 4096 mb)` —
+    /// so reading the reply as a single string finds `4096 mb)` where the tick
+    /// rates should be, and reports a perfectly healthy server as unavailable.
+    const ESSENTIALS_TPS: &str = "TPS from last 1m, 5m, 15m: *20.0, *20.0, *20.0\n\
+                                  Current Memory Usage: 1485/4096 mb (Max: 4096 mb)";
+
+    #[test]
+    fn reads_the_tick_rates_out_of_a_multi_line_essentials_reply() {
+        assert_eq!(parse_tps(ESSENTIALS_TPS), Some(vec![20.0, 20.0, 20.0]));
+    }
+
+    #[test]
+    fn reads_the_heap_out_of_the_same_reply() {
+        let heap = parse_heap(ESSENTIALS_TPS).unwrap();
+
+        // EssentialsX says "mb" but means mebibytes.
+        assert_eq!(heap.used, 1485 * 1024 * 1024);
+        assert_eq!(heap.allocated, 4096 * 1024 * 1024);
+        assert_eq!(heap.max, 4096 * 1024 * 1024);
+        assert!((heap.percent - 36.25).abs() < 0.1, "got {}", heap.percent);
+    }
+
+    #[test]
+    fn heap_falls_back_to_the_committed_size_without_a_max() {
+        let heap = parse_heap("Current Memory Usage: 512/2048 mb").unwrap();
+        assert_eq!(heap.max, 2048 * 1024 * 1024);
+        assert_eq!(heap.allocated, heap.max);
+    }
+
+    #[test]
+    fn heap_reads_the_unit_when_one_is_given() {
+        let heap = parse_heap("Current Memory Usage: 1/4 gb (Max: 4 gb)").unwrap();
+        assert_eq!(heap.max, 4 * 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn a_reply_without_a_memory_line_has_no_heap() {
+        // Paper's `tps` is tick rates only, and vanilla has neither.
+        assert_eq!(parse_heap("TPS from last 1m, 5m, 15m: 20.0, 20.0, 20.0"), None);
+        assert_eq!(parse_heap("Unknown or incomplete command"), None);
+        // Present but unusable rather than absent.
+        assert_eq!(parse_heap("Current Memory Usage: nonsense"), None);
+    }
+
+    #[test]
+    fn a_line_that_is_not_about_tps_is_never_mined_for_numbers() {
+        // Everything after the last colon here parses as a plausible tick
+        // rate. Requiring the word is what keeps it from being reported as one.
+        assert_eq!(parse_tps("Free disk space: 20"), None);
+        assert_eq!(parse_tps("Current Memory Usage: 1485/4096 mb (Max: 4096 mb)"), None);
     }
 
     #[test]
@@ -436,7 +612,7 @@ mod tests {
             let mut asked = Vec::new();
             for reply in [
                 "There are 2 of a max of 20 players online: Steve, Alex",
-                "\u{a7}6TPS from last 1m, 5m, 15m: \u{a7}a20.0, \u{a7}a19.9, \u{a7}a19.8",
+                ESSENTIALS_TPS,
             ] {
                 let (id, body) = read_packet(&mut socket).await;
                 asked.push(body);
@@ -454,7 +630,10 @@ mod tests {
 
         assert_eq!(server.await.unwrap(), vec!["list", "tps"]);
         assert_eq!(snapshot.online, vec!["Steve", "Alex"]);
-        assert_eq!(snapshot.tps, Some(vec![20.0, 19.9, 19.8]));
+        assert_eq!(snapshot.tps, Some(vec![20.0, 20.0, 20.0]));
+        // Both metrics come out of the one `tps` reply, so heap costs no
+        // second command.
+        assert_eq!(snapshot.heap.unwrap().used, 1485 * 1024 * 1024);
         assert!(snapshot.rcon_error.is_none());
     }
 

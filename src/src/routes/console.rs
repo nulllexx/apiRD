@@ -188,6 +188,7 @@ async fn server_stats(
         // Null rather than zeroes wherever the number is genuinely unknown, so
         // the UI can say "unavailable" instead of implying a reading of zero.
         "tps": snapshot.tps,
+        "heap": snapshot.heap,
         "container": container,
         "players": {
             "online": snapshot.online.len(),

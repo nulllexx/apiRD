@@ -1796,12 +1796,30 @@
             // Docker sums CPU across cores, so >100% is normal and there is no
             // core count here to judge it against — shown without a verdict.
             setStat(statCpu, container.cpuPercent.toFixed(1) + '%', '');
-            setStat(statMem, container.memoryPercent.toFixed(0) + '%',
-                container.memoryPercent < 80 ? 'good' : container.memoryPercent < 92 ? 'warn' : 'bad');
-            statMemSub.textContent =
-                formatBytes(container.memoryUsedBytes) + ' of ' + formatBytes(container.memoryLimitBytes);
         } else {
             setStat(statCpu, '—', 'unknown');
+        }
+
+        // JVM heap first: it is what actually predicts an out-of-memory. The
+        // container's figure is resident set size, which this server's
+        // -Xms4G -XX:+AlwaysPreTouch pins near the limit from startup — real,
+        // but it never moves, so it answers nothing. Container memory is the
+        // fallback for when EssentialsX is not there to report heap.
+        const heap = data.heap;
+        const memory = heap
+            ? { percent: heap.percent, used: heap.usedBytes, limit: heap.maxBytes, of: 'heap' }
+            : container
+                ? { percent: container.memoryPercent, used: container.memoryUsedBytes, limit: container.memoryLimitBytes, of: 'container' }
+                : null;
+
+        if (memory) {
+            setStat(statMem, memory.percent.toFixed(0) + '%',
+                memory.percent < 80 ? 'good' : memory.percent < 92 ? 'warn' : 'bad');
+            // The source is named, so there is never a doubt about which of the
+            // two very different numbers is on screen.
+            statMemSub.textContent =
+                `${formatBytes(memory.used)} of ${formatBytes(memory.limit)} ${memory.of}`;
+        } else {
             setStat(statMem, '—', 'unknown');
             statMemSub.textContent = data.state === 'running'
                 ? 'mc-control is not reporting'
