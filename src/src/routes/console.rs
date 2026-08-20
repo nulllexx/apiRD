@@ -410,6 +410,14 @@ async fn item_texture(
         Err(TextureError::Missing) => {
             Err(AppError::NotFound("No texture for that item".to_string()))
         }
+        // Deliberately not a 404. The panel falls back to its initials tile
+        // either way, but a wall of 404s reads as "these items have no art"
+        // while a wall of 500s carrying this message reads as "this server
+        // cannot reach the mirror" — and only one of those is something an
+        // operator can act on.
+        Err(TextureError::Unreachable(why)) => Err(AppError::Internal(format!(
+            "Could not reach the texture mirror: {why}"
+        ))),
         Err(TextureError::Cache(why)) => {
             log::error!("textures: cache is not writable: {why}");
             Err(AppError::Internal("Texture cache is unavailable".to_string()))

@@ -16,9 +16,22 @@
 //! Rather than ship a mapping table that would go stale every release, each
 //! candidate is tried in turn and the first hit is cached under the id.
 //!
-//! A miss is cached too, as an empty marker file. Without that, every render of
-//! an inventory containing an unmappable item would re-ask the mirror for
-//! something that was never there.
+//! A miss is cached too, as a marker file holding the time it was recorded.
+//! Without that, every render of an inventory containing an unmappable item
+//! would re-ask the mirror for something that was never there.
+//!
+//! ## Only real misses are remembered
+//!
+//! A marker is written only when the mirror *answered* and had nothing at any
+//! candidate path. A mirror that could not be reached at all — DNS not up yet
+//! in a just-started container, egress blocked, a timeout — is not a miss and
+//! must never be recorded as one. Getting that wrong is unusually costly here:
+//! one bad moment during the first inventory render would write a permanent
+//! marker for every id on screen, and every texture would 404 forever after,
+//! long after connectivity came back.
+//!
+//! Markers also expire, so a texture added in a later assets release is picked
+//! up eventually rather than being written off for good.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -42,14 +55,44 @@ const MAX_TEXTURE_BYTES: usize = 256 * 1024;
 
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How long a recorded miss is trusted. Long enough that an unmappable id is
+/// not re-walked on every render, short enough that a texture added in a later
+/// assets release eventually appears without anyone clearing the cache.
+const MISS_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
+
 #[derive(Debug)]
 pub enum TextureError {
     /// The id could never name a texture — rejected before any I/O.
     BadId,
-    /// Looked for and not found; the caller renders its own fallback.
+    /// Looked for and genuinely not there; the caller renders its own fallback.
     Missing,
+    /// The mirror could not be consulted. Distinct from [`TextureError::Missing`]
+    /// because it must not be cached, and because an operator staring at a wall
+    /// of failed textures needs to be able to tell the two apart.
+    Unreachable(String),
     /// The cache directory could not be written.
     Cache(String),
+}
+
+impl std::fmt::Display for TextureError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TextureError::BadId => write!(f, "not a valid item id"),
+            TextureError::Missing => write!(f, "no texture for that item"),
+            TextureError::Unreachable(why) => write!(f, "texture mirror unreachable: {why}"),
+            TextureError::Cache(why) => write!(f, "texture cache unwritable: {why}"),
+        }
+    }
+}
+
+/// The outcome of asking the mirror for one candidate path.
+enum Fetch {
+    Found(Vec<u8>),
+    /// The mirror answered and does not have this path.
+    NotFound,
+    /// The mirror could not be asked. Says nothing about whether the texture
+    /// exists.
+    Unreachable(String),
 }
 
 /// Where textures come from and where they are kept.
@@ -99,7 +142,7 @@ impl TextureCache {
         if let Some(bytes) = read_cached(&hit).await {
             return Ok(bytes);
         }
-        if tokio::fs::metadata(&miss).await.is_ok() {
+        if is_fresh_miss(&miss).await {
             return Err(TextureError::Missing);
         }
 
@@ -116,7 +159,7 @@ impl TextureCache {
             self.in_flight.remove(name);
             return Ok(bytes);
         }
-        if tokio::fs::metadata(&miss).await.is_ok() {
+        if is_fresh_miss(&miss).await {
             self.in_flight.remove(name);
             return Err(TextureError::Missing);
         }
@@ -145,34 +188,63 @@ impl TextureCache {
             );
 
             match self.download(&url).await {
-                Some(bytes) => {
+                Fetch::Found(bytes) => {
                     write_cached(hit, &bytes).await?;
                     return Ok(bytes);
                 }
-                None => continue,
+                Fetch::NotFound => continue,
+                // Bail on the first unreachable rather than working through the
+                // remaining candidates: if the mirror is down they will all
+                // fail, and five timeouts in a row is forty seconds of an
+                // operator waiting for a picture of a sword.
+                Fetch::Unreachable(why) => {
+                    log::warn!("textures: could not reach {url}: {why}");
+                    return Err(TextureError::Unreachable(why));
+                }
             }
         }
 
-        // Remember the miss so the next render does not repeat this whole walk.
-        write_cached(miss, &[]).await?;
+        // Every candidate was answered and none existed. That is a real miss,
+        // and the only case worth remembering.
+        write_cached(miss, now_seconds().to_string().as_bytes()).await?;
         Err(TextureError::Missing)
     }
 
-    /// One candidate URL. `None` for anything that is not a PNG of a plausible
-    /// size, so a mirror serving an HTML error page cannot poison the cache.
-    async fn download(&self, url: &str) -> Option<Vec<u8>> {
-        let response = self.client.get(url).send().await.ok()?;
-        if !response.status().is_success() {
-            return None;
+    /// Ask the mirror for one candidate URL.
+    ///
+    /// The distinction that matters is between a reply and no reply. A 404 is a
+    /// reply and means the texture is not there; a refused connection is not,
+    /// and says nothing at all about the texture.
+    async fn download(&self, url: &str) -> Fetch {
+        let response = match self.client.get(url).send().await {
+            Ok(response) => response,
+            Err(e) => return Fetch::Unreachable(transport_reason(&e)),
+        };
+
+        let status = response.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Fetch::NotFound;
+        }
+        if !status.is_success() {
+            // Rate limiting and mirror-side errors are transient, so they are
+            // emphatically not a missing texture.
+            return Fetch::Unreachable(format!("mirror returned HTTP {status}"));
         }
 
-        let bytes = response.bytes().await.ok()?;
+        let bytes = match response.bytes().await {
+            Ok(bytes) => bytes,
+            Err(e) => return Fetch::Unreachable(transport_reason(&e)),
+        };
+
         if bytes.len() > MAX_TEXTURE_BYTES || !bytes.starts_with(PNG_MAGIC) {
-            log::warn!("textures: {url} did not return a PNG of a usable size");
-            return None;
+            // A success response that is not a PNG means this URL is wrong
+            // rather than unavailable — an error page, say — so move on to the
+            // next candidate instead of giving up on the mirror.
+            log::warn!("textures: {url} answered 200 with something that is not a PNG");
+            return Fetch::NotFound;
         }
 
-        Some(bytes.to_vec())
+        Fetch::Found(bytes.to_vec())
     }
 
     fn cache_path(&self, name: &str) -> PathBuf {
@@ -213,6 +285,38 @@ pub fn candidate_paths(name: &str) -> Vec<String> {
         format!("block/{name}_top.png"),
         format!("block/{name}_front.png"),
     ]
+}
+
+fn now_seconds() -> i64 {
+    chrono::Utc::now().timestamp()
+}
+
+fn transport_reason(e: &reqwest::Error) -> String {
+    if e.is_timeout() {
+        "timed out".to_string()
+    } else if e.is_connect() {
+        "could not connect".to_string()
+    } else {
+        e.to_string()
+    }
+}
+
+/// Whether a miss marker exists and is still within its TTL.
+///
+/// A marker that is empty, unparseable or past its TTL reads as absent, so the
+/// texture is looked up again. That is what makes a cache poisoned by an
+/// outage self-healing: the markers written before this distinction existed
+/// hold no timestamp, so they expire the moment this code runs.
+async fn is_fresh_miss(path: &Path) -> bool {
+    let Ok(contents) = tokio::fs::read_to_string(path).await else {
+        return false;
+    };
+
+    let Ok(recorded) = contents.trim().parse::<i64>() else {
+        return false;
+    };
+
+    now_seconds().saturating_sub(recorded) < MISS_TTL_SECONDS
 }
 
 async fn read_cached(path: &Path) -> Option<Vec<u8>> {
@@ -343,23 +447,91 @@ mod tests {
         tokio::fs::remove_dir_all(&dir).await.ok();
     }
 
-    #[tokio::test]
-    async fn a_recorded_miss_is_not_looked_up_again() {
-        let dir = std::env::temp_dir().join(format!("apird-tex-{}", uuid::Uuid::new_v4()));
-        let cache = TextureCache::new(
+    /// Build a cache whose mirror is a dead port, so any attempt to reach it
+    /// fails immediately and visibly.
+    fn offline_cache(dir: &Path) -> Arc<TextureCache> {
+        TextureCache::new(
             dir.to_string_lossy().into_owned(),
             "1.21.4".to_string(),
             "http://127.0.0.1:1".to_string(),
-        );
+        )
+    }
 
-        let marker = dir.join("1.21.4").join("nonexistent_item.miss");
+    async fn write_marker(dir: &Path, name: &str, contents: &[u8]) {
+        let marker = dir.join("1.21.4").join(format!("{name}.miss"));
         tokio::fs::create_dir_all(marker.parent().unwrap()).await.unwrap();
-        tokio::fs::write(&marker, b"").await.unwrap();
+        tokio::fs::write(&marker, contents).await.unwrap();
+    }
 
+    #[tokio::test]
+    async fn a_recorded_miss_is_not_looked_up_again() {
+        let dir = std::env::temp_dir().join(format!("apird-tex-{}", uuid::Uuid::new_v4()));
+        let cache = offline_cache(&dir);
+
+        write_marker(&dir, "nonexistent_item", now_seconds().to_string().as_bytes()).await;
+
+        // Missing, not Unreachable: a fresh marker means the mirror is never
+        // consulted, which is the whole point of recording one.
         assert!(matches!(
             cache.get("minecraft", "nonexistent_item").await,
             Err(TextureError::Missing)
         ));
+
+        tokio::fs::remove_dir_all(&dir).await.ok();
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_mirror_is_never_recorded_as_a_miss() {
+        // The bug this pins down: one outage while an inventory was rendering
+        // wrote a permanent marker for every id on screen, and every texture
+        // 404d forever afterwards even once the network came back.
+        let dir = std::env::temp_dir().join(format!("apird-tex-{}", uuid::Uuid::new_v4()));
+        let cache = offline_cache(&dir);
+
+        assert!(
+            matches!(
+                cache.get("minecraft", "diamond_sword").await,
+                Err(TextureError::Unreachable(_))
+            ),
+            "a dead mirror must report itself, not claim the texture is absent"
+        );
+
+        let marker = dir.join("1.21.4").join("diamond_sword.miss");
+        assert!(
+            tokio::fs::metadata(&marker).await.is_err(),
+            "an unreachable mirror must not poison the cache"
+        );
+
+        tokio::fs::remove_dir_all(&dir).await.ok();
+    }
+
+    #[tokio::test]
+    async fn a_stale_or_timestampless_marker_is_retried() {
+        // Markers written before misses carried a timestamp hold nothing, and
+        // must read as expired — that is what makes an already-poisoned cache
+        // heal itself on deploy rather than needing to be cleared by hand.
+        let dir = std::env::temp_dir().join(format!("apird-tex-{}", uuid::Uuid::new_v4()));
+        let cache = offline_cache(&dir);
+
+        for (label, contents) in [
+            ("empty", Vec::new()),
+            ("not a number", b"poisoned".to_vec()),
+            (
+                "past its ttl",
+                (now_seconds() - MISS_TTL_SECONDS - 1).to_string().into_bytes(),
+            ),
+        ] {
+            write_marker(&dir, "diamond_sword", &contents).await;
+
+            // Reaching the (dead) mirror at all is the proof it was retried.
+            assert!(
+                matches!(
+                    cache.get("minecraft", "diamond_sword").await,
+                    Err(TextureError::Unreachable(_))
+                ),
+                "a {label} marker must be retried, not trusted"
+            );
+        }
 
         tokio::fs::remove_dir_all(&dir).await.ok();
     }
@@ -375,6 +547,8 @@ mod tests {
             String::new(),
         );
 
+        // Missing rather than Unreachable: not configuring a mirror is a
+        // deliberate state, not a failure to talk to one.
         assert!(matches!(
             cache.get("minecraft", "diamond_sword").await,
             Err(TextureError::Missing)
@@ -404,5 +578,35 @@ mod tests {
             tokio::fs::metadata(&dir).await.is_err(),
             "a rejected id must not create anything"
         );
+    }
+}
+
+/// Network-touching checks, excluded from the normal run.
+///
+/// `cargo test --lib textures::network -- --ignored --nocapture` exercises the
+/// real mirror. Kept out of the default suite so CI and an offline machine do
+/// not fail on someone else's uptime.
+#[cfg(test)]
+mod network {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore]
+    async fn fetches_real_textures_end_to_end() {
+        let dir = std::env::temp_dir().join(format!("apird-net-{}", uuid::Uuid::new_v4()));
+        let cache = TextureCache::new(
+            dir.to_string_lossy().into_owned(),
+            "1.21.4".to_string(),
+            "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets".to_string(),
+        );
+
+        for name in ["diamond_sword", "stone", "grass_block", "iron_helmet"] {
+            match cache.get("minecraft", name).await {
+                Ok(bytes) => println!("{name}: OK, {} bytes", bytes.len()),
+                Err(e) => println!("{name}: FAILED -> {e:?}"),
+            }
+        }
+
+        tokio::fs::remove_dir_all(&dir).await.ok();
     }
 }
