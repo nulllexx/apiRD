@@ -1270,8 +1270,8 @@
     let retryDelay = 1000;
     let retryTimer = null;
     let stuckToBottom = true;
-    const history = [];
-    let historyIndex = 0;
+    const consoleCmdHistory = [];
+    let consoleCmdHistoryIndex = 0;
     let statusTimer = null;
     let statsTimer = null;
     let onlineTimer = null;
@@ -1944,11 +1944,11 @@
         let historyHTML = '';
         if (incident.history_status && incident.history_status.length > 0) {
             historyHTML = '<div class="history-list">';
-            incident.history_status.forEach(history => {
+            incident.history_status.forEach(historyItem => {
                 historyHTML += `
                     <div class="history-item">
-                        <div class="history-time">${history.time} - ${history.status}</div>
-                        <div class="history-context">${history.context}</div>
+                        <div class="history-time">${historyItem.time} - ${historyItem.status}</div>
+                        <div class="history-context">${historyItem.context}</div>
                     </div>
                 `;
             });
@@ -2297,8 +2297,8 @@
             const command = consoleInput.value.trim();
             if (!command) return;
 
-            history.push(command);
-            historyIndex = history.length;
+            consoleCmdHistory.push(command);
+            consoleCmdHistoryIndex = consoleCmdHistory.length;
             consoleInput.value = '';
             appendLine('> ' + command, 'lvl-echo');
 
@@ -2328,15 +2328,15 @@
     if (consoleInput) {
         consoleInput.addEventListener('keydown', (e) => {
             if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
-            if (!history.length) return;
+            if (!consoleCmdHistory.length) return;
             e.preventDefault();
 
             if (e.key === 'ArrowUp') {
-                historyIndex = Math.max(0, historyIndex - 1);
+                consoleCmdHistoryIndex = Math.max(0, consoleCmdHistoryIndex - 1);
             } else {
-                historyIndex = Math.min(history.length, historyIndex + 1);
+                consoleCmdHistoryIndex = Math.min(consoleCmdHistory.length, consoleCmdHistoryIndex + 1);
             }
-            consoleInput.value = historyIndex === history.length ? '' : history[historyIndex];
+            consoleInput.value = consoleCmdHistoryIndex === consoleCmdHistory.length ? '' : consoleCmdHistory[consoleCmdHistoryIndex];
         });
     }
 
@@ -2820,7 +2820,7 @@
         if (updateUrl) {
             const url = new URL(window.location);
             url.searchParams.set('page', activeTabName);
-            history.replaceState(null, '', url.toString());
+            window.history.replaceState(null, '', url.toString());
         }
     }
 
