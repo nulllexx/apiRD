@@ -13,8 +13,26 @@
 //! `textures/item/diamond_sword.png`, `stone` is `textures/block/stone.png`,
 //! and `grass_block` is neither — its item form is a 3D render the assets do
 //! not contain, so the closest flat stand-in is `block/grass_block_side.png`.
-//! Rather than ship a mapping table that would go stale every release, each
-//! candidate is tried in turn and the first hit is cached under the id.
+//! Each candidate is tried in turn and the first hit is cached under the id.
+//!
+//! A third family lives under `entity/`, because the item is drawn by a model
+//! rather than from a flat sprite: beds, chests, shields, banners, heads. Most
+//! of those are still derivable — `white_bed` is `entity/bed/white.png` and
+//! `ender_chest` is `entity/chest/ender.png`, both just the id split at its
+//! last underscore and read backwards — so the rule covers all sixteen bed
+//! colours and both special chests without naming any of them.
+//!
+//! Shapes cut from another block — stairs, slabs, fences, walls — carry no
+//! texture at all and are drawn with the material they were cut from, so those
+//! resolve by stripping the shape off the id and looking up what is left:
+//! `jungle_stairs` is `block/jungle_planks.png`, `cobblestone_wall` is
+//! `block/cobblestone.png`.
+//!
+//! What is left is a short table of genuinely irregular ones. That is a
+//! deliberate exception to preferring rules over tables: it is four entries for
+//! items that have been special-cased in the assets for a decade, not a
+//! per-id map of the item registry, and anything missing from it degrades to
+//! the initials tile rather than to a wrong picture.
 //!
 //! A miss is cached too, as a marker file holding the time it was recorded.
 //! Without that, every render of an inventory containing an unmappable item
@@ -59,6 +77,19 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 /// not re-walked on every render, short enough that a texture added in a later
 /// assets release eventually appears without anyone clearing the cache.
 const MISS_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
+
+/// Bumped whenever [`candidate_paths`] learns to look somewhere new.
+///
+/// A recorded miss only ever means "none of the places we looked had it", so
+/// widening the search retroactively invalidates every miss on disk. Without
+/// this, teaching the lookup about `entity/` textures would leave shields and
+/// beds showing the fallback tile for a further week, until the TTL happened to
+/// expire — the fix would look like it had not worked.
+///
+/// 1: item/ and block/ only.
+/// 2: added entity/ derivations and the irregular table.
+/// 3: added base-material derivation for stairs, slabs, fences and friends.
+const CANDIDATE_GENERATION: u32 = 3;
 
 #[derive(Debug)]
 pub enum TextureError {
@@ -211,7 +242,7 @@ impl TextureCache {
 
         // Every candidate was answered and none existed. That is a real miss,
         // and the only case worth remembering.
-        write_cached(miss, now_seconds().to_string().as_bytes()).await?;
+        write_cached(miss, miss_marker().as_bytes()).await?;
         Err(TextureError::Missing)
     }
 
@@ -277,19 +308,96 @@ pub fn is_valid_segment(raw: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-' | '.'))
 }
 
+/// Shapes cut from another block, which carry no texture of their own: a
+/// jungle staircase is drawn with jungle planks. Stripping the suffix gives the
+/// material to look for.
+///
+/// `_fence_gate` precedes `_fence` only for readability — each is matched
+/// against the end of the id, and `oak_fence_gate` does not end in `_fence`.
+const SHAPE_SUFFIXES: &[&str] = &[
+    "_stairs",
+    "_slab",
+    "_fence_gate",
+    "_fence",
+    "_wall",
+    "_pressure_plate",
+    "_button",
+];
+
+/// How a base material's texture might be named, once the shape suffix is off.
+///
+/// Between them these cover the whole set: bare for `stone`, `_planks` for
+/// every wood, a plural for `brick` -> `bricks`, `_block` for `purpur`, and the
+/// face fallbacks for `quartz`.
+fn material_paths(base: &str) -> [String; 7] {
+    [
+        format!("block/{base}.png"),
+        format!("block/{base}_planks.png"),
+        format!("block/{base}s.png"),
+        format!("block/{base}_block.png"),
+        format!("block/{base}_block_side.png"),
+        format!("block/{base}_side.png"),
+        format!("block/{base}_top.png"),
+    ]
+}
+
+/// Items whose texture cannot be derived from the id at all.
+///
+/// Every one of these is drawn from a model with a hand-named texture. Kept
+/// short on purpose — see the module docs.
+const IRREGULAR: &[(&str, &str)] = &[
+    ("shield", "entity/shield_base_nopattern.png"),
+    ("chest", "entity/chest/normal.png"),
+    ("player_head", "entity/player/wide/steve.png"),
+    ("decorated_pot", "entity/decorated_pot/decorated_pot_base.png"),
+];
+
 /// Where a given id might live, best guess first.
 ///
 /// Items come first because most held things are items; the block fallbacks
 /// follow because a placeable block's inventory icon is rendered from its
-/// faces, and a face texture is the nearest flat thing to show.
+/// faces, and a face texture is the nearest flat thing to show. The `entity/`
+/// guesses come after both, so they cost a round trip only for an id that was
+/// going to miss anyway.
 pub fn candidate_paths(name: &str) -> Vec<String> {
-    vec![
-        format!("item/{name}.png"),
-        format!("block/{name}.png"),
-        format!("block/{name}_side.png"),
-        format!("block/{name}_top.png"),
-        format!("block/{name}_front.png"),
-    ]
+    let mut paths = Vec::new();
+
+    // First when it applies: for these the answer is known, and trying the
+    // derivable paths first would just be two wasted requests.
+    if let Some((_, path)) = IRREGULAR.iter().find(|(id, _)| *id == name) {
+        paths.push((*path).to_string());
+    }
+
+    paths.push(format!("item/{name}.png"));
+    paths.push(format!("block/{name}.png"));
+
+    // Before the entity guesses: a staircase is never an entity texture, and
+    // this is much the more common miss of the two.
+    if let Some(base) = SHAPE_SUFFIXES
+        .iter()
+        .find_map(|suffix| name.strip_suffix(suffix))
+    {
+        paths.extend(material_paths(base));
+    }
+
+    // `<variant>_<family>` read backwards: white_bed -> entity/bed/white.png,
+    // ender_chest -> entity/chest/ender.png. Splitting at the *last* underscore
+    // is what keeps multi-word variants like light_blue_bed intact.
+    if let Some((variant, family)) = name.rsplit_once('_') {
+        paths.push(format!("entity/{family}/{variant}.png"));
+    }
+
+    // Every banner colour shares one base texture; the colour is applied by the
+    // game, so there is nothing per-colour to fetch.
+    if name.ends_with("_banner") {
+        paths.push("entity/banner_base.png".to_string());
+    }
+
+    paths.push(format!("block/{name}_side.png"));
+    paths.push(format!("block/{name}_top.png"));
+    paths.push(format!("block/{name}_front.png"));
+
+    paths
 }
 
 fn now_seconds() -> i64 {
@@ -306,18 +414,34 @@ fn transport_reason(e: &reqwest::Error) -> String {
     }
 }
 
-/// Whether a miss marker exists and is still within its TTL.
+/// What a recorded miss looks like on disk: the rules it was recorded under,
+/// then when.
+fn miss_marker() -> String {
+    format!("{CANDIDATE_GENERATION} {}", now_seconds())
+}
+
+/// Whether a miss marker exists, was recorded under the current lookup rules,
+/// and is still within its TTL.
 ///
-/// A marker that is empty, unparseable or past its TTL reads as absent, so the
-/// texture is looked up again. That is what makes a cache poisoned by an
-/// outage self-healing: the markers written before this distinction existed
-/// hold no timestamp, so they expire the moment this code runs.
+/// Anything else — empty, unparseable, an older generation, past its TTL —
+/// reads as absent, so the texture is looked up again. That is what makes the
+/// cache self-healing across both kinds of change: markers written by a build
+/// that searched fewer places expire immediately, and markers written during an
+/// outage carried no timestamp at all and expire the same way.
 async fn is_fresh_miss(path: &Path) -> bool {
     let Ok(contents) = tokio::fs::read_to_string(path).await else {
         return false;
     };
 
-    let Ok(recorded) = contents.trim().parse::<i64>() else {
+    let Some((generation, recorded)) = contents.trim().split_once(' ') else {
+        return false;
+    };
+
+    if generation.parse::<u32>() != Ok(CANDIDATE_GENERATION) {
+        return false;
+    }
+
+    let Ok(recorded) = recorded.parse::<i64>() else {
         return false;
     };
 
@@ -405,6 +529,97 @@ mod tests {
     }
 
     #[test]
+    fn entity_rendered_items_are_derived_from_the_id() {
+        // The reported miss: a bed's texture is under entity/, named by colour,
+        // and no amount of item/ or block/ guessing finds it.
+        assert!(candidate_paths("white_bed").contains(&"entity/bed/white.png".to_string()));
+        // Splitting at the last underscore is what keeps a two-word colour whole.
+        assert!(candidate_paths("light_blue_bed")
+            .contains(&"entity/bed/light_blue.png".to_string()));
+        // The same rule, no extra code, covers both special chests.
+        assert!(candidate_paths("ender_chest").contains(&"entity/chest/ender.png".to_string()));
+        assert!(candidate_paths("trapped_chest").contains(&"entity/chest/trapped.png".to_string()));
+    }
+
+    #[test]
+    fn shapes_cut_from_a_block_resolve_to_their_material() {
+        // The reported miss: stairs have no texture of their own, so nothing
+        // under item/ or block/ named after them will ever exist.
+        let stairs = candidate_paths("jungle_stairs");
+        assert!(stairs.contains(&"block/jungle_planks.png".to_string()));
+        // Every wooden shape shares the plank texture.
+        for shape in ["slab", "fence", "fence_gate", "button", "pressure_plate"] {
+            assert!(
+                candidate_paths(&format!("jungle_{shape}"))
+                    .contains(&"block/jungle_planks.png".to_string()),
+                "jungle_{shape} should fall back to jungle planks"
+            );
+        }
+    }
+
+    #[test]
+    fn stone_shapes_cover_the_naming_variants() {
+        // Bare, pluralised, and _block suffixed - the three ways a non-wood
+        // material is spelled once its shape suffix comes off.
+        assert!(candidate_paths("stone_stairs").contains(&"block/stone.png".to_string()));
+        assert!(candidate_paths("cobblestone_wall").contains(&"block/cobblestone.png".to_string()));
+        assert!(candidate_paths("brick_stairs").contains(&"block/bricks.png".to_string()));
+        assert!(
+            candidate_paths("stone_brick_stairs").contains(&"block/stone_bricks.png".to_string())
+        );
+        assert!(candidate_paths("purpur_stairs").contains(&"block/purpur_block.png".to_string()));
+        assert!(
+            candidate_paths("quartz_stairs").contains(&"block/quartz_block_side.png".to_string())
+        );
+    }
+
+    #[test]
+    fn a_fence_gate_is_not_mistaken_for_a_fence() {
+        // Stripping the wrong suffix would ask for "oak_gate" planks.
+        assert!(candidate_paths("oak_fence_gate").contains(&"block/oak_planks.png".to_string()));
+        assert!(!candidate_paths("oak_fence_gate")
+            .iter()
+            .any(|path| path.contains("oak_gate")));
+    }
+
+    #[test]
+    fn material_guesses_come_after_the_direct_ones() {
+        // A block that does have its own texture must still find it first,
+        // rather than paying for seven material guesses.
+        let paths = candidate_paths("oak_slab");
+        assert_eq!(paths[0], "item/oak_slab.png");
+        assert_eq!(paths[1], "block/oak_slab.png");
+    }
+
+    #[test]
+    fn irregular_items_are_looked_up_first() {
+        // A shield has no derivable path, so the table entry has to lead -
+        // otherwise every shield costs two pointless requests before the hit.
+        assert_eq!(candidate_paths("shield")[0], "entity/shield_base_nopattern.png");
+        assert_eq!(candidate_paths("chest")[0], "entity/chest/normal.png");
+    }
+
+    #[test]
+    fn every_banner_colour_falls_back_to_the_shared_base() {
+        // The colour is applied by the game, so there is no per-colour file.
+        for name in ["white_banner", "red_banner", "light_gray_banner"] {
+            assert!(
+                candidate_paths(name).contains(&"entity/banner_base.png".to_string()),
+                "{name} should fall back to the banner base"
+            );
+        }
+    }
+
+    #[test]
+    fn an_ordinary_item_still_tries_the_cheap_paths_first() {
+        // The entity guesses must not push item/ and block/ down the list, or
+        // every ordinary texture pays for the special cases.
+        let paths = candidate_paths("diamond_sword");
+        assert_eq!(paths[0], "item/diamond_sword.png");
+        assert_eq!(paths[1], "block/diamond_sword.png");
+    }
+
+    #[test]
     fn items_are_looked_for_before_blocks() {
         let paths = candidate_paths("stone");
         assert_eq!(paths[0], "item/stone.png");
@@ -473,7 +688,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("apird-tex-{}", uuid::Uuid::new_v4()));
         let cache = offline_cache(&dir);
 
-        write_marker(&dir, "nonexistent_item", now_seconds().to_string().as_bytes()).await;
+        write_marker(&dir, "nonexistent_item", miss_marker().as_bytes()).await;
 
         // Missing, not Unreachable: a fresh marker means the mirror is never
         // consulted, which is the whole point of recording one.
@@ -521,9 +736,21 @@ mod tests {
         for (label, contents) in [
             ("empty", Vec::new()),
             ("not a number", b"poisoned".to_vec()),
+            // Written before misses carried a generation.
+            ("timestamp only", now_seconds().to_string().into_bytes()),
+            // Recorded when the lookup searched fewer places, so it says
+            // nothing about whether the texture is findable now.
+            (
+                "an older generation",
+                format!("{} {}", CANDIDATE_GENERATION - 1, now_seconds()).into_bytes(),
+            ),
             (
                 "past its ttl",
-                (now_seconds() - MISS_TTL_SECONDS - 1).to_string().into_bytes(),
+                format!(
+                    "{CANDIDATE_GENERATION} {}",
+                    now_seconds() - MISS_TTL_SECONDS - 1
+                )
+                .into_bytes(),
             ),
         ] {
             write_marker(&dir, "diamond_sword", &contents).await;
@@ -605,7 +832,32 @@ mod network {
             "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets".to_string(),
         );
 
-        for name in ["diamond_sword", "stone", "grass_block", "iron_helmet"] {
+        for name in [
+            "diamond_sword",
+            "stone",
+            "grass_block",
+            "iron_helmet",
+            // The reported failures, plus the rest of the entity-rendered family.
+            "shield",
+            "white_bed",
+            "light_blue_bed",
+            "chest",
+            "ender_chest",
+            "trapped_chest",
+            "white_banner",
+            "player_head",
+            "decorated_pot",
+            // Shapes cut from another block.
+            "jungle_stairs",
+            "jungle_slab",
+            "oak_fence_gate",
+            "stone_stairs",
+            "cobblestone_wall",
+            "brick_stairs",
+            "stone_brick_stairs",
+            "purpur_stairs",
+            "quartz_stairs",
+        ] {
             match cache.get("minecraft", name).await {
                 Ok(bytes) => println!("{name}: OK, {} bytes", bytes.len()),
                 Err(e) => println!("{name}: FAILED -> {e:?}"),
