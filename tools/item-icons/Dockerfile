@@ -27,6 +27,20 @@ RUN apt-get update \
 # renderer that silently produces nothing.
 RUN php -r 'exit(extension_loaded("imagick") ? 0 : 1);'
 
+# Silence deprecation notices, and only those.
+#
+# Renderchest 2.10.1 predates PHP 8.3, and its triangle rasterizer does an
+# implicit float-to-int conversion per scanline. That is one notice per scanline
+# per triangle per item -- hundreds of thousands of lines for a full run, which
+# buries the progress output and costs real time, because every line is written
+# through the container's log pipe.
+#
+# Warnings, errors and fatals are deliberately left on: the version-mismatch
+# crash that this pipeline has to be able to report is a fatal, and must stay
+# visible.
+RUN printf 'error_reporting = E_ALL & ~E_DEPRECATED\n' \
+      > /usr/local/etc/php/conf.d/zz-quiet-deprecations.ini
+
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 # Pinned to 2.x for a hard compatibility reason, not out of caution.

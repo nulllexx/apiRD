@@ -13,10 +13,13 @@
 #   render-icons all       # render everything and install it into the cache
 #   render-icons watch     # re-render whenever the modpack changes
 #
-# `inspect` exists because Renderchest's output layout is not documented, and
-# guessing it would mean a run that appears to succeed while installing nothing
-# usable. Run it once, confirm the file names look like item ids, then run
-# `all`.
+# `inspect` renders one namespace and reports whether the Renderchest version
+# can actually read this Minecraft version's assets -- the one mismatch that
+# otherwise produces a clean exit and no icons. Run it after any change to
+# MC_VERSION or the pinned Renderchest version.
+#
+# A full run renders every item in the game and takes minutes at 100% CPU.
+# That is normal, not a hang.
 
 set -euo pipefail
 
@@ -150,7 +153,14 @@ render_namespace() {
   # Vanilla assets come first: Renderchest requires the base game's assets to be
   # present regardless of which namespace is being rendered, because modded
   # models routinely inherit from vanilla parents.
-  ( cd "$RENDERCHEST_HOME" && php "$RENDERCHEST" \
+  #
+  # Run at the lowest priority. Renderchest spawns a worker per core and pins
+  # all of them for several minutes, and this shares a host with a running
+  # Minecraft server -- which would show up as tick lag to anyone playing.
+  # `nice` costs nothing when the machine is otherwise idle (the renderer still
+  # gets every spare cycle) and yields immediately when it is not, which is
+  # exactly the trade a background batch job should make.
+  ( cd "$RENDERCHEST_HOME" && nice -n 19 php "$RENDERCHEST" \
       --assets "$VANILLA_ASSETS" \
       --assets "$MOD_ASSETS" \
       --namespace "$ns" \
@@ -376,7 +386,10 @@ case "${1:-}" in
     ;;
 
   *)
-    sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
+    # Print the header comment block and stop at the first line that is not a
+    # comment. A hardcoded line range went stale the moment a comment was added
+    # above, and started printing shell source as if it were help text.
+    awk 'NR > 1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "$0"
     exit 1
     ;;
 esac
