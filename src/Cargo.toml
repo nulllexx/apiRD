@@ -33,3 +33,7 @@ urlencoding = "2"
 oauth2 = "4.4"
 fastnbt = "2"
 flate2 = "1"
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }

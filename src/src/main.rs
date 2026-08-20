@@ -59,6 +59,7 @@ async fn main() -> std::io::Result<()> {
             config.item_texture_dir.clone(),
             config.minecraft_assets_version.clone(),
             config.item_texture_base_url.clone(),
+            config.mods_dir.clone(),
         ),
     };
 

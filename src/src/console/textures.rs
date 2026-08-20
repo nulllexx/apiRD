@@ -58,8 +58,10 @@ use std::time::Duration;
 use dashmap::DashMap;
 use tokio::sync::Mutex;
 
-/// Only vanilla assets exist upstream, so a modded id is a miss without a
-/// lookup. It also keeps a namespace from ever reaching the URL.
+use super::mod_assets::ModAssets;
+
+/// Only vanilla assets exist upstream. A modded namespace can still be answered
+/// from the server's own jars, but it must never reach the mirror's URL.
 const VANILLA: &str = "minecraft";
 
 /// Longest id segment accepted. Real ids are far shorter; this bounds the path
@@ -89,7 +91,8 @@ const MISS_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
 /// 1: item/ and block/ only.
 /// 2: added entity/ derivations and the irregular table.
 /// 3: added base-material derivation for stairs, slabs, fences and friends.
-const CANDIDATE_GENERATION: u32 = 3;
+/// 4: added the server's own mod jars as a source.
+const CANDIDATE_GENERATION: u32 = 4;
 
 #[derive(Debug)]
 pub enum TextureError {
@@ -137,6 +140,8 @@ pub struct TextureCache {
     /// only source. That is the air-gapped deployment, not an error.
     base_url: String,
     client: reqwest::Client,
+    /// The server's own mod jars, consulted before the mirror.
+    mods: Arc<ModAssets>,
     /// One in-flight fetch per id. Opening an inventory asks for forty textures
     /// at once, and several of those are usually the same item — without this,
     /// a cold cache would send the mirror a burst of duplicate requests.
@@ -144,11 +149,12 @@ pub struct TextureCache {
 }
 
 impl TextureCache {
-    pub fn new(dir: String, version: String, base_url: String) -> Arc<Self> {
+    pub fn new(dir: String, version: String, base_url: String, mods_dir: String) -> Arc<Self> {
         Arc::new(Self {
             dir: PathBuf::from(dir),
             version,
             base_url,
+            mods: ModAssets::new(mods_dir),
             client: reqwest::Client::builder()
                 .timeout(FETCH_TIMEOUT)
                 .user_agent("apiRD-admin-panel")
@@ -162,9 +168,6 @@ impl TextureCache {
     pub async fn get(&self, namespace: &str, name: &str) -> Result<Vec<u8>, TextureError> {
         if !is_valid_segment(namespace) || !is_valid_segment(name) {
             return Err(TextureError::BadId);
-        }
-        if namespace != VANILLA {
-            return Err(TextureError::Missing);
         }
 
         let hit = self.cache_path(name);
@@ -195,17 +198,34 @@ impl TextureCache {
             return Err(TextureError::Missing);
         }
 
-        let result = self.fetch_and_store(name, &hit, &miss).await;
+        let result = self.fetch_and_store(namespace, name, &hit, &miss).await;
         self.in_flight.remove(name);
         result
     }
 
     async fn fetch_and_store(
         &self,
+        namespace: &str,
         name: &str,
         hit: &Path,
         miss: &Path,
     ) -> Result<Vec<u8>, TextureError> {
+        // The server's own jars first: they are local, they are what the server
+        // actually runs, and for a modded namespace they are the only source
+        // that could ever answer.
+        if let Some(bytes) = self.mods.get(namespace, name, candidate_paths(name)).await {
+            write_cached(hit, &bytes).await?;
+            return Ok(bytes);
+        }
+
+        // Only vanilla ids exist on the mirror, so a modded one the jars could
+        // not answer stops here rather than spending five requests confirming
+        // that raw.githubusercontent.com has never heard of it.
+        if namespace != VANILLA {
+            write_cached(miss, miss_marker().as_bytes()).await?;
+            return Err(TextureError::Missing);
+        }
+
         if self.base_url.is_empty() {
             return Err(TextureError::Missing);
         }
@@ -478,6 +498,12 @@ pub fn split_id(id: &str) -> (String, String) {
 mod tests {
     use super::*;
 
+    /// A mods directory that does not exist, for the cases that are about the
+    /// mirror rather than about jars.
+    fn no_mods() -> String {
+        "definitely/not/a/mods/directory".to_string()
+    }
+
     #[test]
     fn accepts_real_item_names() {
         for name in ["diamond_sword", "stone", "oak_log", "music_disc_11", "tnt"] {
@@ -639,6 +665,8 @@ mod tests {
                 .into_owned(),
             "1.21.4".to_string(),
             "http://127.0.0.1:1".to_string(),
+            // No jars: these cases are about the mirror and the cache.
+            no_mods(),
         );
 
         assert!(matches!(
@@ -655,6 +683,8 @@ mod tests {
             "1.21.4".to_string(),
             // Unreachable, so a cache hit is the only way this can succeed.
             "http://127.0.0.1:1".to_string(),
+            // No jars: these cases are about the mirror and the cache.
+            no_mods(),
         );
 
         let png = [PNG_MAGIC, b"-body"].concat();
@@ -674,6 +704,7 @@ mod tests {
             dir.to_string_lossy().into_owned(),
             "1.21.4".to_string(),
             "http://127.0.0.1:1".to_string(),
+            no_mods(),
         )
     }
 
@@ -777,6 +808,7 @@ mod tests {
             dir.to_string_lossy().into_owned(),
             "1.21.4".to_string(),
             String::new(),
+            no_mods(),
         );
 
         // Missing rather than Unreachable: not configuring a mirror is a
@@ -796,6 +828,8 @@ mod tests {
             dir.to_string_lossy().into_owned(),
             "1.21.4".to_string(),
             "http://127.0.0.1:1".to_string(),
+            // No jars: these cases are about the mirror and the cache.
+            no_mods(),
         );
 
         assert!(matches!(
@@ -830,6 +864,8 @@ mod network {
             dir.to_string_lossy().into_owned(),
             "1.21.4".to_string(),
             "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets".to_string(),
+            // Vanilla ids only here; the jar path has its own tests.
+            "definitely/not/a/mods/directory".to_string(),
         );
 
         for name in [

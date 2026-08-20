@@ -63,6 +63,9 @@ pub struct AppConfig {
     /// Mirror the textures are fetched from. Empty disables fetching, leaving a
     /// pre-populated cache as the only source — the air-gapped deployment.
     pub item_texture_base_url: String,
+    /// The server's mod jars, read for the textures of modded items. Absent on
+    /// a vanilla or plugin-only server, which is not an error.
+    pub mods_dir: String,
     pub upload_logs_path: String,
     pub content_path: String,
     pub seasons_path: String,
@@ -159,6 +162,7 @@ impl AppConfig {
                 "/home/useradmin/api/mainapi/data/item-textures",
             ),
             minecraft_assets_version: optional("MINECRAFT_ASSETS_VERSION", "1.21.4"),
+            mods_dir: optional("MODS_DIR", "/mcserver/mods"),
             // Read through `get` rather than `optional` so that setting the
             // variable to an empty string is honoured as "never fetch" instead
             // of silently falling back to the default mirror. Unset still means
@@ -333,6 +337,8 @@ mod tests {
         );
         assert_eq!(cfg.minecraft_assets_version, "1.21.4");
         assert!(cfg.item_texture_base_url.starts_with("https://"));
+        // Next to server.properties in the same bind mount.
+        assert_eq!(cfg.mods_dir, "/mcserver/mods");
     }
 
     #[test]

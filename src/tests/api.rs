@@ -84,6 +84,7 @@ fn lazy_state() -> AppState {
             String::from("target/test-texture-cache"),
             String::from("1.21.4"),
             String::new(),
+            String::from("target/test-mods"),
         ),
     }
 }
@@ -420,6 +421,7 @@ fn test_state(pool: MySqlPool) -> AppState {
             String::from("target/test-texture-cache"),
             String::from("1.21.4"),
             String::new(),
+            String::from("target/test-mods"),
         ),
     }
 }
