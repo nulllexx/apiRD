@@ -166,6 +166,49 @@ async fn power_status(
     })))
 }
 
+/// Who is online, reconciling against the server itself only when the live set
+/// has gone stale.
+///
+/// Presence is maintained from the log stream, so the usual cost of this is
+/// nothing at all. The occasional `list` exists because the log reports
+/// *changes* — it can say Steve left, but never that Steve was there to begin
+/// with.
+async fn online_now(state: &AppState) -> (Vec<String>, Option<String>) {
+    if !state.presence.needs_sync() {
+        return (state.presence.names(), None);
+    }
+
+    let online = state.snapshot.online(&state.rcon).await;
+    match &online.rcon_error {
+        None => state.presence.replace(&online.names),
+        // Keeps the last known set rather than blanking it; an unreachable
+        // server is not an empty one.
+        Some(_) => state.presence.record_failure(),
+    }
+
+    (state.presence.names(), online.rcon_error.clone())
+}
+
+/// GET /api/admin/console/online — who is on the server right now.
+///
+/// Split out from `/stats` precisely because it is cheap: the UI polls this
+/// often enough to feel live, which would be unaffordable for anything that
+/// costs an RCON command.
+async fn online_players(
+    state: web::Data<AppState>,
+    _admin: AdminUser,
+) -> Result<HttpResponse, AppError> {
+    let (names, rcon_error) = online_now(&state).await;
+    let max_players = state.max_players.read().map(|m| *m).unwrap_or(0);
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "count": names.len(),
+        "max": max_players,
+        "names": names,
+        "rconError": rcon_error,
+    })))
+}
+
 /// GET /api/admin/console/stats — health of the server at a glance.
 ///
 /// Three sources merged into one payload so the panel is a single poll: the
@@ -179,16 +222,6 @@ async fn server_stats(
     let container = stats::read_container_stats(&state.config.control_dir, STATS_MAX_AGE).await;
     let power = control::status(&state.config.control_dir).await;
 
-    // Copied out before building the response: these are std RwLocks, so a
-    // guard must not be alive across an await.
-    //
-    // The online count comes from plrCount.json, which a plugin already
-    // maintains and a file watcher already reads. Asking the server would mean
-    // a second RCON command per poll, and every RCON command is logged into the
-    // log this page is streaming.
-    let max_players = state.max_players.read().map(|m| *m).unwrap_or(0);
-    let online = state.player_count.read().map(|c| *c).unwrap_or(0);
-
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "state": power.as_str(),
         // Null rather than zeroes wherever the number is genuinely unknown, so
@@ -196,7 +229,9 @@ async fn server_stats(
         "tps": health.tps,
         "heap": health.heap,
         "container": container,
-        "players": { "online": online, "max": max_players },
+        // No player figures here on purpose: /online owns them, and two
+        // endpoints reporting the same count on different schedules would
+        // visibly disagree with each other.
         "rconError": health.rcon_error,
     })))
 }
@@ -206,17 +241,16 @@ async fn list_players(
     state: web::Data<AppState>,
     _admin: AdminUser,
 ) -> Result<HttpResponse, AppError> {
-    // The one place a `list` is worth spending: the caller has explicitly asked
-    // who is on the server, rather than a timer having asked on their behalf.
-    let online = state.snapshot.online(&state.rcon).await;
-    let roster = players::load_roster(&state.config.server_properties_path, &online.names).await;
+    let (online, rcon_error) = online_now(&state).await;
+    let roster = players::load_roster(&state.config.server_properties_path, &online).await;
 
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "players": roster,
         // The roster itself comes off disk and so is always available; only the
-        // online flags depend on RCON. Reporting the failure separately lets
-        // the UI show the list and note that live status is missing.
-        "rconError": online.rcon_error,
+        // online flags depend on the presence set. Reporting the failure
+        // separately lets the UI show the list and note that live status is
+        // missing.
+        "rconError": rcon_error,
     })))
 }
 
@@ -300,6 +334,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .route("/command", web::post().to(run_command))
             .route("/download", web::get().to(download_log))
             .route("/stats", web::get().to(server_stats))
+            .route("/online", web::get().to(online_players))
             .route("/players", web::get().to(list_players))
             .route("/players/{action}", web::post().to(player_action))
             // Registered before the `{action}` catch-all so "status" is not

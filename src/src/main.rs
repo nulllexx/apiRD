@@ -38,6 +38,7 @@ async fn main() -> std::io::Result<()> {
             config.rcon_password.clone(),
         ),
         snapshot: console::stats::SnapshotCache::new(console::stats::SNAPSHOT_TTL),
+        presence: console::presence::Presence::new(),
     };
 
     // Spawn auto-unban background task
@@ -82,6 +83,32 @@ async fn main() -> std::io::Result<()> {
             console::tail::tail_log(hub, path).await;
         });
     }
+
+    // Track who is online off the back of the log tail. The hub is already
+    // fanning these lines out to the browser, so following them here costs one
+    // more receiver and no I/O at all — the alternative is polling the game
+    // server, which writes a line to that same log for every command.
+    //
+    // The backlog is deliberately not replayed: it can span a restart, so the
+    // first HTTP request reconciles against the server instead of trusting it.
+    let presence = Arc::clone(&app_state.presence);
+    let presence_hub = Arc::clone(&app_state.console.server_log);
+    tokio::spawn(async move {
+        let (_backlog, mut rx) = presence_hub.subscribe();
+        loop {
+            match rx.recv().await {
+                Ok(line) => {
+                    presence.apply(&line);
+                }
+                // A burst that outran this task cannot be reconstructed, so let
+                // the periodic resync clean up rather than guessing.
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    log::warn!("presence tracker fell {n} lines behind");
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
 
     log::info!("Server is running on port {}", port);
 

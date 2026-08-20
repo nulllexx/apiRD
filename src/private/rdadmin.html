@@ -1717,15 +1717,23 @@
             if (shouldPollMetrics()) refreshStats();
         }, STATS_INTERVAL);
 
-        // The roster costs an RCON command, so it loads when the tab opens and
-        // whenever the operator asks — never on a timer.
+        // The roster reads four files and walks a directory, so it loads when
+        // the tab opens and whenever the operator asks — never on a timer. Its
+        // online badges are kept current by the cheap poll below instead.
         loadPlayers();
+
+        refreshOnline();
+        clearInterval(onlineTimer);
+        onlineTimer = setInterval(() => {
+            if (document.visibilityState === 'visible') refreshOnline();
+        }, ONLINE_INTERVAL);
     }
 
     function stopStatusPolling() {
         clearInterval(statusTimer);
         clearInterval(statsTimer);
-        statusTimer = statsTimer = null;
+        clearInterval(onlineTimer);
+        statusTimer = statsTimer = onlineTimer = null;
     }
 
     document.querySelectorAll('.powerBtn').forEach(btn => {
@@ -1802,6 +1810,8 @@
 
     // Catch up immediately on returning, rather than waiting out the interval.
     document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'visible') return;
+        if (document.getElementById('console-tab').classList.contains('active')) refreshOnline();
         if (shouldPollMetrics()) refreshStats();
     });
 
@@ -1835,7 +1845,6 @@
         setStat(statTps, '—', 'unknown');
         setStat(statCpu, '—', 'unknown');
         setStat(statMem, '—', 'unknown');
-        setStat(statPlayers, '—', 'unknown');
         statCpuSub.textContent = '';
         statMemSub.textContent = note || '';
     }
@@ -1898,8 +1907,8 @@
                 : 'server is not running';
         }
 
-        setStat(statPlayers, data.players.online + ' / ' + data.players.max, '');
-
+        // The players card is not touched here — /online owns it, on its own
+        // faster schedule.
         statsNote.textContent = data.rconError || '';
         statsNote.style.display = data.rconError ? '' : 'none';
     }
@@ -1923,6 +1932,56 @@
     const playersCount = document.getElementById('playersCount');
 
     let roster = [];
+    let onlineNames = [];
+    let onlineTimer = null;
+    let rosterLoadedAt = 0;
+
+    // Who is online is polled far more often than anything else here because it
+    // is free: the server tracks it from the log the console already tails, and
+    // only falls back to an RCON `list` when that has gone stale.
+    const ONLINE_INTERVAL = 5000;
+    // Floor on how often an unrecognised name may trigger a roster reload, so
+    // a name the roster can never match cannot become a refetch loop.
+    const ROSTER_RELOAD_FLOOR = 15000;
+
+    async function refreshOnline() {
+        try {
+            const response = await fetch('/api/admin/console/online', { credentials: 'include' });
+            if (!response.ok) throw new Error('online ' + response.status);
+            const data = await response.json();
+
+            setStat(statPlayers, data.count + ' / ' + data.max, '');
+
+            const names = data.names || [];
+            // Re-rendering only on a real change keeps a click from landing on
+            // a button that a background refresh replaced underneath it.
+            const changed = names.join(' ') !== onlineNames.join(' ');
+            onlineNames = names;
+            if (changed) applyOnline();
+        } catch (err) {
+            setStat(statPlayers, '—', 'unknown');
+        }
+    }
+
+    // Fold the live set into the roster already on screen rather than refetching
+    // it: who *exists* changes rarely and costs a directory walk, while who is
+    // *on* changes constantly and costs nothing.
+    function applyOnline() {
+        const online = new Set(onlineNames.map(name => name.toLowerCase()));
+        const known = new Set(roster.filter(p => p.name).map(p => p.name.toLowerCase()));
+
+        roster.forEach(player => {
+            player.online = !!player.name && online.has(player.name.toLowerCase());
+        });
+        renderPlayers();
+
+        // Somebody is on that the roster has never heard of — a first-time
+        // join. Pull the roster again so they get a row of their own.
+        const stranger = onlineNames.some(name => !known.has(name.toLowerCase()));
+        if (stranger && Date.now() - rosterLoadedAt > ROSTER_RELOAD_FLOOR) {
+            loadPlayers();
+        }
+    }
 
     // A player whose usercache entry has expired is known only by UUID.
     function playerLabel(player) {
@@ -2005,7 +2064,7 @@
         // The server drops its cached view on every action, so this reflects
         // the change rather than the pre-action state.
         loadPlayers();
-        refreshStats();
+        refreshOnline();
     }
 
     function renderPlayers() {
@@ -2082,6 +2141,7 @@
             if (!response.ok) throw new Error('players ' + response.status);
             const data = await response.json();
             roster = data.players || [];
+            rosterLoadedAt = Date.now();
             renderPlayers();
         } catch (err) {
             console.error(err);
@@ -2094,6 +2154,7 @@
     onlineOnly.addEventListener('change', renderPlayers);
     document.getElementById('refreshPlayers').addEventListener('click', () => {
         loadPlayers();
+        refreshOnline();
         refreshStats();
     });
 

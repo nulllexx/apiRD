@@ -19,6 +19,7 @@ pub mod rcon;
 pub mod routes;
 
 use config::AppConfig;
+use console::presence::Presence;
 use console::stats::SnapshotCache;
 use console::Consoles;
 use rcon::RconClient;
@@ -37,6 +38,9 @@ pub struct AppState {
     /// dashboard left open does not turn into a stream of RCON chatter in the
     /// log it is displaying.
     pub snapshot: Arc<SnapshotCache>,
+    /// Who is online, maintained from the log stream rather than by polling
+    /// the game server.
+    pub presence: Arc<Presence>,
 }
 
 /// Registers every HTTP route the server exposes (the `/api` scope plus the

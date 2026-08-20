@@ -12,6 +12,7 @@
 
 pub mod control;
 pub mod players;
+pub mod presence;
 pub mod stats;
 pub mod tail;
 

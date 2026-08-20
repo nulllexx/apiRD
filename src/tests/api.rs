@@ -77,6 +77,7 @@ fn lazy_state() -> AppState {
         snapshot: api_rd::console::stats::SnapshotCache::new(
             api_rd::console::stats::SNAPSHOT_TTL,
         ),
+        presence: api_rd::console::presence::Presence::new(),
     }
 }
 
@@ -98,6 +99,7 @@ async fn console_routes_reject_anonymous_callers() {
         "/api/admin/console/download",
         "/api/admin/console/power/status",
         "/api/admin/console/stats",
+        "/api/admin/console/online",
         "/api/admin/console/players",
     ] {
         let req = test::TestRequest::get().uri(uri).to_request();
@@ -395,6 +397,7 @@ fn test_state(pool: MySqlPool) -> AppState {
         snapshot: api_rd::console::stats::SnapshotCache::new(
             api_rd::console::stats::SNAPSHOT_TTL,
         ),
+        presence: api_rd::console::presence::Presence::new(),
     }
 }
 
