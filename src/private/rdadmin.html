@@ -2782,7 +2782,7 @@
             scrollToPlayers = true;
         }
 
-        document.querySelectorAll('.tab-container > .tab').forEach(tab => {
+        document.querySelectorAll('#content > .tab-container > .tab').forEach(tab => {
             if (tab.dataset.tab === activeTabName) {
                 tab.classList.add('active');
             } else {
@@ -2824,7 +2824,7 @@
         }
     }
 
-    document.querySelectorAll('.tab-container > .tab').forEach(tab => {
+    document.querySelectorAll('#content > .tab-container > .tab').forEach(tab => {
         tab.addEventListener('click', () => {
             switchTab(tab.dataset.tab);
         });
