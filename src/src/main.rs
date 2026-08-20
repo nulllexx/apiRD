@@ -16,6 +16,22 @@ async fn main() -> std::io::Result<()> {
     let config = AppConfig::from_env();
     let port = config.port;
 
+    // `Files` refuses to mount a directory that does not exist, and it does so
+    // once per worker thread — the eight identical "Specified path is not a
+    // directory" errors at boot. Creating it here is what the Dockerfile's
+    // `mkdir` was for; that never worked, because the path it made is under
+    // /home/useradmin/api, which docker-compose bind-mounts over from the host.
+    //
+    // Not fatal if it fails: a read-only or unwritable mount leaves /content
+    // answering 404s exactly as it does today, which beats refusing to boot the
+    // whole API over a static file service.
+    if let Err(e) = std::fs::create_dir_all(&config.content_path) {
+        log::error!(
+            "Could not create the content directory at {}: {e}",
+            config.content_path
+        );
+    }
+
     // Create database pool
     let pool = db::create_pool(&config)
         .await

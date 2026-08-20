@@ -382,12 +382,19 @@ async fn player_inventory(
     })))
 }
 
-/// GET /api/admin/console/item-texture/{namespace}/{name}.png — item artwork.
+/// GET /api/admin/console/item-texture/{namespace}/{name} — item artwork.
 ///
 /// Cached on disk after the first request, so this is a file read in the steady
 /// state. A miss is a 404 rather than a placeholder image: the panel already
 /// draws its own fallback tile, and a real 404 lets the browser's cache
 /// remember the gap.
+///
+/// Note the deliberately absent `.png`. The content type is what identifies the
+/// payload, and an extension in the path only invites a reverse proxy to treat
+/// the URL as a static asset — a `location ~* \.png$` rule in nginx takes
+/// precedence over a `location /api/` prefix, which would quietly answer every
+/// one of these from the web root instead of forwarding it here. A trailing
+/// extension is still accepted so an older cached page keeps working.
 async fn item_texture(
     state: web::Data<AppState>,
     _admin: AdminUser,

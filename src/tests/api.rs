@@ -112,7 +112,10 @@ async fn console_routes_reject_anonymous_callers() {
         // admin gate exactly like everything else here.
         "/api/admin/console/players/069a79f4-44e9-4726-a5be-fca90e38aaf5/inventory",
         // Fetches from a mirror and writes to disk on a miss, so an
-        // anonymous caller must not be able to drive it either.
+        // anonymous caller must not be able to drive it either. Both the
+        // extensionless form the page requests and the legacy .png form
+        // an already-cached page may still ask for.
+        "/api/admin/console/item-texture/minecraft/diamond_sword",
         "/api/admin/console/item-texture/minecraft/diamond_sword.png",
     ] {
         let req = test::TestRequest::get().uri(uri).to_request();

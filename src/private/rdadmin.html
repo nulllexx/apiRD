@@ -2893,7 +2893,10 @@
         icon.className = 'inv-icon';
         icon.alt = '';
         icon.loading = 'lazy';
-        icon.src = `/api/admin/console/item-texture/${namespace}/${name}.png`;
+        // No .png on the end: a reverse-proxy rule that treats *.png as a
+        // static asset would answer this from the web root and never
+        // forward it to the API. The content type identifies the payload.
+        icon.src = `/api/admin/console/item-texture/${namespace}/${name}`;
         icon.addEventListener('load', () => {
             if (icon.parentNode) icon.parentNode.classList.add('has-icon');
         });

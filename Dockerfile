@@ -32,7 +32,11 @@ COPY --from=builder /app/target/release/api-rd /usr/local/bin/
 # shadows anything the image puts there -- the reason a rebuilt image kept
 # serving a stale rdadmin.html.
 COPY src/private /app/private
-RUN mkdir -p /home/useradmin/api/mainapi/src/content
+# No mkdir for the content directory here. It would sit under
+# /home/useradmin/api, which compose bind-mounts from the host -- the same
+# shadowing described above -- so an image-layer directory there is invisible
+# at runtime. (It also pointed at src/content while CONTENT_PATH, matching
+# GAMES_DIR, says src/src/content.) The server creates it at startup instead.
 WORKDIR /home/useradmin/api/mainapi
 EXPOSE 5000
 CMD ["api-rd"]

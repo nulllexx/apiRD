@@ -198,7 +198,12 @@ impl TextureCache {
                 // fail, and five timeouts in a row is forty seconds of an
                 // operator waiting for a picture of a sword.
                 Fetch::Unreachable(why) => {
-                    log::warn!("textures: could not reach {url}: {why}");
+                    // Logged at error rather than warn on purpose: the service
+                    // runs with no RUST_LOG set, so `env_logger` shows error
+                    // and nothing else. A diagnostic nobody can see is not a
+                    // diagnostic, and this is the one condition here an
+                    // operator actually has to know about.
+                    log::error!("textures: could not reach {url}: {why}");
                     return Err(TextureError::Unreachable(why));
                 }
             }
