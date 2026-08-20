@@ -1716,9 +1716,13 @@
     const addComponentButton = document.getElementById('add-component-update');
 
     document.querySelectorAll('#status-tab [data-inc-tab]').forEach(tab => {
-        tab.addEventListener('click', () => {
+        tab.addEventListener('click', (e) => {
+            // Keep the click inside the incident strip: it must never reach a
+            // top-level tab handler and switch the page out from under the user.
+            e.stopPropagation();
+
             document.querySelectorAll('#status-tab [data-inc-tab]').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.inc-tab-content').forEach(c => { c.classList.remove('active'); c.style.display = 'none'; });
+            document.querySelectorAll('#status-tab .inc-tab-content').forEach(c => { c.classList.remove('active'); c.style.display = 'none'; });
 
             tab.classList.add('active');
             const content = document.getElementById(`${tab.dataset.incTab}-incidents`);
@@ -2766,7 +2770,12 @@
     /* --------------------------------------------------------- Tab Routing Implementation */
 
     function switchTab(tabName, updateUrl = true) {
-        let activeTabName = (tabName || 'users').toLowerCase();
+        // Nested tab strips (e.g. the incident history tabs) reuse the .tab class
+        // but carry no data-tab, so a stray call must be a no-op rather than
+        // silently falling back to another page.
+        if (!tabName) return;
+
+        let activeTabName = String(tabName).toLowerCase();
         let targetContentId = activeTabName + '-tab';
         let scrollToPlayers = false;
 
@@ -2782,7 +2791,7 @@
             scrollToPlayers = true;
         }
 
-        document.querySelectorAll('#content > .tab-container > .tab').forEach(tab => {
+        document.querySelectorAll('#content > .tab-container > .tab[data-tab]').forEach(tab => {
             if (tab.dataset.tab === activeTabName) {
                 tab.classList.add('active');
             } else {
@@ -2824,7 +2833,7 @@
         }
     }
 
-    document.querySelectorAll('#content > .tab-container > .tab').forEach(tab => {
+    document.querySelectorAll('#content > .tab-container > .tab[data-tab]').forEach(tab => {
         tab.addEventListener('click', () => {
             switchTab(tab.dataset.tab);
         });
