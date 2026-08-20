@@ -59,6 +59,7 @@ use dashmap::DashMap;
 use tokio::sync::Mutex;
 
 use super::mod_assets::ModAssets;
+use super::models;
 
 /// Only vanilla assets exist upstream. A modded namespace can still be answered
 /// from the server's own jars, but it must never reach the mirror's URL.
@@ -92,7 +93,8 @@ const MISS_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
 /// 2: added entity/ derivations and the irregular table.
 /// 3: added base-material derivation for stairs, slabs, fences and friends.
 /// 4: added the server's own mod jars as a source.
-const CANDIDATE_GENERATION: u32 = 4;
+/// 5: resolve through the item's model file before falling back to guesses.
+const CANDIDATE_GENERATION: u32 = 5;
 
 #[derive(Debug)]
 pub enum TextureError {
@@ -170,8 +172,8 @@ impl TextureCache {
             return Err(TextureError::BadId);
         }
 
-        let hit = self.cache_path(name);
-        let miss = self.miss_path(name);
+        let hit = self.cache_path(namespace, name);
+        let miss = self.miss_path(namespace, name);
 
         if let Some(bytes) = read_cached(&hit).await {
             return Ok(bytes);
@@ -203,6 +205,55 @@ impl TextureCache {
         result
     }
 
+    /// Read one asset from the jars, falling back to the mirror for vanilla.
+    async fn read_asset(&self, namespace: &str, path: &str) -> Option<Vec<u8>> {
+        if let Some(bytes) = self.mods.read_asset(namespace, path).await {
+            return Some(bytes);
+        }
+        if namespace != VANILLA || self.base_url.is_empty() {
+            return None;
+        }
+
+        let url = format!(
+            "{}/{}/assets/{namespace}/{path}",
+            self.base_url.trim_end_matches('/'),
+            self.version
+        );
+        match self.download(&url).await {
+            Fetch::Found(bytes) => Some(bytes),
+            _ => None,
+        }
+    }
+
+    /// Ask the item's model file which texture it is actually drawn with.
+    ///
+    /// This is the authoritative answer and everything else here is a guess, so
+    /// it goes first. Walking up the `parent` chain and merging `textures` is
+    /// exactly what the game does — it is how `create:shaft` resolves to a
+    /// texture called `axis`, which no rule derived from the word "shaft" could
+    /// ever have found.
+    async fn resolve_via_model(&self, namespace: &str, name: &str) -> Option<(String, String)> {
+        let mut location = format!("{namespace}:item/{name}");
+        let mut merged = std::collections::HashMap::new();
+
+        for _ in 0..models::MAX_PARENT_DEPTH {
+            let (model_ns, model_path) = models::model_asset_path(&location);
+            let raw = self.read_asset(&model_ns, &model_path).await?;
+            let json = String::from_utf8(raw).ok()?;
+            let model = models::parse_model(&json)?;
+
+            models::merge_textures(&mut merged, model.textures);
+
+            match model.parent {
+                Some(parent) => location = parent,
+                None => break,
+            }
+        }
+
+        let picked = models::pick_texture(&merged)?;
+        Some(models::texture_candidate(&picked))
+    }
+
     async fn fetch_and_store(
         &self,
         namespace: &str,
@@ -210,7 +261,35 @@ impl TextureCache {
         hit: &Path,
         miss: &Path,
     ) -> Result<Vec<u8>, TextureError> {
-        // The server's own jars first: they are local, they are what the server
+        // What the model file says, before anything this module guesses. The
+        // texture it names can live in another namespace — a mod block drawn
+        // with vanilla planks — so the answer carries its own.
+        if let Some((texture_ns, candidate)) = self.resolve_via_model(namespace, name).await {
+            if let Some(bytes) = self
+                .mods
+                .get(&texture_ns, name, vec![candidate.clone()])
+                .await
+            {
+                write_cached(hit, &bytes).await?;
+                return Ok(bytes);
+            }
+
+            if texture_ns == VANILLA && !self.base_url.is_empty() {
+                let url = format!(
+                    "{}/{}/assets/minecraft/textures/{candidate}",
+                    self.base_url.trim_end_matches('/'),
+                    self.version
+                );
+                if let Fetch::Found(bytes) = self.download(&url).await {
+                    if bytes.starts_with(PNG_MAGIC) {
+                        write_cached(hit, &bytes).await?;
+                        return Ok(bytes);
+                    }
+                }
+            }
+        }
+
+        // The server's own jars next: they are local, they are what the server
         // actually runs, and for a modded namespace they are the only source
         // that could ever answer.
         if let Some(bytes) = self.mods.get(namespace, name, candidate_paths(name)).await {
@@ -239,6 +318,13 @@ impl TextureCache {
             );
 
             match self.download(&url).await {
+                // A success response that is not a PNG means this URL is wrong
+                // rather than unavailable — an error page, say — so move on to
+                // the next candidate instead of giving up on the mirror.
+                Fetch::Found(bytes) if !bytes.starts_with(PNG_MAGIC) => {
+                    log::warn!("textures: {url} answered 200 with something that is not a PNG");
+                    continue;
+                }
                 Fetch::Found(bytes) => {
                     write_cached(hit, &bytes).await?;
                     return Ok(bytes);
@@ -292,23 +378,34 @@ impl TextureCache {
             Err(e) => return Fetch::Unreachable(transport_reason(&e)),
         };
 
-        if bytes.len() > MAX_TEXTURE_BYTES || !bytes.starts_with(PNG_MAGIC) {
-            // A success response that is not a PNG means this URL is wrong
-            // rather than unavailable — an error page, say — so move on to the
-            // next candidate instead of giving up on the mirror.
-            log::warn!("textures: {url} answered 200 with something that is not a PNG");
+        if bytes.len() > MAX_TEXTURE_BYTES {
+            log::warn!("textures: {url} answered 200 with an implausibly large body");
             return Fetch::NotFound;
         }
 
+        // Content is checked by the caller rather than here, because this now
+        // fetches model JSON as well as textures.
         Fetch::Found(bytes.to_vec())
     }
 
-    fn cache_path(&self, name: &str) -> PathBuf {
-        self.dir.join(&self.version).join(format!("{name}.png"))
+    /// Cache paths are namespaced.
+    ///
+    /// Without the namespace, `create:wrench` and `mekanism:wrench` would share
+    /// one file and whichever was asked for first would answer for both — a
+    /// confidently wrong picture, which is the failure mode worth the most care
+    /// to avoid here.
+    fn cache_path(&self, namespace: &str, name: &str) -> PathBuf {
+        self.dir
+            .join(&self.version)
+            .join(namespace)
+            .join(format!("{name}.png"))
     }
 
-    fn miss_path(&self, name: &str) -> PathBuf {
-        self.dir.join(&self.version).join(format!("{name}.miss"))
+    fn miss_path(&self, namespace: &str, name: &str) -> PathBuf {
+        self.dir
+            .join(&self.version)
+            .join(namespace)
+            .join(format!("{name}.miss"))
     }
 }
 
@@ -688,7 +785,7 @@ mod tests {
         );
 
         let png = [PNG_MAGIC, b"-body"].concat();
-        let path = dir.join("1.21.4").join("diamond_sword.png");
+        let path = dir.join("1.21.4").join("minecraft").join("diamond_sword.png");
         tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
         tokio::fs::write(&path, &png).await.unwrap();
 
@@ -709,7 +806,7 @@ mod tests {
     }
 
     async fn write_marker(dir: &Path, name: &str, contents: &[u8]) {
-        let marker = dir.join("1.21.4").join(format!("{name}.miss"));
+        let marker = dir.join("1.21.4").join("minecraft").join(format!("{name}.miss"));
         tokio::fs::create_dir_all(marker.parent().unwrap()).await.unwrap();
         tokio::fs::write(&marker, contents).await.unwrap();
     }
@@ -747,7 +844,7 @@ mod tests {
             "a dead mirror must report itself, not claim the texture is absent"
         );
 
-        let marker = dir.join("1.21.4").join("diamond_sword.miss");
+        let marker = dir.join("1.21.4").join("minecraft").join("diamond_sword.miss");
         assert!(
             tokio::fs::metadata(&marker).await.is_err(),
             "an unreachable mirror must not poison the cache"
@@ -862,7 +959,7 @@ mod network {
         let dir = std::env::temp_dir().join(format!("apird-net-{}", uuid::Uuid::new_v4()));
         let cache = TextureCache::new(
             dir.to_string_lossy().into_owned(),
-            "1.21.4".to_string(),
+            "1.21.1".to_string(),
             "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets".to_string(),
             // Vanilla ids only here; the jar path has its own tests.
             "definitely/not/a/mods/directory".to_string(),

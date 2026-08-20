@@ -109,6 +109,30 @@ impl ModAssets {
         })
     }
 
+    /// Read one asset verbatim from whichever jar provides the namespace.
+    ///
+    /// `path` is relative to `assets/<namespace>/`, so `models/item/shaft.json`.
+    /// Unlike [`ModAssets::get`] this is exact — no candidates, no scanning —
+    /// because a model file's location is named, not guessed at.
+    pub async fn read_asset(&self, namespace: &str, path: &str) -> Option<Vec<u8>> {
+        let jars = self.index().await.get(namespace)?.clone();
+        let full = format!("assets/{namespace}/{path}");
+
+        tokio::task::spawn_blocking(move || {
+            for jar in &jars {
+                if let Some(bytes) = read_entry(jar, &full) {
+                    return Some(bytes);
+                }
+            }
+            None
+        })
+        .await
+        .unwrap_or_else(|e| {
+            log::error!("mod assets: asset read panicked: {e}");
+            None
+        })
+    }
+
     /// How many namespaces were found, for the startup log line.
     pub async fn namespace_count(&self) -> usize {
         self.index().await.len()
@@ -123,7 +147,11 @@ fn namespace_of(entry: &str) -> Option<&str> {
     let rest = entry.strip_prefix("assets/")?;
     let (namespace, tail) = rest.split_once('/')?;
 
-    if !tail.starts_with("textures/") || !entry.ends_with(".png") {
+    // Models count as well as textures: resolving an item now means reading
+    // `models/item/<name>.json` out of whichever jar provides the namespace.
+    let interesting = (tail.starts_with("textures/") && entry.ends_with(".png"))
+        || (tail.starts_with("models/") && entry.ends_with(".json"));
+    if !interesting {
         return None;
     }
     // A namespace is a path segment that becomes part of a lookup key, so it
@@ -239,6 +267,21 @@ fn best_match<'a>(
     best.map(|(_, _, entry)| entry.to_string())
 }
 
+/// Read one named entry out of a jar.
+fn read_entry(jar: &Path, entry_name: &str) -> Option<Vec<u8>> {
+    let file = std::fs::File::open(jar).ok()?;
+    let mut archive = zip::ZipArchive::new(file).ok()?;
+    let mut entry = archive.by_name(entry_name).ok()?;
+
+    if entry.size() > MAX_TEXTURE_BYTES {
+        return None;
+    }
+
+    let mut bytes = Vec::with_capacity(entry.size() as usize);
+    entry.read_to_end(&mut bytes).ok()?;
+    (!bytes.is_empty()).then_some(bytes)
+}
+
 /// Pull one texture out of a single jar.
 fn read_from_jar(
     jar: &Path,
@@ -304,15 +347,15 @@ mod tests {
     /* ------------------------------------------------------------ indexing */
 
     #[test]
-    fn a_namespace_is_recorded_only_when_it_ships_textures() {
+    fn a_namespace_is_recorded_only_when_it_ships_assets_worth_reading() {
         let dir = temp_dir();
         write_jar(
             &dir,
             "create.jar",
             &[
                 "assets/create/textures/block/cogwheel.png",
-                // Data for another namespace, but no art - nothing to find
-                // there, so it must not become a place we look.
+                // Another namespace, but neither a texture nor a model -
+                // nothing to find there, so it must not become a place we look.
                 "assets/quark/recipes/thing.json",
                 "data/create/recipes/cogwheel.json",
                 "META-INF/MANIFEST.MF",
@@ -544,12 +587,19 @@ mod tests {
     }
 
     #[test]
-    fn namespace_parsing_accepts_only_texture_entries() {
+    fn namespace_parsing_accepts_textures_and_models() {
         assert_eq!(
             namespace_of("assets/create/textures/item/wrench.png"),
             Some("create")
         );
-        assert_eq!(namespace_of("assets/create/models/item/wrench.json"), None);
+        // Models count too: resolving an item means reading one of these.
+        assert_eq!(
+            namespace_of("assets/create/models/item/wrench.json"),
+            Some("create")
+        );
+        // Right directory, wrong kind of file, in both directions.
+        assert_eq!(namespace_of("assets/create/models/item/wrench.png"), None);
+        assert_eq!(namespace_of("assets/create/lang/en_us.json"), None);
         assert_eq!(namespace_of("data/create/recipes/x.json"), None);
         assert_eq!(
             namespace_of("assets/create/textures/item/wrench.mcmeta"),

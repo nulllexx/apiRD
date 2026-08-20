@@ -161,7 +161,7 @@ impl AppConfig {
                 "ITEM_TEXTURE_DIR",
                 "/home/useradmin/api/mainapi/data/item-textures",
             ),
-            minecraft_assets_version: optional("MINECRAFT_ASSETS_VERSION", "1.21.4"),
+            minecraft_assets_version: optional("MINECRAFT_ASSETS_VERSION", "1.21.1"),
             mods_dir: optional("MODS_DIR", "/mcserver/mods"),
             // Read through `get` rather than `optional` so that setting the
             // variable to an empty string is honoured as "never fetch" instead
@@ -335,7 +335,9 @@ mod tests {
             cfg.item_texture_dir,
             "/home/useradmin/api/mainapi/data/item-textures"
         );
-        assert_eq!(cfg.minecraft_assets_version, "1.21.4");
+        // Must match the server: asset layout and item ids both move between
+        // Minecraft versions, and 1.21.4 relocated item models entirely.
+        assert_eq!(cfg.minecraft_assets_version, "1.21.1");
         assert!(cfg.item_texture_base_url.starts_with("https://"));
         // Next to server.properties in the same bind mount.
         assert_eq!(cfg.mods_dir, "/mcserver/mods");
