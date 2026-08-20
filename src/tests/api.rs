@@ -74,6 +74,9 @@ fn lazy_state() -> AppState {
         // Points at a dead port; the console routes under test are
         // rejected at the auth layer long before RCON is reached.
         rcon: api_rd::rcon::RconClient::new("127.0.0.1:1".to_string(), String::new()),
+        snapshot: api_rd::console::stats::SnapshotCache::new(
+            api_rd::console::stats::SNAPSHOT_TTL,
+        ),
     }
 }
 
@@ -94,6 +97,8 @@ async fn console_routes_reject_anonymous_callers() {
         "/api/admin/console/stream?source=stdout",
         "/api/admin/console/download",
         "/api/admin/console/power/status",
+        "/api/admin/console/stats",
+        "/api/admin/console/players",
     ] {
         let req = test::TestRequest::get().uri(uri).to_request();
         let resp = test::call_service(&app, req).await;
@@ -126,6 +131,22 @@ async fn console_routes_reject_anonymous_callers() {
             resp.status(),
             StatusCode::UNAUTHORIZED,
             "POST /api/admin/console/power/{action} must require an admin session"
+        );
+    }
+
+    // Player actions run privileged commands against the game server. The
+    // unrecognised verb is in the list on purpose: rejecting it as *bad input*
+    // would confirm the route exists and answers to anonymous callers.
+    for action in ["op", "deop", "kick", "ban", "pardon", "clear", "bogus"] {
+        let req = test::TestRequest::post()
+            .uri(&format!("/api/admin/console/players/{action}"))
+            .set_json(serde_json::json!({ "player": "Steve" }))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "POST /api/admin/console/players/{action} must require an admin session"
         );
     }
 }
@@ -371,6 +392,9 @@ fn test_state(pool: MySqlPool) -> AppState {
         // Points at a dead port; the console routes under test are
         // rejected at the auth layer long before RCON is reached.
         rcon: api_rd::rcon::RconClient::new("127.0.0.1:1".to_string(), String::new()),
+        snapshot: api_rd::console::stats::SnapshotCache::new(
+            api_rd::console::stats::SNAPSHOT_TTL,
+        ),
     }
 }
 

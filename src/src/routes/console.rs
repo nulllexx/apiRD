@@ -8,10 +8,11 @@ use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::console::control::{self, PowerAction};
+use crate::console::players::{self, PlayerAction};
+use crate::console::stats::{self, STATS_MAX_AGE};
 use crate::console::{sse_frame, strip_ansi, LogSource};
 use crate::error::AppError;
 use crate::middleware::admin_auth::AdminUser;
-use crate::rcon::RconError;
 use crate::AppState;
 
 /// Idle gap after which a comment frame is emitted. Keeps intermediaries from
@@ -86,28 +87,21 @@ async fn run_command(
     // is admin-only, and operators need the full command set.
     log::info!("console command by {}: {}", admin.username, command);
 
-    let output = state.rcon.execute(&command).await.map_err(|e| {
-        log::error!("console: RCON command failed: {}", e);
-        match e {
-            // Distinguished from a transient failure so an operator can tell
-            // "nobody set RCON_PASSWORD" from "the server is down".
-            RconError::NotConfigured => {
-                AppError::Internal("RCON is not configured on this server".to_string())
-            }
-            RconError::Auth => {
-                AppError::Internal("RCON password is incorrect".to_string())
-            }
-            RconError::Connect(_) => {
-                AppError::Internal("The server is not reachable — is it running?".to_string())
-            }
-            _ => AppError::Internal("The server did not respond".to_string()),
-        }
-    })?;
+    let output = run_rcon(&state, &command).await?;
 
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "command": command,
         "output": strip_ansi(output.trim()),
     })))
+}
+
+/// Run a command that has already been validated, mapping any failure onto the
+/// message an operator should see.
+async fn run_rcon(state: &AppState, command: &str) -> Result<String, AppError> {
+    state.rcon.execute(command).await.map_err(|e| {
+        log::error!("console: RCON command failed: {e}");
+        AppError::Internal(e.user_message())
+    })
 }
 
 /// Reject commands that are empty, oversized, or carry control characters.
@@ -172,6 +166,99 @@ async fn power_status(
     })))
 }
 
+/// GET /api/admin/console/stats — health of the server at a glance.
+///
+/// Three sources merged into one payload so the panel is a single poll: the
+/// sidecar's container stats, the sidecar's power state, and a cached probe of
+/// the game server itself.
+async fn server_stats(
+    state: web::Data<AppState>,
+    _admin: AdminUser,
+) -> Result<HttpResponse, AppError> {
+    let snapshot = state.snapshot.get(&state.rcon).await;
+    let container = stats::read_container_stats(&state.config.control_dir, STATS_MAX_AGE).await;
+    let power = control::status(&state.config.control_dir).await;
+
+    // Copied out before building the response: this is a std RwLock, so the
+    // guard must not be alive across an await.
+    let max_players = state.max_players.read().map(|m| *m).unwrap_or(0);
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "state": power.as_str(),
+        // Null rather than zeroes wherever the number is genuinely unknown, so
+        // the UI can say "unavailable" instead of implying a reading of zero.
+        "tps": snapshot.tps,
+        "container": container,
+        "players": {
+            "online": snapshot.online.len(),
+            "max": max_players,
+            "names": snapshot.online,
+        },
+        "rconError": snapshot.rcon_error,
+    })))
+}
+
+/// GET /api/admin/console/players — everyone who has ever joined.
+async fn list_players(
+    state: web::Data<AppState>,
+    _admin: AdminUser,
+) -> Result<HttpResponse, AppError> {
+    let snapshot = state.snapshot.get(&state.rcon).await;
+    let roster = players::load_roster(&state.config.server_properties_path, &snapshot.online).await;
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "players": roster,
+        // The roster itself comes off disk and so is always available; only the
+        // online flags depend on RCON. Reporting the failure separately lets
+        // the UI show the list and note that live status is missing.
+        "rconError": snapshot.rcon_error,
+    })))
+}
+
+#[derive(Deserialize)]
+struct PlayerActionBody {
+    player: String,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+/// POST /api/admin/console/players/{action} — op, kick, ban and friends.
+async fn player_action(
+    state: web::Data<AppState>,
+    admin: AdminUser,
+    path: web::Path<String>,
+    body: web::Json<PlayerActionBody>,
+) -> Result<HttpResponse, AppError> {
+    let action = PlayerAction::parse(&path).ok_or_else(|| {
+        AppError::BadRequest(format!(
+            "Unknown player action; expected one of {}",
+            PlayerAction::NAMES.join(", ")
+        ))
+    })?;
+
+    let player = body.player.trim();
+    if !players::is_valid_name(player) {
+        return Err(AppError::BadRequest(
+            "That is not a valid Minecraft username".to_string(),
+        ));
+    }
+
+    let command = players::command_for(action, player, body.reason.as_deref());
+
+    // Audit trail: who did what to whom.
+    log::info!("console player action by {}: {}", admin.username, command);
+
+    let output = run_rcon(&state, &command).await?;
+
+    // The roster is about to be out of date by exactly the change just made.
+    state.snapshot.invalidate().await;
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "command": command,
+        "output": strip_ansi(output.trim()),
+    })))
+}
+
 /// GET /api/admin/console/download — the raw `latest.log`.
 async fn download_log(
     req: actix_web::HttpRequest,
@@ -207,6 +294,9 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .route("/stream", web::get().to(stream_log))
             .route("/command", web::post().to(run_command))
             .route("/download", web::get().to(download_log))
+            .route("/stats", web::get().to(server_stats))
+            .route("/players", web::get().to(list_players))
+            .route("/players/{action}", web::post().to(player_action))
             // Registered before the `{action}` catch-all so "status" is not
             // swallowed by it.
             .route("/power/status", web::get().to(power_status))

@@ -68,6 +68,25 @@ impl std::fmt::Display for RconError {
 
 impl std::error::Error for RconError {}
 
+impl RconError {
+    /// Message for an operator looking at the console.
+    ///
+    /// Kept next to the error rather than at each call site so the two places
+    /// that surface RCON failures — the command box and the stats probe —
+    /// cannot drift into describing the same failure differently.
+    pub fn user_message(&self) -> String {
+        match self {
+            // Distinguished from a transient failure so an operator can tell
+            // "nobody set RCON_PASSWORD" from "the server is down".
+            RconError::NotConfigured => "RCON is not configured on this server",
+            RconError::Auth => "RCON password is incorrect",
+            RconError::Connect(_) => "The server is not reachable — is it running?",
+            _ => "The server did not respond",
+        }
+        .to_string()
+    }
+}
+
 /// Encode one RCON packet.
 pub fn encode_packet(request_id: i32, packet_type: i32, body: &str) -> Vec<u8> {
     // request_id + type + body + two trailing NULs.

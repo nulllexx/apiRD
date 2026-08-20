@@ -37,6 +37,7 @@ async fn main() -> std::io::Result<()> {
             config.rcon_address.clone(),
             config.rcon_password.clone(),
         ),
+        snapshot: console::stats::SnapshotCache::new(console::stats::SNAPSHOT_TTL),
     };
 
     // Spawn auto-unban background task

@@ -78,13 +78,27 @@ services:
         TARGET=minecraft
         mkdir -p /control/queue
 
-        # Publish container state for the API, which cannot ask the daemon.
+        # Publish container state and resource usage for the API, which cannot
+        # ask the daemon itself. Both are written to a .tmp first and renamed,
+        # so the API never reads a half-written file.
         while :; do
           if docker inspect -f '{{.State.Running}}' "$$TARGET" > /control/status.tmp 2>/dev/null; then
             mv /control/status.tmp /control/status
           else
             echo unknown > /control/status.tmp && mv /control/status.tmp /control/status
           fi
+
+          # CPU and memory for the console's performance panel. On failure the
+          # file is removed rather than left behind, so the panel shows
+          # "unavailable" instead of whatever the last reading happened to be.
+          # (The API also ignores a stats file older than 30s, which covers
+          # this sidecar dying outright.)
+          if docker stats --no-stream --format '{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}' "$$TARGET" > /control/stats.tmp 2>/dev/null; then
+            mv /control/stats.tmp /control/stats
+          else
+            rm -f /control/stats.tmp /control/stats
+          fi
+
           sleep 5
         done &
 

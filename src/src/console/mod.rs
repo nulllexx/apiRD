@@ -11,6 +11,8 @@
 //! directly, while the parsing that actually goes wrong is not.
 
 pub mod control;
+pub mod players;
+pub mod stats;
 pub mod tail;
 
 use std::collections::VecDeque;
@@ -209,6 +211,28 @@ pub fn strip_ansi(input: &str) -> String {
     out
 }
 
+/// Remove Minecraft's legacy formatting codes: a section sign followed by one
+/// character.
+///
+/// The console *renders* these rather than stripping them, so this exists for
+/// the code that has to read command output as data — `list` and `tps` replies
+/// arrive coloured, and plugins reformat them freely, so the parsers work on
+/// plain text.
+pub fn strip_formatting(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars();
+
+    while let Some(c) = chars.next() {
+        if c == '\u{a7}' {
+            // Drop the code character too; a trailing lone sign drops itself.
+            chars.next();
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Render one console line as an SSE event.
 ///
 /// Every physical line needs its own `data: ` prefix — a bare newline inside
@@ -228,6 +252,25 @@ pub fn sse_frame(line: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strip_formatting_removes_the_code_and_its_argument() {
+        assert_eq!(
+            strip_formatting("\u{a7}6There are \u{a7}c0\u{a7}6 players"),
+            "There are 0 players"
+        );
+    }
+
+    #[test]
+    fn strip_formatting_drops_a_trailing_lone_sign() {
+        // Truncated output must not leave the sign behind as literal text.
+        assert_eq!(strip_formatting("done\u{a7}"), "done");
+    }
+
+    #[test]
+    fn strip_formatting_leaves_plain_text_alone() {
+        assert_eq!(strip_formatting("There are 2 players"), "There are 2 players");
+    }
 
     #[test]
     fn sse_frame_wraps_a_simple_line() {

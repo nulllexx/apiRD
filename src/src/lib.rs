@@ -19,6 +19,7 @@ pub mod rcon;
 pub mod routes;
 
 use config::AppConfig;
+use console::stats::SnapshotCache;
 use console::Consoles;
 use rcon::RconClient;
 
@@ -32,6 +33,10 @@ pub struct AppState {
     pub console: Arc<Consoles>,
     /// Long-lived RCON connection shared by every console command.
     pub rcon: Arc<RconClient>,
+    /// Short-lived cache of what the game server reports about itself, so a
+    /// dashboard left open does not turn into a stream of RCON chatter in the
+    /// log it is displaying.
+    pub snapshot: Arc<SnapshotCache>,
 }
 
 /// Registers every HTTP route the server exposes (the `/api` scope plus the

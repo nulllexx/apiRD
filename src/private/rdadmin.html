@@ -622,6 +622,107 @@
         .powerBtn[data-action="restart"] { border-color: rgba(240, 198, 116, 0.35) !important; color: var(--warn) !important; }
         .powerBtn[data-action="restart"]:hover { background: var(--warn-soft) !important; }
 
+        /* ----------------------------------------------------- Performance */
+
+        #statsStrip {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin: 12px 0;
+        }
+
+        .stat {
+            background: var(--bg-panel) !important;
+            border: 1px solid var(--line) !important;
+            border-radius: var(--radius);
+            padding: 12px 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+        }
+
+        .stat-label {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            font-weight: 600;
+            color: var(--text-muted) !important;
+        }
+
+        .stat-value {
+            font-size: 1.2rem;
+            font-weight: 600;
+            font-family: "JetBrains Mono", Consolas, "Courier New", monospace;
+        }
+
+        .stat-value.good { color: var(--ok) !important; }
+        .stat-value.warn { color: var(--warn) !important; }
+        .stat-value.bad { color: var(--danger) !important; }
+
+        /* Deliberately quieter than a real reading: an unavailable metric
+           should not look like a measurement of zero. */
+        .stat-value.unknown {
+            color: var(--text-faint) !important;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+
+        .stat-sub {
+            font-size: 0.75rem;
+            color: var(--text-muted) !important;
+        }
+
+        #statsNote {
+            margin: -4px 0 10px;
+            color: var(--danger) !important;
+            font-size: 0.85rem;
+        }
+
+        /* --------------------------------------------------------- Players */
+
+        #playersPanel { margin-top: 24px; }
+
+        #playersHeader {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 8px;
+        }
+
+        #playersHeader h2 { margin: 0; }
+        #playersHeader .spacer { flex: 1; }
+        #playerSearch { max-width: 220px; margin: 0; }
+        #playersNote { margin: 0 0 8px; }
+
+        .badge {
+            display: inline-block;
+            font-size: 0.7rem;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 999px;
+            margin: 0 4px 2px 0;
+            border: 1px solid transparent !important;
+        }
+
+        .badge-online { background: var(--ok-soft) !important; color: var(--ok) !important; }
+        .badge-offline { background: var(--bg-raised) !important; color: var(--text-faint) !important; border-color: var(--line) !important; }
+        .badge-op { background: var(--accent-soft) !important; color: var(--accent) !important; }
+        .badge-banned { background: var(--danger-soft) !important; color: var(--danger) !important; }
+        .badge-whitelisted { background: var(--warn-soft) !important; color: var(--warn) !important; }
+
+        /* A player whose usercache entry has expired is listed by UUID; the
+           dimmer treatment says "we only half-know this one". */
+        #playerTable .uuid-only {
+            color: var(--text-faint) !important;
+            font-family: "JetBrains Mono", Consolas, monospace;
+            font-size: 0.85rem;
+        }
+
+        #playerTable td button { margin: 0 4px 4px 0; }
+        #playerTable td button[disabled] { opacity: 0.45; cursor: not-allowed; }
+
         /* ---------------------------------------------------------- Mobile */
 
         @media (max-width: 720px) {
@@ -676,6 +777,48 @@
             #userTable td:last-child button { margin: 0; width: 100%; }
 
             #consoleOutput { height: 48vh; font-size: 12px; }
+
+            #statsStrip { grid-template-columns: repeat(2, 1fr); }
+
+            #playerTable thead { display: none; }
+            #playerTable, #playerTable tbody, #playerTable tr, #playerTable td { display: block; width: 100%; }
+
+            #playerTable tr {
+                border-bottom: 8px solid var(--bg);
+                padding: 4px 0;
+            }
+
+            #playerTable td {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 12px;
+                border-bottom: 1px solid var(--line-soft);
+                padding: 10px 14px;
+            }
+
+            /* data-label is set in JS, and stands in for the header row the
+               stacked layout drops. */
+            #playerTable td::before {
+                content: attr(data-label);
+                color: var(--text-muted) !important;
+                font-size: 0.72rem;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                font-weight: 600;
+                flex-shrink: 0;
+            }
+
+            #playerTable td:first-child {
+                background: var(--bg-raised) !important;
+                font-weight: 600;
+            }
+            #playerTable td:first-child::before { content: ""; }
+
+            #playerTable td:last-child { flex-wrap: wrap; justify-content: flex-start; }
+            #playerTable td:last-child::before { flex-basis: 100%; }
+
+            #playerSearch { max-width: none; flex: 1; }
 
             #consoleForm { flex-direction: column; }
             #consoleSend { width: 100%; }
@@ -790,6 +933,28 @@
             </span>
         </div>
 
+        <div id="statsStrip">
+            <div class="stat">
+                <span class="stat-label">TPS (1m / 5m / 15m)</span>
+                <span class="stat-value unknown" id="statTps">&mdash;</span>
+            </div>
+            <div class="stat">
+                <span class="stat-label">CPU (all cores)</span>
+                <span class="stat-value unknown" id="statCpu">&mdash;</span>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Memory</span>
+                <span class="stat-value unknown" id="statMem">&mdash;</span>
+                <span class="stat-sub" id="statMemSub"></span>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Players online</span>
+                <span class="stat-value unknown" id="statPlayers">&mdash;</span>
+            </div>
+        </div>
+
+        <p id="statsNote" style="display: none;"></p>
+
         <div id="consoleToolbar">
             <label for="consoleSource">Source:
                 <select id="consoleSource">
@@ -812,6 +977,33 @@
             <input type="text" id="consoleInput" placeholder="Type a command (e.g. list) and press Enter…">
             <button type="submit" id="consoleSend">Send</button>
         </form>
+
+        <section id="playersPanel">
+            <div id="playersHeader">
+                <h2>Players</h2>
+                <span id="playersCount" class="page-hint"></span>
+                <span class="spacer"></span>
+                <input type="text" id="playerSearch" placeholder="Search players&hellip;">
+                <label><input type="checkbox" id="onlineOnly"> Online only</label>
+                <button type="button" id="refreshPlayers">Refresh</button>
+            </div>
+
+            <p id="playersNote" class="page-hint" style="display: none;"></p>
+
+            <table id="playerTable">
+                <thead>
+                    <tr>
+                        <th>Player</th>
+                        <th>Status</th>
+                        <th>Last seen</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- player rows dynamically inserted here -->
+                </tbody>
+            </table>
+        </section>
     </div><!-- /console-tab -->
 </div>
 
@@ -1491,15 +1683,27 @@
         }
     }
 
+    // Everything the console tab polls, started and stopped together with the
+    // log stream so nothing keeps running against a tab nobody is looking at.
     function startStatusPolling() {
         refreshStatus();
         clearInterval(statusTimer);
         statusTimer = setInterval(refreshStatus, 5000);
+
+        refreshStats();
+        clearInterval(statsTimer);
+        statsTimer = setInterval(refreshStats, STATS_INTERVAL);
+
+        loadPlayers();
+        clearInterval(playersTimer);
+        playersTimer = setInterval(loadPlayers, PLAYERS_INTERVAL);
     }
 
     function stopStatusPolling() {
         clearInterval(statusTimer);
-        statusTimer = null;
+        clearInterval(statsTimer);
+        clearInterval(playersTimer);
+        statusTimer = statsTimer = playersTimer = null;
     }
 
     document.querySelectorAll('.powerBtn').forEach(btn => {
@@ -1530,6 +1734,278 @@
                 setTimeout(refreshStatus, 1500);
             }
         });
+    });
+
+    /* --------------------------------------------------------- Performance */
+
+    // The server caches its own view for ~10s, so polling faster would only
+    // repeat the same answer — and every uncached poll costs RCON commands
+    // that get echoed into the log this very page is displaying.
+    const STATS_INTERVAL = 10000;
+    const PLAYERS_INTERVAL = 30000;
+    // A long-running server accumulates thousands of past players; rendering
+    // all of them at once is what would make the panel feel broken.
+    const MAX_PLAYER_ROWS = 300;
+
+    const statTps = document.getElementById('statTps');
+    const statCpu = document.getElementById('statCpu');
+    const statMem = document.getElementById('statMem');
+    const statMemSub = document.getElementById('statMemSub');
+    const statPlayers = document.getElementById('statPlayers');
+    const statsNote = document.getElementById('statsNote');
+
+    let statsTimer = null;
+
+    function setStat(element, text, tone) {
+        element.textContent = text;
+        element.className = 'stat-value' + (tone ? ' ' + tone : '');
+    }
+
+    function formatBytes(bytes) {
+        if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+        const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+        let value = bytes, unit = 0;
+        while (value >= 1024 && unit < units.length - 1) {
+            value /= 1024;
+            unit++;
+        }
+        return value.toFixed(unit === 0 || value >= 100 ? 0 : 1) + ' ' + units[unit];
+    }
+
+    function clearStats(note) {
+        setStat(statTps, '—', 'unknown');
+        setStat(statCpu, '—', 'unknown');
+        setStat(statMem, '—', 'unknown');
+        setStat(statPlayers, '—', 'unknown');
+        statMemSub.textContent = note || '';
+    }
+
+    function renderStats(data) {
+        if (data.tps && data.tps.length) {
+            const worst = data.tps[0];
+            setStat(statTps, data.tps.map(v => v.toFixed(2)).join(' / '),
+                worst >= 19.5 ? 'good' : worst >= 15 ? 'warn' : 'bad');
+        } else {
+            // Only the Spigot family has a `tps` command. "unavailable" rather
+            // than a zero, which would read as a server on fire.
+            setStat(statTps, 'unavailable', 'unknown');
+        }
+
+        const container = data.container;
+        if (container) {
+            // Docker sums CPU across cores, so >100% is normal and there is no
+            // core count here to judge it against — shown without a verdict.
+            setStat(statCpu, container.cpuPercent.toFixed(1) + '%', '');
+            setStat(statMem, container.memoryPercent.toFixed(0) + '%',
+                container.memoryPercent < 80 ? 'good' : container.memoryPercent < 92 ? 'warn' : 'bad');
+            statMemSub.textContent =
+                formatBytes(container.memoryUsedBytes) + ' of ' + formatBytes(container.memoryLimitBytes);
+        } else {
+            setStat(statCpu, '—', 'unknown');
+            setStat(statMem, '—', 'unknown');
+            statMemSub.textContent = data.state === 'running'
+                ? 'mc-control is not reporting'
+                : 'server is not running';
+        }
+
+        setStat(statPlayers, data.players.online + ' / ' + data.players.max, '');
+
+        statsNote.textContent = data.rconError || '';
+        statsNote.style.display = data.rconError ? '' : 'none';
+    }
+
+    async function refreshStats() {
+        try {
+            const response = await fetch('/api/admin/console/stats', { credentials: 'include' });
+            if (!response.ok) throw new Error('stats ' + response.status);
+            renderStats(await response.json());
+        } catch (err) {
+            clearStats('');
+        }
+    }
+
+    /* ------------------------------------------------------------- Players */
+
+    const playerTable = document.getElementById('playerTable');
+    const playerSearch = document.getElementById('playerSearch');
+    const onlineOnly = document.getElementById('onlineOnly');
+    const playersNote = document.getElementById('playersNote');
+    const playersCount = document.getElementById('playersCount');
+
+    let playersTimer = null;
+    let roster = [];
+
+    // A player whose usercache entry has expired is known only by UUID.
+    function playerLabel(player) {
+        return player.name || (player.uuid ? player.uuid.slice(0, 8) : 'unknown');
+    }
+
+    function relativeTime(iso) {
+        if (!iso) return 'never';
+        const then = Date.parse(iso);
+        if (Number.isNaN(then)) return 'unknown';
+
+        let value = Math.max(0, (Date.now() - then) / 1000);
+        if (value < 45) return 'moments ago';
+
+        for (const [name, size] of [['second', 60], ['minute', 60], ['hour', 24], ['day', 30], ['month', 12]]) {
+            if (value < size) {
+                const whole = Math.max(1, Math.floor(value));
+                return whole === 1 ? `1 ${name} ago` : `${whole} ${name}s ago`;
+            }
+            value /= size;
+        }
+        const years = Math.max(1, Math.floor(value));
+        return years === 1 ? '1 year ago' : `${years} years ago`;
+    }
+
+    function badge(text, kind) {
+        const span = document.createElement('span');
+        span.className = 'badge badge-' + kind;
+        span.textContent = text;
+        return span;
+    }
+
+    function actionButton(player, label, action) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = label;
+        // Every action names the player in the command, so a UUID-only row has
+        // nothing to act on.
+        button.disabled = !player.name;
+        button.addEventListener('click', () => runPlayerAction(player.name, action, label));
+        return button;
+    }
+
+    async function runPlayerAction(name, action, label) {
+        let reason = null;
+
+        if (action === 'kick' || action === 'ban') {
+            reason = prompt(`${label} ${name} — reason (optional):`, '');
+            if (reason === null) return;    // cancelled
+        } else if (!confirm(`Really ${label.toLowerCase()} ${name}?`)) {
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/admin/console/players/' + encodeURIComponent(action), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ player: name, reason })
+            });
+            const data = await response.json();
+
+            if (!response.ok) {
+                appendLine(data.error || `Failed to ${action} ${name}`, 'lvl-ERROR');
+                return;
+            }
+
+            // Echoed into the terminal so the console stays a complete record
+            // of what was run, whether it was typed or clicked.
+            appendLine('> ' + data.command, 'lvl-echo');
+            if (data.output) {
+                data.output.split('\n').forEach(line => appendLine(line, 'lvl-meta'));
+            }
+        } catch (err) {
+            console.error(err);
+            appendLine('Failed to reach the server', 'lvl-ERROR');
+            return;
+        }
+
+        // The server drops its cached view on every action, so this reflects
+        // the change rather than the pre-action state.
+        loadPlayers();
+        refreshStats();
+    }
+
+    function renderPlayers() {
+        const body = playerTable.querySelector('tbody');
+        body.innerHTML = '';
+
+        const term = playerSearch.value.trim().toLowerCase();
+        const visible = roster.filter(player => {
+            if (onlineOnly.checked && !player.online) return false;
+            if (!term) return true;
+            return playerLabel(player).toLowerCase().includes(term)
+                || (player.uuid || '').includes(term);
+        });
+
+        playersCount.textContent =
+            `${roster.filter(p => p.online).length} online · ${roster.length} on record`;
+
+        visible.slice(0, MAX_PLAYER_ROWS).forEach(player => {
+            const row = document.createElement('tr');
+
+            const nameCell = document.createElement('td');
+            nameCell.dataset.label = 'Player';
+            const label = document.createElement('span');
+            // textContent throughout: these names come out of server files and
+            // must never be treated as markup.
+            label.textContent = playerLabel(player);
+            if (!player.name) {
+                label.className = 'uuid-only';
+                label.title = player.uuid || '';
+            }
+            nameCell.appendChild(label);
+            row.appendChild(nameCell);
+
+            const statusCell = document.createElement('td');
+            statusCell.dataset.label = 'Status';
+            statusCell.appendChild(badge(player.online ? 'Online' : 'Offline', player.online ? 'online' : 'offline'));
+            if (player.op) statusCell.appendChild(badge(player.opLevel ? 'Op ' + player.opLevel : 'Op', 'op'));
+            if (player.banned) statusCell.appendChild(badge('Banned', 'banned'));
+            if (player.whitelisted) statusCell.appendChild(badge('Whitelisted', 'whitelisted'));
+            row.appendChild(statusCell);
+
+            const seenCell = document.createElement('td');
+            seenCell.dataset.label = 'Last seen';
+            seenCell.textContent = player.online ? 'now' : relativeTime(player.lastSeen);
+            if (player.lastSeen) seenCell.title = player.lastSeen;
+            row.appendChild(seenCell);
+
+            const actionCell = document.createElement('td');
+            actionCell.dataset.label = 'Actions';
+            actionCell.appendChild(actionButton(player, player.op ? 'De-op' : 'Op', player.op ? 'deop' : 'op'));
+            if (player.online) {
+                actionCell.appendChild(actionButton(player, 'Kick', 'kick'));
+                actionCell.appendChild(actionButton(player, 'Clear inv', 'clear'));
+            }
+            actionCell.appendChild(actionButton(player, player.banned ? 'Unban' : 'Ban', player.banned ? 'pardon' : 'ban'));
+            row.appendChild(actionCell);
+
+            body.appendChild(row);
+        });
+
+        let note = '';
+        if (visible.length > MAX_PLAYER_ROWS) {
+            note = `Showing the first ${MAX_PLAYER_ROWS} of ${visible.length} matches — narrow the search to see the rest.`;
+        } else if (!visible.length) {
+            note = roster.length ? 'No players match that filter.' : 'No players on record yet.';
+        }
+        playersNote.textContent = note;
+        playersNote.style.display = note ? '' : 'none';
+    }
+
+    async function loadPlayers() {
+        try {
+            const response = await fetch('/api/admin/console/players', { credentials: 'include' });
+            if (!response.ok) throw new Error('players ' + response.status);
+            const data = await response.json();
+            roster = data.players || [];
+            renderPlayers();
+        } catch (err) {
+            console.error(err);
+            playersNote.textContent = 'Could not load the player list.';
+            playersNote.style.display = '';
+        }
+    }
+
+    playerSearch.addEventListener('input', renderPlayers);
+    onlineOnly.addEventListener('change', renderPlayers);
+    document.getElementById('refreshPlayers').addEventListener('click', () => {
+        loadPlayers();
+        refreshStats();
     });
 
     // Drop the connection when the tab is closed rather than leaving the
