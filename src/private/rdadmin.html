@@ -939,8 +939,9 @@
                 <span class="stat-value unknown" id="statTps">&mdash;</span>
             </div>
             <div class="stat">
-                <span class="stat-label">CPU (all cores)</span>
+                <span class="stat-label">CPU</span>
                 <span class="stat-value unknown" id="statCpu">&mdash;</span>
+                <span class="stat-sub" id="statCpuSub"></span>
             </div>
             <div class="stat">
                 <span class="stat-label">Memory</span>
@@ -1806,6 +1807,7 @@
 
     const statTps = document.getElementById('statTps');
     const statCpu = document.getElementById('statCpu');
+    const statCpuSub = document.getElementById('statCpuSub');
     const statMem = document.getElementById('statMem');
     const statMemSub = document.getElementById('statMemSub');
     const statPlayers = document.getElementById('statPlayers');
@@ -1834,6 +1836,7 @@
         setStat(statCpu, '—', 'unknown');
         setStat(statMem, '—', 'unknown');
         setStat(statPlayers, '—', 'unknown');
+        statCpuSub.textContent = '';
         statMemSub.textContent = note || '';
     }
 
@@ -1848,13 +1851,25 @@
             setStat(statTps, 'unavailable', 'unknown');
         }
 
+        // Docker sums CPU across cores, so its raw figure runs to 100×cores —
+        // 143.7% is a healthy server on four cores, but it reads as broken.
+        // Shown as a share of the whole machine, with the raw reading kept
+        // underneath so the number in `docker stats` is still recognisable.
         const container = data.container;
-        if (container) {
-            // Docker sums CPU across cores, so >100% is normal and there is no
-            // core count here to judge it against — shown without a verdict.
+        if (container && container.cpuPercentOfHost !== null && container.cpuPercentOfHost !== undefined) {
+            const share = container.cpuPercentOfHost;
+            setStat(statCpu, share.toFixed(0) + '%',
+                share < 60 ? 'good' : share < 85 ? 'warn' : 'bad');
+            statCpuSub.textContent =
+                `${(container.cpuPercent / 100).toFixed(2)} of ${container.cpuCores} cores`;
+        } else if (container) {
+            // No core count to divide by, so the raw figure is all there is —
+            // labelled, rather than passed off as a percentage of the machine.
             setStat(statCpu, container.cpuPercent.toFixed(1) + '%', '');
+            statCpuSub.textContent = 'summed across cores';
         } else {
             setStat(statCpu, '—', 'unknown');
+            statCpuSub.textContent = '';
         }
 
         // JVM heap first: it is what actually predicts an out-of-memory. The

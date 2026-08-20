@@ -78,6 +78,13 @@ services:
         TARGET=minecraft
         mkdir -p /control/queue
 
+        # Host CPU count, published alongside the stats so the API can turn
+        # docker's core-summed percentage into a figure a human can judge:
+        # 143.7% of one core is 36% of four, and only the second reads as
+        # "fine". Read once — a host does not grow cores while running.
+        CORES=$$(docker info --format '{{.NCPU}}' 2>/dev/null || echo 0)
+        echo "mc-control: host reports $$CORES CPUs"
+
         # Publish container state and resource usage for the API, which cannot
         # ask the daemon itself. Both are written to a .tmp first and renamed,
         # so the API never reads a half-written file.
@@ -93,7 +100,7 @@ services:
           # "unavailable" instead of whatever the last reading happened to be.
           # (The API also ignores a stats file older than 30s, which covers
           # this sidecar dying outright.)
-          if docker stats --no-stream --format '{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}' "$$TARGET" > /control/stats.tmp 2>/dev/null; then
+          if docker stats --no-stream --format "{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}|$$CORES" "$$TARGET" > /control/stats.tmp 2>/dev/null; then
             mv /control/stats.tmp /control/stats
           else
             rm -f /control/stats.tmp /control/stats

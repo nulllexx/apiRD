@@ -43,8 +43,19 @@ const MAX_PLAUSIBLE_TPS: f32 = 100.0;
 /// Resource usage of the Minecraft container.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct ContainerStats {
+    /// Exactly what `docker stats` reports, which is summed across cores and so
+    /// runs to `100 × cores`. Kept raw because it is the measured primitive.
     #[serde(rename = "cpuPercent")]
     pub cpu_percent: f32,
+    /// Cores the host has, as the sidecar published them. `None` from a sidecar
+    /// predating that field.
+    #[serde(rename = "cpuCores")]
+    pub cpu_cores: Option<u32>,
+    /// [`cpu_percent`](Self::cpu_percent) as a share of the whole machine —
+    /// the version a person can actually judge. `None` without a core count,
+    /// since dividing by a guess would be worse than not dividing.
+    #[serde(rename = "cpuPercentOfHost")]
+    pub cpu_percent_of_host: Option<f32>,
     #[serde(rename = "memoryUsedBytes")]
     pub memory_used: u64,
     #[serde(rename = "memoryLimitBytes")]
@@ -53,8 +64,8 @@ pub struct ContainerStats {
     pub memory_percent: f32,
 }
 
-/// Parse the line the sidecar publishes: `CPU%|MemUsage|MemPerc`, for example
-/// `12.34%|1.234GiB / 4GiB|30.85%`.
+/// Parse the line the sidecar publishes: `CPU%|MemUsage|MemPerc|Cores`, for
+/// example `143.7%|1.234GiB / 4GiB|30.85%|4`.
 pub fn parse_container_stats(raw: &str) -> Option<ContainerStats> {
     let line = raw.lines().find(|line| !line.trim().is_empty())?;
     let mut fields = line.split('|');
@@ -68,6 +79,11 @@ pub fn parse_container_stats(raw: &str) -> Option<ContainerStats> {
 
     let memory_percent = parse_percent(fields.next()?)?;
 
+    // Optional: a sidecar from before this field existed publishes three. An
+    // older sidecar against a newer API should lose the friendlier number, not
+    // the whole reading.
+    let cpu_cores = fields.next().and_then(parse_cores);
+
     // `docker stats` reports a stopped container as all zeroes rather than
     // failing. No running container has a zero memory limit — Docker reports
     // the host's total when none is configured — so this is what tells "not
@@ -78,6 +94,8 @@ pub fn parse_container_stats(raw: &str) -> Option<ContainerStats> {
 
     Some(ContainerStats {
         cpu_percent,
+        cpu_cores,
+        cpu_percent_of_host: cpu_cores.map(|cores| cpu_percent / cores as f32),
         memory_used,
         memory_limit,
         memory_percent,
@@ -86,6 +104,13 @@ pub fn parse_container_stats(raw: &str) -> Option<ContainerStats> {
 
 fn parse_percent(raw: &str) -> Option<f32> {
     raw.trim().trim_end_matches('%').trim().parse().ok()
+}
+
+/// Core count, rejecting the zero the sidecar writes when `docker info` fails —
+/// it is a "don't know", and dividing by it would produce an infinity.
+fn parse_cores(raw: &str) -> Option<u32> {
+    let cores: u32 = raw.trim().parse().ok()?;
+    (cores > 0).then_some(cores)
 }
 
 /// Parse a size as Docker renders it.
@@ -552,11 +577,47 @@ mod tests {
 
     #[test]
     fn parses_the_sidecar_line() {
-        let stats = parse_container_stats("12.34%|1.5GiB / 4GiB|37.50%\n").unwrap();
-        assert_eq!(stats.cpu_percent, 12.34);
+        let stats = parse_container_stats("143.7%|1.5GiB / 4GiB|37.50%|4\n").unwrap();
+        assert_eq!(stats.cpu_percent, 143.7);
         assert_eq!(stats.memory_used, 1536 * 1024 * 1024);
         assert_eq!(stats.memory_limit, 4 * 1024 * 1024 * 1024);
         assert_eq!(stats.memory_percent, 37.50);
+    }
+
+    /// The reading docker gives is summed across cores, so a busy-but-healthy
+    /// server reads as 143.7% — a number that looks broken to anyone seeing it.
+    /// Dividing by the core count is what makes it legible.
+    #[test]
+    fn cpu_is_also_reported_as_a_share_of_the_whole_host() {
+        let stats = parse_container_stats("143.7%|1.5GiB / 4GiB|37.50%|4").unwrap();
+
+        assert_eq!(stats.cpu_cores, Some(4));
+        let of_host = stats.cpu_percent_of_host.unwrap();
+        assert!((of_host - 35.925).abs() < 0.01, "got {of_host}");
+    }
+
+    #[test]
+    fn a_sidecar_without_the_core_count_still_reports_everything_else() {
+        // An older sidecar against a newer API loses the friendlier number,
+        // not the whole reading.
+        let stats = parse_container_stats("143.7%|1.5GiB / 4GiB|37.50%").unwrap();
+
+        assert_eq!(stats.cpu_percent, 143.7);
+        assert_eq!(stats.cpu_cores, None);
+        assert_eq!(stats.cpu_percent_of_host, None);
+        assert_eq!(stats.memory_percent, 37.50);
+    }
+
+    #[test]
+    fn an_unusable_core_count_is_treated_as_unknown() {
+        // The sidecar writes 0 when `docker info` fails; dividing by it would
+        // report an infinite CPU share.
+        for field in ["0", "", "many", "-2"] {
+            let line = format!("143.7%|1.5GiB / 4GiB|37.50%|{field}");
+            let stats = parse_container_stats(&line).unwrap();
+            assert_eq!(stats.cpu_cores, None, "{field:?} is not a core count");
+            assert_eq!(stats.cpu_percent_of_host, None);
+        }
     }
 
     #[test]
