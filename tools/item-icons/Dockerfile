@@ -29,11 +29,22 @@ RUN php -r 'exit(extension_loaded("imagick") ? 0 : 1);'
 
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-# Pinnable. Renderchest 5.x targets recent Minecraft versions, and its own
-# builtin item definitions use the `assets/<ns>/items/` layout that only exists
-# from 1.21.4. If it turns out not to cope with an older server's assets, this
-# is the knob to turn rather than a rebuild from scratch.
-ARG RENDERCHEST_VERSION=^5.1
+# Pinned to 2.x for a hard compatibility reason, not out of caution.
+#
+# Renderchest finds items by scanning a directory, and which directory changed
+# with the game: v2.x scans `assets/<ns>/models/item/`, which is where item
+# models live up to 1.21.3. v3.0.0 switched to `assets/<ns>/items/`, the item
+# definition format introduced in 1.21.4.
+#
+# Point v3+ at 1.21.1 assets and that directory simply does not exist, so it
+# finds zero items, renders only its two internal placeholders, writes a
+# stylesheet and exits 0 -- a silent success that installs nothing. That is
+# exactly what happened here.
+#
+# So this must track the SERVER's version, not the newest release:
+#   1.21.4 and later  ->  ^5.1
+#   1.21.3 and earlier -> ^2.4   (matches MC_VERSION=1.21.1 below)
+ARG RENDERCHEST_VERSION=^2.4
 
 WORKDIR /opt/renderchest
 # The package publishes no `bin` entry, so composer never links anything into

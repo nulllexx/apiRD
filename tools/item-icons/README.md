@@ -29,9 +29,9 @@ Build once:
 docker build -t item-icons tools/item-icons
 ```
 
-Then, **the first time**, inspect rather than install. Renderchest's output
-layout is not documented, and a run that guesses wrong appears to succeed while
-installing nothing usable:
+Then check it against the real assets before letting the watcher loose. This
+takes a couple of minutes and answers the only question that matters — whether
+the Renderchest version can read this Minecraft version's assets at all:
 
 ```sh
 docker run --rm \
@@ -40,9 +40,11 @@ docker run --rm \
   item-icons inspect minecraft
 ```
 
-That renders one namespace and prints the resulting file tree. If the PNG
-basenames read like item ids (`diamond_sword.png`), the layout is what the
-installer assumes and you can run the real thing:
+It renders one namespace and prints a verdict. `OK` plus a handful of sample
+names means the pipeline works end to end; `FAIL` means a version mismatch and
+says which pin to use. It exits non-zero on failure, so it is safe to chain.
+
+Once it reports OK:
 
 ```sh
 docker run --rm \
@@ -50,9 +52,6 @@ docker run --rm \
   -v /home/useradmin/api/mainapi/data/item-textures:/cache \
   item-icons all
 ```
-
-If the basenames are something else — a sprite sheet, hashed names — stop and
-say so; the installer's flattening step needs adjusting rather than forcing.
 
 ## What it does
 
@@ -65,6 +64,13 @@ say so; the installer's flattening step needs adjusting rather than forcing.
 3. Runs Renderchest once per namespace, vanilla assets first so modded models
    can inherit from vanilla parents.
 4. Copies the PNGs into `<cache>/<version>/<namespace>/<item>.png`.
+
+Renderchest writes `<output>/items/<namespace>/<item>.png`, so step 4 reads that
+exact directory rather than searching the output for PNGs. The distinction
+matters: Renderchest always emits `renderchest:unknown` and `renderchest:empty`
+placeholders under `items/renderchest/`, **including on a run that found no real
+items**, so a broad search would install those two and make a failed render look
+like a small success.
 
 ## Settings
 
@@ -135,39 +141,58 @@ needs deleting if you want the space back.
 To drop a namespace's icons and let the API fall back to its own lookup again,
 delete `<cache>/<version>/<namespace>/`.
 
-## Known gaps
+## The Renderchest version must match the Minecraft version
 
-Renderchest carries its own definitions for the items the model system cannot
-draw, in `builtin/minecraft/items/`. Taken from the v5.1.0 file listing rather
-than from its README, which understates this:
+This is the one setting that will silently produce nothing if it is wrong, so
+it is worth understanding rather than copying.
 
-| Item              | Covered |
-|-------------------|---------|
-| chests (all)      | yes, 65 definitions including the copper variants |
-| shulker boxes     | yes, all colours |
-| banners           | yes, all colours |
-| mob heads         | yes, 208 definitions |
-| shield            | yes |
-| decorated pot     | yes |
-| conduit           | yes |
-| **beds**          | **no** |
+Renderchest discovers items by scanning a directory, and the game moved that
+directory in 1.21.4:
 
-So beds are the one thing expected to stay as a flat texture. Anything missing
-falls back to the panel's own lookup and then to the initials tile, so a gap is
-cosmetic rather than broken.
+| Renderchest | Scans                        | Minecraft        |
+|-------------|------------------------------|------------------|
+| 2.x         | `assets/<ns>/models/item/`   | up to 1.21.3     |
+| 3.x – 5.x   | `assets/<ns>/items/`         | 1.21.4 and later |
 
-## If nothing renders on 1.21.1
+Point 3.x+ at 1.21.1 assets and that directory does not exist, so it finds zero
+items, renders only its two internal placeholders, writes a stylesheet, and
+**exits 0**. Nothing errors; nothing appears. This is why `render_all` now fails
+explicitly on a zero-icon run instead of trusting the exit code.
 
-Renderchest 5.x targets recent Minecraft versions — its builtin definitions use
-the `assets/<ns>/items/` layout that only exists from 1.21.4, and its constants
-mention trim and armour materials newer than 1.21.1. Whether it copes with an
-older server's assets is untested here.
-
-If `inspect` renders nothing, that is the likely reason, and the fix is to pin
-an older major rather than to change anything else:
+The server runs 1.21.1, so the Dockerfile pins `^2.4`. On a Minecraft upgrade
+past 1.21.3, this has to move to `^5.1` at the same time as `MC_VERSION`:
 
 ```sh
-docker build --build-arg RENDERCHEST_VERSION='^4.0' -t item-icons tools/item-icons
+docker build --build-arg RENDERCHEST_VERSION='^5.1' -t item-icons tools/item-icons
 ```
 
-Published majors run from 1.x to 5.x, so there is room to walk back.
+## Known gaps
+
+Renderchest carries its own definitions for items whose models the game draws as
+entities rather than from a model file. Taken from the **v2.4.1** file listing
+(160 definitions), which is the pinned version:
+
+| Item                          | Covered |
+|-------------------------------|---------|
+| beds                          | yes, all 16 colours |
+| banners                       | yes, all 16 colours |
+| shulker boxes                 | yes, all colours |
+| chest, ender chest, trapped chest | yes |
+| mob heads and skulls          | yes, all 7 |
+| shield                        | yes |
+| decorated pot and sherds      | yes |
+| conduit                       | yes |
+| potions and tipped arrows     | yes |
+| leather armour trims          | yes |
+| **trident**                   | **no** |
+| **spyglass**                  | **no** |
+
+Note that 2.x covers **beds**, which 5.x does not — so pinning for the layout
+also happens to fix the bed.
+
+v2.4.1 predates 1.21.1 by about eight months, so anything added since that needs
+special-casing will be missing here too. Ordinary items are unaffected: those
+render from the server's own model files, not from these definitions.
+
+Anything missing falls back to the panel's own lookup and then to the initials
+tile, so a gap is cosmetic rather than broken.

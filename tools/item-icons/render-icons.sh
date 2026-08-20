@@ -120,7 +120,11 @@ namespaces() {
 }
 
 render_namespace() {
-  local ns="$1" out="$RENDER_OUT/$ns"
+  # Split across two statements on purpose: under `set -u`, bash's `local a=$1
+  # b=$a` declares every name as an unset local *before* assigning, so the $a
+  # on the right reads the unset local and kills the shell.
+  local ns="$1"
+  local out="$RENDER_OUT/$ns"
   mkdir -p "$out"
 
   # Vanilla assets come first: Renderchest requires the base game's assets to be
@@ -136,25 +140,42 @@ render_namespace() {
   ) || echo "!! renderchest failed for namespace $ns (continuing)" >&2
 }
 
-# Copy whatever was rendered into the cache, flattening any directory nesting.
+# Copy the rendered icons into the cache.
 #
-# The cache expects <cache>/<version>/<namespace>/<item>.png, so a basename that
-# is not an item id means the layout differs from what this assumes -- which is
-# what `inspect` is for.
+# Renderchest writes <output>/items/<namespace>/<item>.<format>, so the source
+# directory is read explicitly rather than by searching for PNGs anywhere under
+# the output. The difference matters: a blind search also picks up the
+# `renderchest:unknown` and `renderchest:empty` placeholders, which land in
+# items/renderchest/ and are always produced -- including when zero real items
+# were found. Installing those as `unknown.png` would turn "rendered nothing"
+# into a plausible-looking success.
+#
+# Returns the number installed via INSTALLED, and non-zero if that is zero.
+INSTALLED=0
 install_namespace() {
-  local ns="$1" dest="$CACHE_DIR/$MC_VERSION/$ns" moved=0 file base
+  # Separate statements: see the note in render_namespace -- a single `local`
+  # cannot reference a name it is itself declaring while `set -u` is on.
+  local ns="$1"
+  local dest="$CACHE_DIR/$MC_VERSION/$ns"
+  local src="$RENDER_OUT/$ns/items/$ns"
+  local moved=0 file
+
+  if [ ! -d "$src" ]; then
+    echo "  $ns: nothing rendered (no $src)" >&2
+    INSTALLED=0
+    return 1
+  fi
+
   mkdir -p "$dest"
-
-  while IFS= read -r file; do
-    base="$(basename "$file")"
-    # Strip a namespace prefix if Renderchest emits one.
-    base="${base#"${ns}"__}"
-    base="${base#"${ns}"_}"
-    cp -f "$file" "$dest/$base"
+  for file in "$src"/*.png; do
+    [ -e "$file" ] || continue
+    cp -f "$file" "$dest/$(basename "$file")"
     moved=$((moved + 1))
-  done < <(find "$RENDER_OUT/$ns" -type f -name '*.png' 2>/dev/null)
+  done
 
+  INSTALLED="$moved"
   echo "  $ns: installed $moved icon(s) into $dest"
+  [ "$moved" -gt 0 ]
 }
 
 # ---------------------------------------------------------------- change watch
@@ -184,15 +205,35 @@ render_all() {
   fetch_vanilla
   extract_mods
   log "rendering"
-  local ns
+  local ns total=0
   for ns in $(namespaces); do
     echo "  rendering $ns"
     render_namespace "$ns"
   done
   log "installing into $CACHE_DIR/$MC_VERSION"
   for ns in $(namespaces); do
-    install_namespace "$ns"
+    # A namespace that renders nothing is not fatal on its own: a mod can
+    # legitimately ship no item models at all. The total is what decides.
+    install_namespace "$ns" || true
+    total=$((total + INSTALLED))
   done
+
+  # Fail when the whole run produced nothing.
+  #
+  # Renderchest exits 0 after finding zero items, so without this check a
+  # version or layout mismatch reads as a clean run -- and in watch mode the
+  # fingerprint gets written, marking a broken render as done and never
+  # retrying. Silence here previously looked identical to success.
+  if [ "$total" -eq 0 ]; then
+    echo "!! rendered 0 icons in total." >&2
+    echo "!! Almost always a version mismatch: Renderchest 3.x+ looks for items" >&2
+    echo "!! in assets/<ns>/items/ (Minecraft 1.21.4+), while MC_VERSION=$MC_VERSION" >&2
+    echo "!! keeps them in assets/<ns>/models/item/ and needs Renderchest 2.x." >&2
+    echo "!! Rebuild with: --build-arg RENDERCHEST_VERSION='^2.4'" >&2
+    return 1
+  fi
+
+  log "installed $total icon(s) in total"
 }
 
 case "${1:-}" in
@@ -202,17 +243,42 @@ case "${1:-}" in
     ns="${2:-minecraft}"
     log "rendering only '$ns' so its output can be examined"
     render_namespace "$ns"
-    log "output tree for '$ns' (first 40 entries)"
-    find "$RENDER_OUT/$ns" -maxdepth 3 | head -40
-    log "file count by extension"
-    find "$RENDER_OUT/$ns" -type f | sed 's/.*\.//' | sort | uniq -c
+
+    log "output tree for '$ns' (first 20 entries)"
+    find "$RENDER_OUT/$ns" -maxdepth 3 | head -20
+
+    # Renderchest always emits its two placeholders under items/renderchest/,
+    # even when it found no real items, so the count that matters is the one in
+    # the requested namespace's own directory.
+    rendered=$(find "$RENDER_OUT/$ns/items/$ns" -maxdepth 1 -name '*.png' 2>/dev/null | wc -l)
+    log "rendered $rendered icon(s) for '$ns'"
+
+    if [ "$rendered" -eq 0 ]; then
+      echo "FAIL: Renderchest found no items in namespace '$ns'."
+      echo
+      echo "For MC_VERSION=$MC_VERSION the item models are in"
+      echo "  assets/$ns/models/item/     -> needs Renderchest 2.x"
+      echo "whereas Renderchest 3.x and later look in"
+      echo "  assets/$ns/items/           -> Minecraft 1.21.4 and later"
+      echo
+      echo "Rebuild with: --build-arg RENDERCHEST_VERSION='^2.4'"
+      exit 1
+    fi
+
+    echo "OK: sample icons ->"
+    find "$RENDER_OUT/$ns/items/$ns" -maxdepth 1 -name '*.png' | head -5 | sed 's|.*/|  |'
     echo
-    echo "Check that the PNG basenames read like item ids (diamond_sword.png)."
-    echo "If they do, run: render-icons all"
+    echo "Layout is as expected. Run: render-icons all"
     ;;
 
   all)
-    render_all
+    # The fingerprint is written only on success. Recording a failed render as
+    # done is what turns a one-off problem into a permanent one, because the
+    # watcher then sees no change and never tries again.
+    if ! render_all; then
+      echo "!! rendering failed; fingerprint not written, nothing installed" >&2
+      exit 1
+    fi
     fingerprint > "$FINGERPRINT_FILE"
     log "done — reload the admin panel, no API restart needed"
     ;;
