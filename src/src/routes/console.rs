@@ -175,27 +175,29 @@ async fn server_stats(
     state: web::Data<AppState>,
     _admin: AdminUser,
 ) -> Result<HttpResponse, AppError> {
-    let snapshot = state.snapshot.get(&state.rcon).await;
+    let health = state.snapshot.health(&state.rcon).await;
     let container = stats::read_container_stats(&state.config.control_dir, STATS_MAX_AGE).await;
     let power = control::status(&state.config.control_dir).await;
 
-    // Copied out before building the response: this is a std RwLock, so the
+    // Copied out before building the response: these are std RwLocks, so a
     // guard must not be alive across an await.
+    //
+    // The online count comes from plrCount.json, which a plugin already
+    // maintains and a file watcher already reads. Asking the server would mean
+    // a second RCON command per poll, and every RCON command is logged into the
+    // log this page is streaming.
     let max_players = state.max_players.read().map(|m| *m).unwrap_or(0);
+    let online = state.player_count.read().map(|c| *c).unwrap_or(0);
 
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "state": power.as_str(),
         // Null rather than zeroes wherever the number is genuinely unknown, so
         // the UI can say "unavailable" instead of implying a reading of zero.
-        "tps": snapshot.tps,
-        "heap": snapshot.heap,
+        "tps": health.tps,
+        "heap": health.heap,
         "container": container,
-        "players": {
-            "online": snapshot.online.len(),
-            "max": max_players,
-            "names": snapshot.online,
-        },
-        "rconError": snapshot.rcon_error,
+        "players": { "online": online, "max": max_players },
+        "rconError": health.rcon_error,
     })))
 }
 
@@ -204,15 +206,17 @@ async fn list_players(
     state: web::Data<AppState>,
     _admin: AdminUser,
 ) -> Result<HttpResponse, AppError> {
-    let snapshot = state.snapshot.get(&state.rcon).await;
-    let roster = players::load_roster(&state.config.server_properties_path, &snapshot.online).await;
+    // The one place a `list` is worth spending: the caller has explicitly asked
+    // who is on the server, rather than a timer having asked on their behalf.
+    let online = state.snapshot.online(&state.rcon).await;
+    let roster = players::load_roster(&state.config.server_properties_path, &online.names).await;
 
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "players": roster,
         // The roster itself comes off disk and so is always available; only the
         // online flags depend on RCON. Reporting the failure separately lets
         // the UI show the list and note that live status is missing.
-        "rconError": snapshot.rcon_error,
+        "rconError": online.rcon_error,
     })))
 }
 

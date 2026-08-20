@@ -11,9 +11,10 @@
 //!   `mc-control` sidecar publishes a stats line onto the shared control volume
 //!   and this module reads that file.
 //!
-//! Both are cached, for the same reason the RCON connection is held open: every
-//! probe of the game server is echoed into the very console the operator is
-//! watching. See [`SnapshotCache`].
+//! Both are cached, for the same reason the RCON connection is held open: the
+//! server logs a line for every RCON command, into the very log this console
+//! streams — so a metrics panel that polls carelessly buries the thing it sits
+//! next to. See [`SnapshotCache`].
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -289,91 +290,141 @@ pub fn parse_heap(raw: &str) -> Option<HeapUsage> {
     })
 }
 
-/// What one probe of the game server yields.
+/// What the game server reports about its own health.
 #[derive(Debug, Clone, Default, Serialize)]
-pub struct Snapshot {
+pub struct Health {
     /// `None` when the server has no `tps` command, or is not reachable.
     pub tps: Option<Vec<f32>>,
     /// `None` without EssentialsX, which is what puts heap figures in the
     /// `tps` reply.
     pub heap: Option<HeapUsage>,
-    pub online: Vec<String>,
     /// Set when the probe could not talk to the server at all, so the UI can
     /// say why the numbers are missing instead of showing a silent blank.
     #[serde(rename = "rconError")]
     pub rcon_error: Option<String>,
 }
 
-/// Caches a [`Snapshot`] for [`SNAPSHOT_TTL`].
+/// Who is on the server right now.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct Online {
+    pub names: Vec<String>,
+    #[serde(rename = "rconError")]
+    pub rcon_error: Option<String>,
+}
+
+/// Caches what has to be asked of the game server itself.
 ///
-/// Every field of a snapshot costs an RCON command, and RCON commands are
-/// echoed into the very console the operator is reading. Without this, each
-/// admin with the tab open would add their own stream of `list` / `tps` chatter
-/// to the log — the panel would degrade the thing it sits next to.
+/// Every value here costs an RCON command, and the server logs a line for each
+/// one — into the very log this console streams. A poll that refreshed on a
+/// timer therefore buries the thing it sits next to, which is why the two
+/// halves are cached and fetched separately:
 ///
-/// The lock is held across the refresh so that concurrent callers wait for one
-/// result rather than each firing their own pair of commands.
+/// * [`health`](Self::health) is what a metrics panel refreshes on a timer, so
+///   it is deliberately one command.
+/// * [`online`](Self::online) costs a second command and is only fetched when
+///   someone actually opens or refreshes the player list.
+///
+/// Each lock is held across its refresh, so concurrent callers wait on one
+/// result instead of each issuing their own command.
 pub struct SnapshotCache {
     ttl: Duration,
-    entry: Mutex<Option<(Instant, Arc<Snapshot>)>>,
+    health: Mutex<Option<(Instant, Arc<Health>)>>,
+    online: Mutex<Option<(Instant, Arc<Online>)>>,
 }
 
 impl SnapshotCache {
     pub fn new(ttl: Duration) -> Arc<Self> {
         Arc::new(Self {
             ttl,
-            entry: Mutex::new(None),
+            health: Mutex::new(None),
+            online: Mutex::new(None),
         })
     }
 
-    pub async fn get(&self, rcon: &RconClient) -> Arc<Snapshot> {
-        let mut entry = self.entry.lock().await;
+    /// Tick rate and heap, from a single `tps` command.
+    pub async fn health(&self, rcon: &RconClient) -> Arc<Health> {
+        let mut entry = self.health.lock().await;
 
-        if let Some((probed_at, snapshot)) = entry.as_ref() {
+        if let Some((probed_at, health)) = entry.as_ref() {
             if probed_at.elapsed() < self.ttl {
-                return Arc::clone(snapshot);
+                return Arc::clone(health);
             }
         }
 
-        let fresh = Arc::new(probe(rcon).await);
+        let fresh = Arc::new(probe_health(rcon).await);
         *entry = Some((Instant::now(), Arc::clone(&fresh)));
         fresh
     }
 
-    /// Drop the cached value so the next read reflects something the operator
+    /// Names of everyone online, from a single `list` command.
+    pub async fn online(&self, rcon: &RconClient) -> Arc<Online> {
+        let mut entry = self.online.lock().await;
+
+        if let Some((probed_at, online)) = entry.as_ref() {
+            if probed_at.elapsed() < self.ttl {
+                return Arc::clone(online);
+            }
+        }
+
+        let fresh = Arc::new(probe_online(rcon).await);
+        *entry = Some((Instant::now(), Arc::clone(&fresh)));
+        fresh
+    }
+
+    /// Drop both cached values so the next read reflects something the operator
     /// just did — opping someone should not take a TTL to show up in the list.
     pub async fn invalidate(&self) {
-        *self.entry.lock().await = None;
+        *self.health.lock().await = None;
+        *self.online.lock().await = None;
     }
 }
 
-async fn probe(rcon: &RconClient) -> Snapshot {
-    let mut snapshot = Snapshot::default();
+/// Reason RCON is unusable, or `None` if it looks usable.
+fn unconfigured(rcon: &RconClient) -> Option<String> {
+    (!rcon.is_configured()).then(|| "RCON is not configured on this server".to_string())
+}
 
-    if !rcon.is_configured() {
-        snapshot.rcon_error = Some("RCON is not configured on this server".to_string());
-        return snapshot;
+async fn probe_health(rcon: &RconClient) -> Health {
+    let mut health = Health::default();
+
+    if let Some(reason) = unconfigured(rcon) {
+        health.rcon_error = Some(reason);
+        return health;
     }
 
-    match rcon.execute("list").await {
-        Ok(output) => snapshot.online = players::parse_online_list(&output),
+    match rcon.execute("tps").await {
+        Ok(output) => {
+            health.tps = parse_tps(&output);
+            // EssentialsX answers `tps` with heap usage on a following line, so
+            // this costs nothing beyond the command already being run.
+            health.heap = parse_heap(&output);
+        }
         Err(e) => {
-            log::debug!("console: probe could not list players: {e}");
-            // The server is unreachable, so `tps` would only fail the same way
-            // and cost another five-second connect timeout.
-            snapshot.rcon_error = Some(e.user_message());
-            return snapshot;
+            log::debug!("console: health probe failed: {e}");
+            health.rcon_error = Some(e.user_message());
         }
     }
 
-    if let Ok(output) = rcon.execute("tps").await {
-        snapshot.tps = parse_tps(&output);
-        // EssentialsX answers `tps` with heap usage on a following line, so
-        // this costs nothing beyond the command already being run.
-        snapshot.heap = parse_heap(&output);
+    health
+}
+
+async fn probe_online(rcon: &RconClient) -> Online {
+    let mut online = Online::default();
+
+    if let Some(reason) = unconfigured(rcon) {
+        online.rcon_error = Some(reason);
+        return online;
     }
 
-    snapshot
+    match rcon.execute("list").await {
+        Ok(output) => online.names = players::parse_online_list(&output),
+        Err(e) => {
+            log::debug!("console: could not list players: {e}");
+            online.rcon_error = Some(e.user_message());
+        }
+    }
+
+    online
 }
 
 #[cfg(test)]
@@ -563,17 +614,20 @@ mod tests {
     #[tokio::test]
     async fn an_unconfigured_rcon_explains_itself_without_dialing() {
         let cache = SnapshotCache::new(SNAPSHOT_TTL);
+        // Port 1 would refuse instantly anyway; the point is that neither probe
+        // touches the network without a password.
         let rcon = RconClient::new("127.0.0.1:1".to_string(), String::new());
 
-        let snapshot = cache.get(&rcon).await;
+        let health = cache.health(&rcon).await;
+        let online = cache.online(&rcon).await;
 
-        assert!(snapshot.online.is_empty());
-        assert!(snapshot.tps.is_none());
-        assert!(snapshot
-            .rcon_error
-            .as_deref()
-            .unwrap_or_default()
-            .contains("not configured"));
+        assert!(health.tps.is_none() && online.names.is_empty());
+        for reason in [&health.rcon_error, &online.rcon_error] {
+            assert!(reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("not configured"));
+        }
     }
 
     /// Reads one RCON packet off a scripted server socket.
@@ -589,17 +643,22 @@ mod tests {
         (id, body)
     }
 
-    /// Exercises the whole probe rather than only its parsers: which commands
-    /// go out, in what order, and what comes back as a snapshot. The parsers
-    /// being right is no use if the probe asks the wrong questions.
-    #[tokio::test]
-    async fn a_probe_asks_for_the_player_list_then_the_tick_rate() {
-        use tokio::io::AsyncWriteExt;
-
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    /// Serves a fixed reply to each command in turn, and reports what was asked.
+    ///
+    /// Returning the commands is the point: what the probes *do not* send
+    /// matters as much as what they do, because every one becomes a line in the
+    /// log the console is displaying.
+    fn scripted_server(
+        replies: Vec<&'static str>,
+    ) -> (String, tokio::task::JoinHandle<Vec<String>>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
         let address = listener.local_addr().unwrap().to_string();
 
-        let server = tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+
+            let listener = tokio::net::TcpListener::from_std(listener).unwrap();
             let (mut socket, _) = listener.accept().await.unwrap();
 
             // Packet types 3/2/0 are AUTH / COMMAND / RESPONSE_VALUE.
@@ -610,10 +669,7 @@ mod tests {
                 .unwrap();
 
             let mut asked = Vec::new();
-            for reply in [
-                "There are 2 of a max of 20 players online: Steve, Alex",
-                ESSENTIALS_TPS,
-            ] {
+            for reply in replies {
                 let (id, body) = read_packet(&mut socket).await;
                 asked.push(body);
                 socket
@@ -624,17 +680,62 @@ mod tests {
             asked
         });
 
+        (address, handle)
+    }
+
+    /// Exercises the whole health probe rather than only its parsers: which
+    /// command goes out, and what comes back as a reading.
+    #[tokio::test]
+    async fn a_health_probe_costs_exactly_one_command() {
+        let (address, server) = scripted_server(vec![ESSENTIALS_TPS]);
+
         let cache = SnapshotCache::new(SNAPSHOT_TTL);
         let rcon = RconClient::new(address, "s3cret".to_string());
-        let snapshot = cache.get(&rcon).await;
+        let health = cache.health(&rcon).await;
 
-        assert_eq!(server.await.unwrap(), vec!["list", "tps"]);
-        assert_eq!(snapshot.online, vec!["Steve", "Alex"]);
-        assert_eq!(snapshot.tps, Some(vec![20.0, 20.0, 20.0]));
-        // Both metrics come out of the one `tps` reply, so heap costs no
-        // second command.
-        assert_eq!(snapshot.heap.unwrap().used, 1485 * 1024 * 1024);
-        assert!(snapshot.rcon_error.is_none());
+        // Not `["tps", "list"]`. A metrics poll that also asked who was online
+        // would double the log lines it costs, for a number plrCount.json
+        // already has.
+        assert_eq!(server.await.unwrap(), vec!["tps"]);
+        assert_eq!(health.tps, Some(vec![20.0, 20.0, 20.0]));
+        // Both readings come out of the one reply, so heap is free.
+        assert_eq!(health.heap.unwrap().used, 1485 * 1024 * 1024);
+        assert!(health.rcon_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn the_online_probe_costs_exactly_one_command() {
+        let (address, server) =
+            scripted_server(vec!["There are 2 of a max of 20 players online: Steve, Alex"]);
+
+        let cache = SnapshotCache::new(SNAPSHOT_TTL);
+        let rcon = RconClient::new(address, "s3cret".to_string());
+        let online = cache.online(&rcon).await;
+
+        assert_eq!(server.await.unwrap(), vec!["list"]);
+        assert_eq!(online.names, vec!["Steve", "Alex"]);
+        assert!(online.rcon_error.is_none());
+    }
+
+    /// The halves are cached apart, so refreshing metrics on a timer never
+    /// drags a `list` along with it.
+    #[tokio::test]
+    async fn refreshing_health_does_not_refetch_the_player_list() {
+        let (address, server) = scripted_server(vec![
+            "There are 1 of a max of 20 players online: Steve",
+            ESSENTIALS_TPS,
+            ESSENTIALS_TPS,
+        ]);
+
+        // Zero TTL, so nothing is reused and every call would go to the wire.
+        let cache = SnapshotCache::new(Duration::ZERO);
+        let rcon = RconClient::new(address, "s3cret".to_string());
+
+        cache.online(&rcon).await;
+        cache.health(&rcon).await;
+        cache.health(&rcon).await;
+
+        assert_eq!(server.await.unwrap(), vec!["list", "tps", "tps"]);
     }
 
     #[tokio::test]
@@ -643,13 +744,12 @@ mod tests {
         // Configured, but nothing is listening.
         let rcon = RconClient::new("127.0.0.1:1".to_string(), "s3cret".to_string());
 
-        let snapshot = cache.get(&rcon).await;
+        let health = cache.health(&rcon).await;
 
-        assert!(snapshot.online.is_empty());
         // Not `Some(vec![0.0, ...])` — an unreachable server has no tick rate,
         // and zero would render as a server in freefall.
-        assert!(snapshot.tps.is_none());
-        assert!(snapshot
+        assert!(health.tps.is_none() && health.heap.is_none());
+        assert!(health
             .rcon_error
             .as_deref()
             .unwrap_or_default()
@@ -661,13 +761,13 @@ mod tests {
         let cache = SnapshotCache::new(Duration::from_secs(600));
         let rcon = RconClient::new("127.0.0.1:1".to_string(), String::new());
 
-        let first = cache.get(&rcon).await;
+        let first = cache.health(&rcon).await;
         // Same allocation, so no second probe ran.
-        assert!(Arc::ptr_eq(&first, &cache.get(&rcon).await));
+        assert!(Arc::ptr_eq(&first, &cache.health(&rcon).await));
 
         cache.invalidate().await;
         assert!(
-            !Arc::ptr_eq(&first, &cache.get(&rcon).await),
+            !Arc::ptr_eq(&first, &cache.health(&rcon).await),
             "an operator action must not wait out the TTL"
         );
     }
@@ -677,9 +777,9 @@ mod tests {
         let cache = SnapshotCache::new(Duration::from_millis(20));
         let rcon = RconClient::new("127.0.0.1:1".to_string(), String::new());
 
-        let first = cache.get(&rcon).await;
+        let first = cache.health(&rcon).await;
         tokio::time::sleep(Duration::from_millis(40)).await;
 
-        assert!(!Arc::ptr_eq(&first, &cache.get(&rcon).await));
+        assert!(!Arc::ptr_eq(&first, &cache.health(&rcon).await));
     }
 }

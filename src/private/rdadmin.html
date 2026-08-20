@@ -967,6 +967,14 @@
 
             <label><input type="checkbox" id="autoscroll" checked> Autoscroll</label>
 
+            <label title="The console already echoes every command it sends, with its output, so the server's own log line for the same command is a duplicate.">
+                <input type="checkbox" id="hideRconEcho" checked> Hide RCON echo
+            </label>
+
+            <label title="Refreshes TPS and memory every 30s. Each refresh is one RCON command, which the server writes to latest.log — turn this off to leave the log completely alone and refresh only on demand.">
+                <input type="checkbox" id="liveMetrics" checked> Live metrics
+            </label>
+
             <button type="button" id="clearConsole">Clear</button>
             <a href="/api/admin/console/download"><button type="button">Download latest.log</button></a>
         </div>
@@ -1589,7 +1597,14 @@
             setStatus('live', 'Live');
         };
 
-        source.onmessage = (e) => appendLine(e.data);
+        source.onmessage = (e) => {
+            // Filtered on arrival rather than hidden with CSS, so a filtered
+            // line never counts against the DOM cap. The trade is that
+            // un-ticking the box only reveals lines from that point on; the
+            // download link still carries the unfiltered file.
+            if (hideRconEcho.checked && isRconEcho(e.data)) return;
+            appendLine(e.data);
+        };
 
         source.onerror = () => {
             // A non-200 (e.g. an expired session returning 401) closes the
@@ -1686,24 +1701,30 @@
     // Everything the console tab polls, started and stopped together with the
     // log stream so nothing keeps running against a tab nobody is looking at.
     function startStatusPolling() {
+        // Power state is a file the sidecar writes — free, and never reaches
+        // the game server.
         refreshStatus();
         clearInterval(statusTimer);
         statusTimer = setInterval(refreshStatus, 5000);
 
+        // One refresh on open regardless of the Live metrics setting: opening
+        // the tab is itself a request to see the numbers. The timer after it
+        // is what the setting governs.
         refreshStats();
         clearInterval(statsTimer);
-        statsTimer = setInterval(refreshStats, STATS_INTERVAL);
+        statsTimer = setInterval(() => {
+            if (shouldPollMetrics()) refreshStats();
+        }, STATS_INTERVAL);
 
+        // The roster costs an RCON command, so it loads when the tab opens and
+        // whenever the operator asks — never on a timer.
         loadPlayers();
-        clearInterval(playersTimer);
-        playersTimer = setInterval(loadPlayers, PLAYERS_INTERVAL);
     }
 
     function stopStatusPolling() {
         clearInterval(statusTimer);
         clearInterval(statsTimer);
-        clearInterval(playersTimer);
-        statusTimer = statsTimer = playersTimer = null;
+        statusTimer = statsTimer = null;
     }
 
     document.querySelectorAll('.powerBtn').forEach(btn => {
@@ -1738,14 +1759,50 @@
 
     /* --------------------------------------------------------- Performance */
 
-    // The server caches its own view for ~10s, so polling faster would only
-    // repeat the same answer — and every uncached poll costs RCON commands
-    // that get echoed into the log this very page is displaying.
-    const STATS_INTERVAL = 10000;
-    const PLAYERS_INTERVAL = 30000;
+    // Every metrics refresh is one RCON `tps`, and the server writes a line to
+    // latest.log for each one — the log this page is streaming. So: 30s, only
+    // while someone is actually looking, and switchable off entirely.
+    const STATS_INTERVAL = 30000;
     // A long-running server accumulates thousands of past players; rendering
     // all of them at once is what would make the panel feel broken.
     const MAX_PLAYER_ROWS = 300;
+
+    const liveMetrics = document.getElementById('liveMetrics');
+    const hideRconEcho = document.getElementById('hideRconEcho');
+
+    // Both preferences are about noise in a log the operator owns, so they
+    // stick rather than resetting on every visit.
+    [liveMetrics, hideRconEcho].forEach(box => {
+        const saved = localStorage.getItem('rdadmin.' + box.id);
+        if (saved !== null) box.checked = saved === '1';
+        box.addEventListener('change', () => {
+            localStorage.setItem('rdadmin.' + box.id, box.checked ? '1' : '0');
+        });
+    });
+
+    // The console already echoes every command it sends, along with the output,
+    // so the server's own log line for that command is a duplicate. Dropping it
+    // is what stops a metrics poll burying the log it sits next to.
+    function isRconEcho(line) {
+        return line.includes('Rcon issued server command:') || line.includes('[Rcon: ');
+    }
+
+    function shouldPollMetrics() {
+        return liveMetrics.checked
+            // A backgrounded browser tab is nobody looking, and a poll it
+            // cannot show is a log line spent for nothing.
+            && document.visibilityState === 'visible'
+            && document.getElementById('console-tab').classList.contains('active');
+    }
+
+    liveMetrics.addEventListener('change', () => {
+        if (liveMetrics.checked) refreshStats();
+    });
+
+    // Catch up immediately on returning, rather than waiting out the interval.
+    document.addEventListener('visibilitychange', () => {
+        if (shouldPollMetrics()) refreshStats();
+    });
 
     const statTps = document.getElementById('statTps');
     const statCpu = document.getElementById('statCpu');
@@ -1850,7 +1907,6 @@
     const playersNote = document.getElementById('playersNote');
     const playersCount = document.getElementById('playersCount');
 
-    let playersTimer = null;
     let roster = [];
 
     // A player whose usercache entry has expired is known only by UUID.
