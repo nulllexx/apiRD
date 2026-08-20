@@ -41,10 +41,22 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 # stylesheet and exits 0 -- a silent success that installs nothing. That is
 # exactly what happened here.
 #
-# So this must track the SERVER's version, not the newest release:
-#   1.21.4 and later  ->  ^5.1
-#   1.21.3 and earlier -> ^2.4   (matches MC_VERSION=1.21.1 below)
-ARG RENDERCHEST_VERSION=^2.4
+# So this must track the SERVER's version, not the newest release.
+#
+# Pinned exactly rather than as a range, because the range is not safe in either
+# direction. `^2.4` resolves to 2.12.2, which is built for 1.21.4 snapshots and
+# dies on 1.21.1 with:
+#
+#   TextureResolutionException: Cannot resolve texture locator
+#   minecraft:trims/items/boots_trim_resin
+#
+# -- the resin armour trim, which does not exist before 1.21.4. 2.10.1 (Sept
+# 2024, just after 1.21.1 shipped) predates the dynamic trim generator that
+# demands it, and renders all 1721 vanilla items cleanly. Verified, not assumed.
+#
+#   Minecraft 1.21.4+       ->  ^5.1
+#   Minecraft 1.21.1        ->  2.10.1   (matches MC_VERSION in docker-compose)
+ARG RENDERCHEST_VERSION=2.10.1
 
 WORKDIR /opt/renderchest
 # The package publishes no `bin` entry, so composer never links anything into

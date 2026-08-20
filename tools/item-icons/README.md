@@ -152,56 +152,72 @@ delete `<cache>/<version>/<namespace>/`.
 
 ## The Renderchest version must match the Minecraft version
 
-This is the one setting that will silently produce nothing if it is wrong, so
-it is worth understanding rather than copying.
+This is the one setting that silently produces nothing (or crashes) if it is
+wrong, so it is worth understanding rather than copying.
 
-Renderchest discovers items by scanning a directory, and the game moved that
+Renderchest finds items by scanning a directory, and the game moved that
 directory in 1.21.4:
 
 | Renderchest | Scans                        | Minecraft        |
 |-------------|------------------------------|------------------|
 | 2.x         | `assets/<ns>/models/item/`   | up to 1.21.3     |
-| 3.x – 5.x   | `assets/<ns>/items/`         | 1.21.4 and later |
+| 3.x - 5.x   | `assets/<ns>/items/`         | 1.21.4 and later |
 
 Point 3.x+ at 1.21.1 assets and that directory does not exist, so it finds zero
 items, renders only its two internal placeholders, writes a stylesheet, and
-**exits 0**. Nothing errors; nothing appears. This is why `render_all` now fails
+**exits 0**. Nothing errors; nothing appears. That is why `render_all` fails
 explicitly on a zero-icon run instead of trusting the exit code.
 
-The server runs 1.21.1, so the Dockerfile pins `^2.4`. On a Minecraft upgrade
-past 1.21.3, this has to move to `^5.1` at the same time as `MC_VERSION`:
+The pin is an exact version, not a range, because a range is unsafe in both
+directions. `^2.4` resolves to 2.12.2, which targets 1.21.4 snapshots and dies
+on 1.21.1 with `Cannot resolve texture locator
+minecraft:trims/items/boots_trim_resin` -- the resin armour trim, which does not
+exist yet in 1.21.1.
+
+**1.21.1 needs `2.10.1`**, which renders all 1721 vanilla items cleanly. On a
+Minecraft upgrade past 1.21.3 this moves to `^5.1` alongside `MC_VERSION`:
 
 ```sh
 docker build --build-arg RENDERCHEST_VERSION='^5.1' -t item-icons tools/item-icons
 ```
 
+## Animated items
+
+Prismarine, sculk and other animated textures cannot be stored as a single PNG,
+so ImageMagick writes one file per frame -- `prismarine_stairs-0.png` through
+`prismarine_stairs-95.png`, and no bare `prismarine_stairs.png`. (Renderchest
+defaults to webp, which can animate; forcing PNG is what splits them.)
+
+The installer collapses each such family to **frame 0**, installed under the
+plain item name. An inventory slot wants a still image, and without this the
+panel would ask for `prismarine_stairs` and still get a 404.
+
+A file that merely ends in `-<digits>` with no sibling frames is left alone, so
+a mod item genuinely named that way is not renamed out from under itself.
+
 ## Known gaps
 
 Renderchest carries its own definitions for items whose models the game draws as
-entities rather than from a model file. Taken from the **v2.4.1** file listing
-(160 definitions), which is the pinned version:
+entities rather than from a model file. Taken from the **v2.10.1** file listing
+(170 definitions), which is the pinned version:
 
-| Item                          | Covered |
-|-------------------------------|---------|
-| beds                          | yes, all 16 colours |
-| banners                       | yes, all 16 colours |
-| shulker boxes                 | yes, all colours |
+| Item                              | Covered |
+|-----------------------------------|---------|
+| beds                              | yes, all 16 colours |
+| banners                           | yes, all 16 colours |
+| shulker boxes                     | yes, all colours |
 | chest, ender chest, trapped chest | yes |
-| mob heads and skulls          | yes, all 7 |
-| shield                        | yes |
-| decorated pot and sherds      | yes |
-| conduit                       | yes |
-| potions and tipped arrows     | yes |
-| leather armour trims          | yes |
-| **trident**                   | **no** |
-| **spyglass**                  | **no** |
+| mob heads and skulls              | yes, all 8 |
+| shield                            | yes |
+| decorated pot and sherds          | yes |
+| conduit                           | yes |
+| potions and tipped arrows         | yes |
+| leather armour trims              | yes |
+| **trident**                       | **no** |
+| **spyglass**                      | **no** |
 
-Note that 2.x covers **beds**, which 5.x does not — so pinning for the layout
-also happens to fix the bed.
-
-v2.4.1 predates 1.21.1 by about eight months, so anything added since that needs
-special-casing will be missing here too. Ordinary items are unaffected: those
-render from the server's own model files, not from these definitions.
+Note that 2.10.1 covers **beds**, which 5.x does not -- so pinning for the asset
+layout happens to fix the bed as well.
 
 Anything missing falls back to the panel's own lookup and then to the initials
 tile, so a gap is cosmetic rather than broken.

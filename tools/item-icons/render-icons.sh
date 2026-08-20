@@ -20,12 +20,20 @@
 
 set -euo pipefail
 
-MODS_DIR="${MODS_DIR:-/mods}"
-CACHE_DIR="${CACHE_DIR:-/cache}"
-MC_VERSION="${MC_VERSION:-1.21.1}"
-ICON_SIZE="${ICON_SIZE:-64}"
-WORK="${WORK:-/work}"
-POLL_INTERVAL="${POLL_INTERVAL:-300}"
+# Exported, not merely assigned.
+#
+# `MC_VERSION="${MC_VERSION:-1.21.1}"` on its own creates a shell variable that
+# child processes cannot see, and the manifest lookup below is a php subprocess
+# reading getenv(). Under compose the variable arrives already exported from the
+# `environment:` block and everything works; fall through to the default -- as a
+# bare `docker run` does -- and php sees nothing, matches no version, and the
+# script blames Mojang for not shipping 1.21.1.
+export MODS_DIR="${MODS_DIR:-/mods}"
+export CACHE_DIR="${CACHE_DIR:-/cache}"
+export MC_VERSION="${MC_VERSION:-1.21.1}"
+export ICON_SIZE="${ICON_SIZE:-64}"
+export WORK="${WORK:-/work}"
+export POLL_INTERVAL="${POLL_INTERVAL:-300}"
 
 VANILLA_ASSETS="$WORK/vanilla/assets"
 MOD_ASSETS="$WORK/mods/assets"
@@ -58,12 +66,24 @@ fetch_vanilla() {
 
   local manifest version_url client_url
   manifest="https://launchermeta.mojang.com/mc/game/version_manifest_v2.json"
+
+  # The version id is passed as an argument rather than read from the
+  # environment, so this cannot break again the way it did before: an argument
+  # is visible to the subprocess no matter how the caller set the variable.
   version_url="$(curl -fsSL "$manifest" \
     | php -r '$j=json_decode(stream_get_contents(STDIN),true);
-              foreach($j["versions"] as $v){ if($v["id"]===getenv("MC_VERSION")){ echo $v["url"]; exit; } }')"
+              $want=$argv[1] ?? "";
+              foreach($j["versions"] as $v){ if($v["id"]===$want){ echo $v["url"]; exit; } }' \
+          -- "$MC_VERSION")"
 
   if [ -z "$version_url" ]; then
-    echo "!! Minecraft $MC_VERSION is not in Mojang's version manifest" >&2
+    echo "!! Could not find Minecraft '$MC_VERSION' in Mojang's version manifest." >&2
+    echo "!! Manifest lists $(curl -fsSL "$manifest" | grep -o '"id"' | wc -l) versions;" >&2
+    echo "!! the newest few are:" >&2
+    curl -fsSL "$manifest" \
+      | php -r '$j=json_decode(stream_get_contents(STDIN),true);
+                foreach(array_slice($j["versions"],0,5) as $v){ echo "!!   ".$v["id"]."\n"; }' >&2
+    echo "!! Check MC_VERSION -- it must be an exact id, e.g. 1.21.1" >&2
     exit 1
   fi
 
@@ -167,9 +187,37 @@ install_namespace() {
   fi
 
   mkdir -p "$dest"
+
+  # Animated textures arrive as one file per frame.
+  #
+  # Prismarine, sculk and friends have animated textures, and PNG cannot hold
+  # more than one frame -- so ImageMagick writes prismarine_stairs-0.png through
+  # prismarine_stairs-95.png and never a bare prismarine_stairs.png. (Renderchest
+  # defaults to webp, which *can* animate; forcing png is what splits them.)
+  # Copying those through verbatim would leave the panel asking for
+  # `prismarine_stairs` and still getting a 404, so frame 0 becomes the icon and
+  # the rest are dropped. An inventory slot wants a still image anyway.
+  local base stem frame target
   for file in "$src"/*.png; do
     [ -e "$file" ] || continue
-    cp -f "$file" "$dest/$(basename "$file")"
+    base="$(basename "$file" .png)"
+    target="$base.png"
+
+    case "$base" in
+      *-[0-9] | *-[0-9][0-9] | *-[0-9][0-9][0-9])
+        stem="${base%-*}"
+        frame="${base##*-}"
+        # Only ever treat this as a frame if the whole family is frames. A real
+        # item legitimately ending in -<digits> would have no siblings, and is
+        # left alone rather than silently renamed.
+        if [ -e "$src/$stem-0.png" ]; then
+          [ "$frame" = "0" ] || continue
+          target="$stem.png"
+        fi
+        ;;
+    esac
+
+    cp -f "$file" "$dest/$target"
     moved=$((moved + 1))
   done
 
@@ -245,7 +293,9 @@ case "${1:-}" in
     render_namespace "$ns"
 
     log "output tree for '$ns' (first 20 entries)"
-    find "$RENDER_OUT/$ns" -maxdepth 3 | head -20
+    # `|| true`: head exits after 20 lines, find takes SIGPIPE, and with
+    # pipefail that 141 would kill the script before it printed its verdict.
+    find "$RENDER_OUT/$ns" -maxdepth 3 | head -20 || true
 
     # Renderchest always emits its two placeholders under items/renderchest/,
     # even when it found no real items, so the count that matters is the one in
@@ -266,7 +316,7 @@ case "${1:-}" in
     fi
 
     echo "OK: sample icons ->"
-    find "$RENDER_OUT/$ns/items/$ns" -maxdepth 1 -name '*.png' | head -5 | sed 's|.*/|  |'
+    find "$RENDER_OUT/$ns/items/$ns" -maxdepth 1 -name '*.png' | head -5 | sed 's|.*/|  |' || true
     echo
     echo "Layout is as expected. Run: render-icons all"
     ;;
