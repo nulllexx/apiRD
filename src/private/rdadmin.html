@@ -2542,11 +2542,7 @@
         clearInterval(statusTimer);
         statusTimer = setInterval(refreshStatus, 5000);
 
-        refreshStats();
-        clearInterval(statsTimer);
-        statsTimer = setInterval(() => {
-            if (shouldPollMetrics()) refreshStats();
-        }, STATS_INTERVAL);
+        scheduleStatsRefresh(true);
 
         loadPlayers();
 
@@ -2559,7 +2555,7 @@
 
     function stopStatusPolling() {
         clearInterval(statusTimer);
-        clearInterval(statsTimer);
+        clearTimeout(statsTimer);
         clearInterval(onlineTimer);
         statusTimer = statsTimer = onlineTimer = null;
     }
@@ -2617,9 +2613,25 @@
             && consoleTab && consoleTab.classList.contains('active');
     }
 
+    async function scheduleStatsRefresh(immediate = false) {
+        clearTimeout(statsTimer);
+        statsTimer = null;
+
+        if (!shouldPollMetrics()) return;
+        if (!immediate) {
+            statsTimer = setTimeout(() => scheduleStatsRefresh(true), STATS_INTERVAL);
+            return;
+        }
+
+        await refreshStats();
+        if (shouldPollMetrics()) {
+            statsTimer = setTimeout(() => scheduleStatsRefresh(true), STATS_INTERVAL);
+        }
+    }
+
     if (liveMetrics) {
         liveMetrics.addEventListener('change', () => {
-            if (liveMetrics.checked) refreshStats();
+            scheduleStatsRefresh(liveMetrics.checked);
         });
     }
 
@@ -2627,7 +2639,7 @@
         if (document.visibilityState !== 'visible') return;
         const consoleTab = document.getElementById('console-tab');
         if (consoleTab && consoleTab.classList.contains('active')) refreshOnline();
-        if (shouldPollMetrics()) refreshStats();
+        if (shouldPollMetrics()) scheduleStatsRefresh(true);
     });
 
     const statTps = document.getElementById('statTps');
