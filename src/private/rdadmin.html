@@ -855,6 +855,7 @@
         }
         .inv-acts button:hover:not(:disabled) { border-color: var(--accent) !important; }
         .inv-acts button:disabled { opacity: 0.45; cursor: not-allowed; }
+        .inv-acts-note { font-size: 0.75rem; color: var(--text-faint) !important; align-self: center; margin-left: 4px; }
         .inv-acts button.harmful { color: var(--danger) !important; border-color: var(--danger-soft) !important; }
         .inv-acts button.harmful:hover:not(:disabled) { background: var(--danger-soft) !important; border-color: var(--danger) !important; }
 
@@ -3214,45 +3215,118 @@
         return row.childElementCount ? row : null;
     }
 
-    /* The four vitals commands. Minecraft has no way to set health or hunger
-       directly, so three of these are status effects -- command_for in
-       console/players.rs is where the actual commands live. Starve is the one
-       that is not instant: it drains over a few seconds rather than snapping to
-       zero, because draining is all the game offers. */
+    /* The four vitals buttons, and which of them work on someone offline.
+
+       Online, all four go through RCON. Minecraft has no command that sets
+       health or hunger, so three of them are status effects -- command_for in
+       console/players.rs has the details, and Starve in particular drains over
+       a few seconds rather than snapping to zero, because draining is all the
+       game offers there.
+
+       Offline, none of those commands can run: they all select a loaded entity
+       and an offline player is not one. So heal, feed and starve go to
+       /players/<uuid>/vitals instead, which edits the saved player file -- the
+       same file this Overview is already reading. Those versions are the exact
+       ones: health set to the maximum, the food bar set to full or to empty,
+       at once rather than over several seconds.
+
+       Kill has no offline form on purpose. The other three describe a state to
+       leave someone in; killing describes something that happens to a player
+       who is there to have it happen to them. */
     const VITAL_ACTIONS = [
-        { action: 'heal', label: 'Heal' },
-        { action: 'feed', label: 'Feed' },
-        { action: 'starve', label: 'Starve', harmful: true },
+        { action: 'heal', label: 'Heal', offline: true },
+        { action: 'feed', label: 'Feed', offline: true },
+        { action: 'starve', label: 'Starve', harmful: true, offline: true },
         { action: 'kill', label: 'Kill', harmful: true }
     ];
 
-    /* Disabled rather than hidden when the player is offline: all four go
-       through the running server, and a row of buttons that vanishes reads as a
-       missing feature rather than an unavailable one. */
+    /* Edit an offline player's saved file. Separate from runPlayerAction
+       because there is no command and no console echo to mirror -- the honest
+       report is which file changed. Returns the same accepted/refused flag. */
+    async function runOfflineVital(player, spec) {
+        const who = playerLabel(player);
+        if (!confirm(`Really ${spec.label.toLowerCase()} ${who}?\n\nThey are offline, so this edits their saved player file directly.`)) {
+            return false;
+        }
+
+        try {
+            const response = await fetch(
+                '/api/admin/console/players/' + encodeURIComponent(player.uuid) + '/vitals',
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ action: spec.action })
+                }
+            );
+            const data = await response.json();
+
+            if (!response.ok) {
+                appendLine(data.error || `Failed to ${spec.action} ${who}`, 'lvl-ERROR');
+                return false;
+            }
+
+            appendLine(`> ${data.action} ${who} (edited ${data.uuid}.dat)`, 'lvl-echo');
+            return true;
+        } catch (err) {
+            console.error(err);
+            appendLine('Failed to reach the server', 'lvl-ERROR');
+            return false;
+        }
+    }
+
+    /* Disabled rather than hidden when a button cannot run, so an operator can
+       see it exists and why it is unavailable. */
     function vitalActions(player) {
         const row = document.createElement('div');
         row.className = 'inv-acts';
+
         const reachable = !!(player && player.online && player.name);
+        // The file is named by UUID, so a row only ever seen by name has
+        // nothing to edit.
+        const editable = !!(player && player.uuid);
 
         VITAL_ACTIONS.forEach(spec => {
             const button = document.createElement('button');
             button.type = 'button';
             button.textContent = spec.label;
             if (spec.harmful) button.classList.add('harmful');
-            button.disabled = !reachable;
-            if (!reachable) button.title = 'Only possible while they are online';
+
+            const offlinePath = !reachable && spec.offline && editable;
+            button.disabled = !reachable && !offlinePath;
+            if (button.disabled) {
+                button.title = spec.offline
+                    ? 'No UUID on record for this player yet'
+                    : 'Only possible while they are online';
+            } else if (offlinePath) {
+                button.title = 'Offline — edits their saved player file';
+            }
 
             button.addEventListener('click', async () => {
-                if (!await runPlayerAction(player.name, spec.action, spec.label)) return;
-                // The bars are now wrong by exactly the change just made. The
-                // effect lands on the server's next tick, so the re-read waits
-                // one out rather than racing it and redrawing the old numbers.
-                await new Promise(resolve => setTimeout(resolve, 400));
+                const ran = reachable
+                    ? await runPlayerAction(player.name, spec.action, spec.label)
+                    : await runOfflineVital(player, spec);
+                if (!ran) return;
+
+                // A command lands on the server's next tick, so that re-read
+                // waits one out rather than racing it and redrawing the old
+                // numbers. A file edit is already on disk by the time it
+                // answers, so there is nothing to wait for.
+                if (reachable) await new Promise(resolve => setTimeout(resolve, 400));
                 await loadOverview();
             });
 
             row.appendChild(button);
         });
+
+        if (!reachable) {
+            const note = document.createElement('span');
+            note.className = 'inv-acts-note';
+            note.textContent = editable
+                ? 'Offline — heal, feed and starve edit their saved file'
+                : 'Offline, and no UUID on record';
+            row.appendChild(note);
+        }
 
         return row;
     }

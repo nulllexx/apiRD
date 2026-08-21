@@ -848,6 +848,235 @@ pub async fn load_snapshot(
     Err(last_error.unwrap_or(InventoryError::Missing))
 }
 
+/* ------------------------------------------------- editing an offline player
+
+   Health and hunger cannot be *commanded* on someone who is not online: every
+   Minecraft command that touches them selects a loaded entity, and an offline
+   player is not one. But the state itself is right there in the same file this
+   module already reads, and nothing is holding it -- the server keeps an online
+   player in memory and writes the file on save, so for anyone offline the file
+   *is* the player.
+
+   Which makes the offline versions the exact ones. `Heal` online is an Instant
+   Health effect with a huge amplifier; offline it is `Health = max`. `Starve`
+   online drains over several seconds because the Hunger effect is all the game
+   offers; offline it is `foodLevel = 0`, at once.
+*/
+
+/// Vanilla's max health, used when the file does not say otherwise.
+const DEFAULT_MAX_HEALTH: f32 = 20.0;
+
+/// A full food bar, which is also the saturation ceiling.
+const MAX_FOOD: i32 = 20;
+
+/// What one of the vitals buttons does to a player who is not online.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OfflineVital {
+    Heal,
+    Feed,
+    Starve,
+}
+
+impl OfflineVital {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "heal" => Some(OfflineVital::Heal),
+            "feed" => Some(OfflineVital::Feed),
+            "starve" => Some(OfflineVital::Starve),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            OfflineVital::Heal => "heal",
+            OfflineVital::Feed => "feed",
+            OfflineVital::Starve => "starve",
+        }
+    }
+}
+
+/// The player's maximum health, from their attributes.
+///
+/// A modpack that raises the ceiling stores it here, and healing such a player
+/// to a hardcoded twenty would be a demotion. Only the attribute's *base* is
+/// read: modifiers come from equipment and effects that are not applied while
+/// they are offline anyway.
+///
+/// 1.21 renamed the identifying key from `Name` to `id`, so both are tried.
+fn max_health(root: &HashMap<String, Value>) -> f32 {
+    let attributes = root.get("Attributes").and_then(as_list).unwrap_or(&[]);
+
+    for entry in attributes {
+        let Some(map) = as_compound(entry) else { continue };
+        let Some(name) = field(map, &["id", "Name"]).and_then(as_str) else {
+            continue;
+        };
+        if name != "minecraft:max_health" && name != "minecraft:generic.max_health" {
+            continue;
+        }
+        if let Some(base) = field(map, &["base", "Base"]).and_then(as_f32) {
+            if base.is_finite() && base > 0.0 {
+                return base;
+            }
+        }
+    }
+
+    DEFAULT_MAX_HEALTH
+}
+
+/// Apply a vital to a parsed player compound, in place.
+///
+/// Every value is written with the NBT type the game reads it as -- `Health` is
+/// a float and `foodLevel` an int, and writing either as the other produces a
+/// file the server will not load. Split out from the file handling so the
+/// decision can be tested without a filesystem.
+pub fn apply_vital(root: &mut HashMap<String, Value>, vital: OfflineVital) {
+    match vital {
+        OfflineVital::Heal => {
+            // Never a reduction: a player already above their attribute maximum
+            // (an absorption-like modifier, a mod that grants extra) keeps it.
+            let current = root.get("Health").and_then(as_f32).unwrap_or(0.0);
+            let full = max_health(root).max(current);
+            root.insert("Health".to_string(), Value::Float(full));
+        }
+        OfflineVital::Feed => {
+            root.insert("foodLevel".to_string(), Value::Int(MAX_FOOD));
+            root.insert(
+                "foodSaturationLevel".to_string(),
+                Value::Float(MAX_FOOD as f32),
+            );
+            // Exhaustion is the meter that eats saturation. Leaving it high
+            // would start draining the bar the moment they logged back in.
+            root.insert("foodExhaustionLevel".to_string(), Value::Float(0.0));
+        }
+        OfflineVital::Starve => {
+            root.insert("foodLevel".to_string(), Value::Int(0));
+            root.insert("foodSaturationLevel".to_string(), Value::Float(0.0));
+            root.insert("foodExhaustionLevel".to_string(), Value::Float(0.0));
+        }
+    }
+}
+
+/// Check that this file survives a parse and re-serialise unchanged.
+///
+/// A player file is full of tags this code knows nothing about -- mod
+/// attachments, attribute modifiers, advancement state, recipe books. Writing
+/// back a compound that dropped or retyped any of them corrupts a character
+/// rather than heals one, and the damage would not show up until they next
+/// logged in.
+///
+/// So rather than trust the round trip, every write proves it first: serialise
+/// what was read, read it back, and require the two to be identical. A file
+/// this cannot reproduce exactly is refused untouched. Compound *ordering* is
+/// not compared, because NBT compounds are unordered maps and the game reads
+/// them by key.
+fn survives_a_round_trip(root: &HashMap<String, Value>) -> bool {
+    let Ok(bytes) = fastnbt::to_bytes(&Value::Compound(root.clone())) else {
+        return false;
+    };
+    match fastnbt::from_bytes::<HashMap<String, Value>>(&bytes) {
+        Ok(reparsed) => &reparsed == root,
+        Err(_) => false,
+    }
+}
+
+/// Where the untouched original is kept before a write.
+///
+/// Deliberately not `.dat_old`: that one belongs to the server, which rotates
+/// it on every save, and overwriting it would destroy the backup the game
+/// itself falls back to.
+fn backup_path(dat: &Path) -> PathBuf {
+    let mut name = dat.as_os_str().to_os_string();
+    name.push(".apird-backup");
+    PathBuf::from(name)
+}
+
+/// Heal, feed or starve a player who is not online, by editing their file.
+///
+/// Returns the snapshot as it now stands, so the caller can show the result
+/// without a second read.
+///
+/// The caller must have established that the player is offline. Editing the
+/// file of someone who is playing is not dangerous, but it is pointless: the
+/// server holds their state in memory and writes over it at the next autosave.
+pub async fn apply_offline_vital(
+    server_properties_path: &str,
+    uuid: &str,
+    vital: OfflineVital,
+) -> Result<PlayerSnapshot, InventoryError> {
+    let properties = read_optional(Path::new(server_properties_path)).await;
+    // Index 0 only. `.dat_old` is the server's backup and is never written.
+    let dat = playerdata_paths(server_properties_path, &properties, uuid)[0].clone();
+
+    let metadata = tokio::fs::metadata(&dat)
+        .await
+        .map_err(|_| InventoryError::Missing)?;
+    if metadata.len() > MAX_COMPRESSED {
+        return Err(InventoryError::Unreadable(
+            "player data file is implausibly large".to_string(),
+        ));
+    }
+    let before = metadata.modified().ok();
+
+    let raw = tokio::fs::read(&dat)
+        .await
+        .map_err(|e| InventoryError::Unreadable(format!("cannot read: {e}")))?;
+
+    let nbt = decompress(&raw)?;
+    let mut root: HashMap<String, Value> = fastnbt::from_bytes(&nbt)
+        .map_err(|e| InventoryError::Unreadable(format!("not valid player NBT: {e}")))?;
+
+    if !survives_a_round_trip(&root) {
+        return Err(InventoryError::Unreadable(
+            "this player's data could not be rewritten without losing part of it,              so it has been left alone"
+                .to_string(),
+        ));
+    }
+
+    apply_vital(&mut root, vital);
+
+    let edited = fastnbt::to_bytes(&Value::Compound(root.clone()))
+        .map_err(|e| InventoryError::Unreadable(format!("cannot re-encode: {e}")))?;
+
+    let mut gzipped = Vec::new();
+    {
+        use std::io::Write as _;
+        let mut encoder =
+            flate2::write::GzEncoder::new(&mut gzipped, flate2::Compression::default());
+        encoder
+            .write_all(&edited)
+            .and_then(|_| encoder.finish().map(|_| ()))
+            .map_err(|e| InventoryError::Unreadable(format!("cannot compress: {e}")))?;
+    }
+
+    // Last check before committing: if the file has been touched since it was
+    // read, the server has it -- the player logged in, or a save ran -- and
+    // this write would either be lost or would clobber newer state.
+    if tokio::fs::metadata(&dat).await.ok().and_then(|m| m.modified().ok()) != before {
+        return Err(InventoryError::Unreadable(
+            "the server wrote this player's data while it was being edited; nothing was changed"
+                .to_string(),
+        ));
+    }
+
+    // Keep the original where it can be put back by hand, then replace the file
+    // in one rename so a crash mid-write cannot leave a half-file behind.
+    tokio::fs::copy(&dat, backup_path(&dat))
+        .await
+        .map_err(|e| InventoryError::Unreadable(format!("cannot back up: {e}")))?;
+
+    let temporary = dat.with_extension("dat-apird-tmp");
+    tokio::fs::write(&temporary, &gzipped)
+        .await
+        .map_err(|e| InventoryError::Unreadable(format!("cannot write: {e}")))?;
+    tokio::fs::rename(&temporary, &dat)
+        .await
+        .map_err(|e| InventoryError::Unreadable(format!("cannot replace: {e}")))?;
+
+    Ok(snapshot_from_root(&root))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1365,6 +1594,371 @@ mod tests {
             contents[0].contents.is_empty(),
             "the second level must not be walked"
         );
+    }
+
+    /* ------------------------------------------------- offline vitals edits */
+
+    fn root_of(fields: &[(&str, Value)]) -> HashMap<String, Value> {
+        match compound(fields) {
+            Value::Compound(map) => map,
+            _ => unreachable!("compound() builds a compound"),
+        }
+    }
+
+    #[test]
+    fn heal_fills_health_to_the_vanilla_maximum() {
+        let mut root = root_of(&[("Health", Value::Float(3.5))]);
+        apply_vital(&mut root, OfflineVital::Heal);
+
+        assert_eq!(root.get("Health"), Some(&Value::Float(20.0)));
+    }
+
+    /// A modpack that raises the ceiling stores it in the attributes, and
+    /// healing to a hardcoded twenty would be a demotion.
+    #[test]
+    fn heal_respects_a_raised_max_health_attribute() {
+        let mut root = root_of(&[
+            ("Health", Value::Float(4.0)),
+            ("Attributes", Value::List(vec![
+                compound(&[
+                    ("id", Value::String("minecraft:armor".to_string())),
+                    ("base", Value::Double(0.0)),
+                ]),
+                compound(&[
+                    ("id", Value::String("minecraft:max_health".to_string())),
+                    ("base", Value::Double(30.0)),
+                ]),
+            ])),
+        ]);
+
+        apply_vital(&mut root, OfflineVital::Heal);
+        assert_eq!(root.get("Health"), Some(&Value::Float(30.0)));
+    }
+
+    /// The pre-1.21 spelling of the same attribute, which an older world still
+    /// carries.
+    #[test]
+    fn heal_reads_the_legacy_attribute_name() {
+        let mut root = root_of(&[
+            ("Health", Value::Float(1.0)),
+            ("Attributes", Value::List(vec![compound(&[
+                ("Name", Value::String("minecraft:generic.max_health".to_string())),
+                ("Base", Value::Double(24.0)),
+            ])])),
+        ]);
+
+        apply_vital(&mut root, OfflineVital::Heal);
+        assert_eq!(root.get("Health"), Some(&Value::Float(24.0)));
+    }
+
+    /// Heal must never take health away from someone already above the
+    /// attribute base.
+    #[test]
+    fn heal_never_reduces_health() {
+        let mut root = root_of(&[("Health", Value::Float(26.0))]);
+        apply_vital(&mut root, OfflineVital::Heal);
+
+        assert_eq!(root.get("Health"), Some(&Value::Float(26.0)));
+    }
+
+    #[test]
+    fn feed_fills_food_and_clears_exhaustion() {
+        let mut root = root_of(&[
+            ("foodLevel", Value::Int(2)),
+            ("foodSaturationLevel", Value::Float(0.0)),
+            ("foodExhaustionLevel", Value::Float(3.9)),
+        ]);
+
+        apply_vital(&mut root, OfflineVital::Feed);
+
+        assert_eq!(root.get("foodLevel"), Some(&Value::Int(20)));
+        assert_eq!(root.get("foodSaturationLevel"), Some(&Value::Float(20.0)));
+        // Left high, this would start draining the bar the moment they logged in.
+        assert_eq!(root.get("foodExhaustionLevel"), Some(&Value::Float(0.0)));
+    }
+
+    #[test]
+    fn starve_empties_the_bar_exactly() {
+        let mut root = root_of(&[
+            ("foodLevel", Value::Int(20)),
+            ("foodSaturationLevel", Value::Float(20.0)),
+        ]);
+
+        apply_vital(&mut root, OfflineVital::Starve);
+
+        assert_eq!(root.get("foodLevel"), Some(&Value::Int(0)));
+        assert_eq!(root.get("foodSaturationLevel"), Some(&Value::Float(0.0)));
+    }
+
+    /// The game reads `Health` as a float and `foodLevel` as an int. Writing
+    /// either as the other produces a file the server refuses to load, and the
+    /// damage only shows up when the player next joins.
+    #[test]
+    fn the_written_types_are_the_ones_the_game_reads() {
+        let mut root = root_of(&[]);
+        apply_vital(&mut root, OfflineVital::Heal);
+        apply_vital(&mut root, OfflineVital::Feed);
+
+        assert!(matches!(root.get("Health"), Some(Value::Float(_))));
+        assert!(matches!(root.get("foodLevel"), Some(Value::Int(_))));
+        assert!(matches!(root.get("foodSaturationLevel"), Some(Value::Float(_))));
+    }
+
+    /// Feeding must not disturb health, and healing must not disturb hunger.
+    #[test]
+    fn each_vital_touches_only_its_own_fields() {
+        let mut root = root_of(&[
+            ("Health", Value::Float(7.0)),
+            ("foodLevel", Value::Int(3)),
+            ("XpLevel", Value::Int(42)),
+        ]);
+
+        apply_vital(&mut root, OfflineVital::Feed);
+        assert_eq!(root.get("Health"), Some(&Value::Float(7.0)));
+        assert_eq!(root.get("XpLevel"), Some(&Value::Int(42)));
+
+        apply_vital(&mut root, OfflineVital::Starve);
+        assert_eq!(root.get("Health"), Some(&Value::Float(7.0)));
+    }
+
+    #[test]
+    fn offline_vital_names_parse_and_round_trip() {
+        for vital in [OfflineVital::Heal, OfflineVital::Feed, OfflineVital::Starve] {
+            assert_eq!(OfflineVital::parse(vital.as_str()), Some(vital));
+        }
+        assert_eq!(OfflineVital::parse(" HEAL "), Some(OfflineVital::Heal));
+        // Kill has no offline form and must not quietly acquire one.
+        for bogus in ["", "kill", "op", "heal me"] {
+            assert_eq!(OfflineVital::parse(bogus), None, "{bogus:?} must be refused");
+        }
+    }
+
+    /* ------------------------------------------- the write path, end to end */
+
+    /// Build a server directory with one player file in it, and return the
+    /// fake `server.properties` path the API is configured with.
+    async fn server_with_player(label: &str, uuid: &str, root: &HashMap<String, Value>) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("apird-offline-{label}"));
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        let playerdata = dir.join("world").join("playerdata");
+        tokio::fs::create_dir_all(&playerdata).await.unwrap();
+
+        let properties = dir.join("server.properties");
+        tokio::fs::write(&properties, "level-name=world\n").await.unwrap();
+
+        let nbt = fastnbt::to_bytes(&Value::Compound(root.clone())).unwrap();
+        tokio::fs::write(playerdata.join(format!("{uuid}.dat")), gzip(&nbt))
+            .await
+            .unwrap();
+
+        properties
+    }
+
+    #[tokio::test]
+    async fn healing_an_offline_player_rewrites_their_file() {
+        let uuid = "11111111-2222-3333-4444-555555555555";
+        let root = root_of(&[
+            ("Health", Value::Float(2.0)),
+            ("foodLevel", Value::Int(4)),
+            ("XpLevel", Value::Int(9)),
+            // Something this code has no idea about, which must survive.
+            ("neoforge:attachments", compound(&[
+                ("create:goggles", Value::Byte(1)),
+                ("deep", Value::List(vec![Value::Long(-1), Value::Long(2)])),
+            ])),
+        ]);
+        let properties = server_with_player("heal", uuid, &root).await;
+
+        let after = apply_offline_vital(properties.to_str().unwrap(), uuid, OfflineVital::Heal)
+            .await
+            .expect("the edit succeeds");
+        assert_eq!(after.vitals.health, Some(20.0));
+
+        // Read it back off disk the way the panel would.
+        let (reloaded, _) = load_snapshot(properties.to_str().unwrap(), uuid)
+            .await
+            .expect("the rewritten file still parses");
+        assert_eq!(reloaded.vitals.health, Some(20.0));
+        assert_eq!(reloaded.vitals.food, Some(4), "hunger was not touched");
+        assert_eq!(reloaded.vitals.xp_level, Some(9), "XP was not touched");
+    }
+
+    /// The point of the round-trip guard: everything this module does not
+    /// understand has to come back out of the file byte for byte.
+    #[tokio::test]
+    async fn an_edit_preserves_tags_this_code_knows_nothing_about() {
+        let uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        let attachments = compound(&[
+            ("create:heat", Value::Double(1234.5)),
+            ("bytes", Value::ByteArray(fastnbt::ByteArray::new(vec![-1, 0, 1]))),
+            ("longs", Value::LongArray(fastnbt::LongArray::new(vec![i64::MAX]))),
+            ("empty", Value::List(Vec::new())),
+        ]);
+        let root = root_of(&[
+            ("Health", Value::Float(1.0)),
+            ("recipeBook", attachments.clone()),
+        ]);
+        let properties = server_with_player("preserve", uuid, &root).await;
+
+        apply_offline_vital(properties.to_str().unwrap(), uuid, OfflineVital::Feed)
+            .await
+            .expect("the edit succeeds");
+
+        let dat = std::path::Path::new(properties.to_str().unwrap())
+            .parent()
+            .unwrap()
+            .join("world")
+            .join("playerdata")
+            .join(format!("{uuid}.dat"));
+        let raw = tokio::fs::read(&dat).await.unwrap();
+        let parsed: HashMap<String, Value> =
+            fastnbt::from_bytes(&decompress(&raw).unwrap()).unwrap();
+
+        assert_eq!(parsed.get("recipeBook"), Some(&attachments));
+        // And the edit itself landed.
+        assert_eq!(parsed.get("foodLevel"), Some(&Value::Int(20)));
+    }
+
+    /// The original must be recoverable by hand, and the server's own
+    /// `.dat_old` must not be the thing that gets clobbered to do it.
+    #[tokio::test]
+    async fn the_original_is_kept_and_dat_old_is_left_alone() {
+        let uuid = "12341234-1234-1234-1234-123412341234";
+        let root = root_of(&[("Health", Value::Float(6.0))]);
+        let properties = server_with_player("backup", uuid, &root).await;
+
+        let playerdata = properties.parent().unwrap().join("world").join("playerdata");
+        let dat_old = playerdata.join(format!("{uuid}.dat_old"));
+        tokio::fs::write(&dat_old, b"the server's own backup").await.unwrap();
+
+        apply_offline_vital(properties.to_str().unwrap(), uuid, OfflineVital::Heal)
+            .await
+            .expect("the edit succeeds");
+
+        let backup = playerdata.join(format!("{uuid}.dat.apird-backup"));
+        let raw = tokio::fs::read(&backup).await.expect("a backup was kept");
+        let parsed: HashMap<String, Value> =
+            fastnbt::from_bytes(&decompress(&raw).unwrap()).unwrap();
+        assert_eq!(parsed.get("Health"), Some(&Value::Float(6.0)), "pre-edit state");
+
+        assert_eq!(
+            tokio::fs::read(&dat_old).await.unwrap(),
+            b"the server's own backup",
+            "the game's own backup must not be touched"
+        );
+
+        // And no working file was left lying around.
+        assert!(
+            !playerdata.join(format!("{uuid}.dat-apird-tmp")).exists(),
+            "the temporary file must be renamed away, not left behind"
+        );
+    }
+
+    #[tokio::test]
+    async fn editing_a_player_with_no_file_is_a_miss() {
+        let uuid = "99999999-9999-9999-9999-999999999999";
+        let root = root_of(&[("Health", Value::Float(1.0))]);
+        let properties = server_with_player("missing", "00000000-0000-0000-0000-000000000000", &root).await;
+
+        let result =
+            apply_offline_vital(properties.to_str().unwrap(), uuid, OfflineVital::Heal).await;
+        assert!(matches!(result, Err(InventoryError::Missing)));
+    }
+
+    /// A file that cannot be reproduced exactly is refused rather than
+    /// rewritten. Nothing today fails this, which is the point of asserting it.
+    #[test]
+    fn a_realistic_player_compound_survives_the_guard() {
+        let root = root_of(&[
+            ("Health", Value::Float(17.5)),
+            ("Air", Value::Short(300)),
+            ("OnGround", Value::Byte(1)),
+            ("UUID", Value::IntArray(fastnbt::IntArray::new(vec![1, 2, 3, 4]))),
+            ("Pos", Value::List(vec![Value::Double(1.0), Value::Double(2.0)])),
+            ("mod", compound(&[("nested", Value::String("x".to_string()))])),
+        ]);
+
+        assert!(survives_a_round_trip(&root));
+    }
+
+    /* ---------------------------------------------------- round-trip probe */
+
+    /// Can a player file survive being parsed and written back?
+    ///
+    /// This decides whether editing an offline player is safe at all. Their
+    /// file is full of tags this code knows nothing about -- mod attachments,
+    /// attribute modifiers, advancement state -- and writing back a compound
+    /// that dropped or retyped any of them would corrupt a character rather
+    /// than heal one.
+    #[test]
+    fn probe_round_trip_fidelity() {
+        let original = compound(&[
+            ("Health", Value::Float(17.5)),
+            ("foodLevel", Value::Int(12)),
+            ("foodSaturationLevel", Value::Float(2.5)),
+            ("foodExhaustionLevel", Value::Float(0.0)),
+            ("XpP", Value::Float(0.375)),
+            ("XpLevel", Value::Int(30)),
+            ("Score", Value::Int(451)),
+            ("playerGameType", Value::Int(0)),
+            ("Dimension", Value::String("minecraft:the_nether".to_string())),
+            ("Air", Value::Short(300)),
+            ("OnGround", Value::Byte(1)),
+            ("AbsorptionAmount", Value::Float(4.0)),
+            ("UUID", Value::IntArray(fastnbt::IntArray::new(vec![1, -2, 3, -4]))),
+            ("Pos", Value::List(vec![
+                Value::Double(103.5),
+                Value::Double(64.0),
+                Value::Double(-89.25),
+            ])),
+            ("Motion", Value::List(vec![
+                Value::Double(0.0),
+                Value::Double(-0.0784),
+                Value::Double(0.0),
+            ])),
+            ("Rotation", Value::List(vec![Value::Float(90.0), Value::Float(-12.5)])),
+            // A long array, which NBT keeps distinct from a list of longs.
+            ("Longs", Value::LongArray(fastnbt::LongArray::new(vec![i64::MIN, 0, i64::MAX]))),
+            ("Bytes", Value::ByteArray(fastnbt::ByteArray::new(vec![-128, 0, 127]))),
+            // What a mod's attachment looks like: nested compounds under a
+            // namespaced key, holding types this code never inspects.
+            ("neoforge:attachments", compound(&[
+                ("create:heat", Value::Double(1234.5)),
+                ("nested", compound(&[
+                    ("deep", Value::List(vec![
+                        compound(&[("id", Value::String("createbigcannons:ap_shell".to_string()))]),
+                        compound(&[("count", Value::Byte(64))]),
+                    ])),
+                ])),
+            ])),
+            // An empty list and an empty compound: both legal, both easy to
+            // lose or retype.
+            ("EmptyList", Value::List(Vec::new())),
+            ("EmptyCompound", Value::Compound(std::collections::HashMap::new())),
+            ("Unicode", Value::String("Robighost01 \u{2014} caf\u{e9}".to_string())),
+        ]);
+
+        let bytes = fastnbt::to_bytes(&original).expect("the fixture serialises");
+        let parsed: HashMap<String, Value> =
+            fastnbt::from_bytes(&bytes).expect("and parses back");
+
+        // The shape this code would actually hold and rewrite.
+        let rewritten = fastnbt::to_bytes(&Value::Compound(parsed.clone()))
+            .expect("a parsed compound re-serialises");
+        let reparsed: HashMap<String, Value> =
+            fastnbt::from_bytes(&rewritten).expect("and parses again");
+
+        assert_eq!(parsed, reparsed, "a read/write cycle must lose nothing");
+
+        // Spot-check the types most likely to be quietly widened or collapsed.
+        assert!(matches!(reparsed.get("Health"), Some(Value::Float(_))));
+        assert!(matches!(reparsed.get("Air"), Some(Value::Short(_))));
+        assert!(matches!(reparsed.get("OnGround"), Some(Value::Byte(_))));
+        assert!(matches!(reparsed.get("Bytes"), Some(Value::ByteArray(_))));
+        assert!(matches!(reparsed.get("Longs"), Some(Value::LongArray(_))));
+        assert!(matches!(reparsed.get("UUID"), Some(Value::IntArray(_))));
+        assert!(matches!(reparsed.get("EmptyList"), Some(Value::List(_))));
+        assert!(matches!(reparsed.get("EmptyCompound"), Some(Value::Compound(_))));
     }
 
     /* -------------------------------------------------------------- vitals */

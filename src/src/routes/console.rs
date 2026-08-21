@@ -497,6 +497,95 @@ async fn player_action(
     })))
 }
 
+#[derive(Deserialize)]
+struct OfflineVitalBody {
+    /// "heal", "feed" or "starve". Not "kill" — see below.
+    action: String,
+}
+
+/// POST /api/admin/console/players/{uuid}/vitals — heal, feed or starve someone
+/// who is not online.
+///
+/// The online buttons go through RCON, and cannot work here: every Minecraft
+/// command that touches health or hunger selects a loaded entity, and an
+/// offline player is not one. So this edits their `playerdata` file directly,
+/// which is the same file the Overview already reads — for anyone offline, that
+/// file *is* the player.
+///
+/// Kill has no offline form and is deliberately absent. Heal, feed and starve
+/// describe a state to leave someone in; killing describes something that
+/// happens to a player who is there to have it happen to them.
+async fn offline_vitals(
+    state: web::Data<AppState>,
+    admin: AdminUser,
+    path: web::Path<String>,
+    body: web::Json<OfflineVitalBody>,
+) -> Result<HttpResponse, AppError> {
+    let uuid = path.into_inner().trim().to_ascii_lowercase();
+
+    // Becomes a filename, so anything that could not name a player file is
+    // refused outright rather than cleaned up into one that could.
+    if !inventory::is_canonical_uuid(&uuid) {
+        return Err(AppError::BadRequest(
+            "That is not a valid player UUID".to_string(),
+        ));
+    }
+
+    let vital = inventory::OfflineVital::parse(&body.action).ok_or_else(|| {
+        AppError::BadRequest(
+            "Unknown action; expected one of heal, feed, starve".to_string(),
+        )
+    })?;
+
+    // Refused rather than attempted for an online player. The server holds
+    // their state in memory and writes the file at the next autosave, so the
+    // edit would apply, disappear minutes later, and look like a bug in this
+    // endpoint rather than the misuse it is.
+    let (online, _) = online_now(&state).await;
+    let roster = players::load_roster(&state.config.server_properties_path, &online).await;
+    if roster
+        .iter()
+        .any(|player| player.uuid.as_deref() == Some(uuid.as_str()) && player.online)
+    {
+        return Err(AppError::BadRequest(
+            "That player is online — use the buttons on a running server, which take effect \
+             immediately. Editing their saved file would be overwritten at the next autosave."
+                .to_string(),
+        ));
+    }
+
+    log::info!(
+        "console offline vitals by {}: {} {}",
+        admin.username,
+        vital.as_str(),
+        uuid
+    );
+
+    let snapshot = inventory::apply_offline_vital(
+        &state.config.server_properties_path,
+        &uuid,
+        vital,
+    )
+    .await
+    .map_err(|e| match e {
+        InventoryError::Missing => {
+            AppError::NotFound("This player has no saved data on the server yet".to_string())
+        }
+        InventoryError::Unreadable(why) => {
+            log::error!("console: offline vitals for {uuid} failed: {why}");
+            // The message is written for an operator to act on, so it is
+            // passed through rather than replaced with a generic failure.
+            AppError::BadRequest(why)
+        }
+    })?;
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "uuid": uuid,
+        "action": vital.as_str(),
+        "vitals": snapshot.vitals,
+    })))
+}
+
 /// GET /api/admin/console/download — the raw `latest.log`.
 async fn download_log(
     req: actix_web::HttpRequest,
@@ -538,6 +627,8 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             // Three segments, so it cannot be swallowed by the two-segment
             // `{action}` route below.
             .route("/players/{uuid}/inventory", web::get().to(player_inventory))
+            // Before `/players/{action}` so a UUID cannot be read as an action.
+            .route("/players/{uuid}/vitals", web::post().to(offline_vitals))
             .route(
                 "/item-texture/{namespace}/{name}",
                 web::get().to(item_texture),
