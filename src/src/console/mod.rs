@@ -10,6 +10,7 @@
 //! a rotating log file and a long-lived HTTP stream — is awkward to test
 //! directly, while the parsing that actually goes wrong is not.
 
+pub mod audit;
 pub mod control;
 pub mod inventory;
 pub mod mod_assets;
@@ -46,10 +47,18 @@ impl LogSource {
     }
 }
 
-/// Both live log streams, each fed by its own tail task.
+/// Both live log streams, each fed by its own tail task — plus the audit
+/// channel, which is fed by this API rather than by the server.
 pub struct Consoles {
     pub server_log: Arc<LogHub>,
     pub stdout: Arc<LogHub>,
+    /// Attribution lines: who ran what, as it happens.
+    ///
+    /// A hub of its own, and not a [`LogSource`], because it is not a view of
+    /// the server's output — it is a claim this API makes about its own
+    /// callers. Keeping it off the log channels is what stops a chat message
+    /// from arriving as one. See [`audit`].
+    pub audit: Arc<LogHub>,
 }
 
 impl Consoles {
@@ -57,6 +66,7 @@ impl Consoles {
         Arc::new(Self {
             server_log: LogHub::new(capacity),
             stdout: LogHub::new(capacity),
+            audit: LogHub::new(capacity),
         })
     }
 
@@ -255,6 +265,27 @@ pub fn sse_frame(line: &str) -> String {
     out
 }
 
+/// Render one line as a *named* SSE event.
+///
+/// The event name is what separates channels that must not be confusable. A
+/// browser dispatches `event: audit` frames only to a listener registered for
+/// "audit", and nothing in the payload can move a frame between names — the
+/// name is written here, by this API, from a `&'static str`.
+///
+/// That is what makes an attribution line unforgeable from inside the game.
+/// Anything that can make the server print a line can print one that *reads*
+/// like an attribution, and on a single channel that would be indistinguishable
+/// from the real thing. Server output goes out unnamed and lands in the log
+/// view; attribution goes out named and lands nowhere else.
+pub fn sse_event(name: &'static str, line: &str) -> String {
+    let mut out = String::with_capacity(line.len() + name.len() + 16);
+    out.push_str("event: ");
+    out.push_str(name);
+    out.push('\n');
+    out.push_str(&sse_frame(line));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -298,6 +329,32 @@ mod tests {
     #[test]
     fn sse_frame_handles_empty_input() {
         assert_eq!(sse_frame(""), "data: \n\n");
+    }
+
+    #[test]
+    fn sse_event_names_the_frame() {
+        assert_eq!(sse_event("audit", "hello"), "event: audit\ndata: hello\n\n");
+    }
+
+    /// The name is written once, before the payload. A payload that tried to
+    /// declare its own name would be sending `data: event: ...`, which is data.
+    #[test]
+    fn a_payload_cannot_smuggle_its_own_event_name() {
+        let forged = sse_event("audit", "event: something-else");
+
+        assert_eq!(forged, "event: audit\ndata: event: something-else\n\n");
+        assert_eq!(forged.matches("event: audit").count(), 1);
+        assert!(forged.starts_with("event: audit\n"));
+    }
+
+    /// A multi-line payload gets one name and several data lines, not one
+    /// event per line — otherwise half of it would arrive unnamed.
+    #[test]
+    fn a_multi_line_payload_stays_one_named_event() {
+        assert_eq!(
+            sse_event("audit", "a\nb"),
+            "event: audit\ndata: a\ndata: b\n\n"
+        );
     }
 
     #[test]

@@ -930,6 +930,33 @@
         #consoleOutput .lvl-meta { color: var(--text-faint) !important; font-style: italic; }
         #consoleOutput .lvl-echo { color: var(--accent) !important; font-weight: bold; }
 
+        /* Attribution. Deliberately unlike every other line in this view: it is
+           the one kind that does not come from the server, and an operator has
+           to be able to tell that at a glance rather than by reading. Server
+           output can imitate the words; it cannot get this styling, because it
+           cannot arrive on the `audit` event that puts it here. */
+        #consoleOutput .lvl-audit {
+            display: block;
+            border-left: 3px solid var(--accent) !important;
+            background: var(--accent-soft) !important;
+            padding: 2px 8px;
+            margin: 2px 0;
+            color: var(--text) !important;
+        }
+        #consoleOutput .lvl-audit.failed {
+            border-left-color: var(--danger) !important;
+            background: var(--danger-soft) !important;
+        }
+        #consoleOutput .lvl-audit .who { font-weight: 700; }
+        #consoleOutput .lvl-audit .what { font-family: inherit; }
+        #consoleOutput .lvl-audit .tag {
+            font-size: 0.7em;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            opacity: 0.7;
+            margin-right: 6px;
+        }
+
         #consoleForm {
             display: flex;
             gap: 8px;
@@ -2458,6 +2485,58 @@
         }
     }
 
+    /* Render one attribution entry.
+
+       These arrive on their own SSE event, never as log text, so this is the
+       only path that can produce an `lvl-audit` line. That is the point: a
+       player can type anything into chat, including something that reads like
+       an entry below, and it will still be drawn as the ordinary log line it
+       is. See console/audit.rs.
+
+       Built from DOM nodes with textContent rather than innerHTML, so an
+       operator name or a command containing markup is shown, not run. */
+    function appendAuditLine(entry) {
+        if (!consoleOutput) return;
+
+        const line = document.createElement('span');
+        line.className = 'line lvl-audit' + (entry.outcome === 'failed' ? ' failed' : '');
+
+        const tag = document.createElement('span');
+        tag.className = 'tag';
+        tag.textContent = 'panel';
+        line.appendChild(tag);
+
+        const who = document.createElement('span');
+        who.className = 'who';
+        who.textContent = entry.username || 'unknown';
+        line.appendChild(who);
+
+        const verb = entry.outcome === 'failed' ? ' tried to run ' :
+                     entry.outcome === 'pending' ? ' is running ' : ' ran ';
+        line.appendChild(document.createTextNode(verb));
+
+        const what = document.createElement('span');
+        what.className = 'what';
+        what.textContent = entry.command || '';
+        line.appendChild(what);
+
+        if (entry.detail) {
+            line.appendChild(document.createTextNode(` — ${entry.detail}`));
+        }
+
+        if (entry.at) {
+            line.title = `${entry.at}${entry.target ? ' · ' + entry.target : ''}`;
+        }
+
+        consoleOutput.appendChild(line);
+        while (consoleOutput.childElementCount > MAX_CONSOLE_LINES) {
+            consoleOutput.removeChild(consoleOutput.firstChild);
+        }
+        if (autoscroll && autoscroll.checked && stuckToBottom) {
+            consoleOutput.scrollTop = consoleOutput.scrollHeight;
+        }
+    }
+
     if (consoleOutput) {
         consoleOutput.addEventListener('scroll', () => {
             const distance = consoleOutput.scrollHeight - consoleOutput.scrollTop - consoleOutput.clientHeight;
@@ -2490,6 +2569,21 @@
             if (hideRconEcho && hideRconEcho.checked && isRconEcho(e.data)) return;
             appendLine(e.data);
         };
+
+        /* A named listener, so only frames the API named `audit` land here.
+           This is what makes attribution unforgeable from inside the game: the
+           event name is chosen server-side and nothing in a log line can move a
+           frame onto it. Never route these through onmessage. */
+        source.addEventListener('audit', (e) => {
+            let entry;
+            try {
+                entry = JSON.parse(e.data);
+            } catch (err) {
+                console.error('unreadable audit entry', err);
+                return;
+            }
+            appendAuditLine(entry);
+        });
 
         source.onerror = () => {
             source.close();

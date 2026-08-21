@@ -123,6 +123,23 @@ async fn setup_database(pool: &MySqlPool) -> Result<(), sqlx::Error> {
             FOREIGN KEY (incident_id) REFERENCES incidents(id) ON DELETE CASCADE,
             FOREIGN KEY (component_id) REFERENCES components(id)
         ) ENGINE=InnoDB"#,
+        // Who ran what on the console.
+        //
+        // No foreign key to `users`: this outlives the account. An operator
+        // whose row is deleted must not take their history with them, which is
+        // the whole point of keeping one.
+        r#"CREATE TABLE IF NOT EXISTS console_audit (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            at DATETIME(3) NOT NULL,
+            username VARCHAR(255) NOT NULL,
+            kind VARCHAR(32) NOT NULL,
+            command TEXT NOT NULL,
+            target VARCHAR(255) NULL,
+            outcome VARCHAR(16) NOT NULL,
+            detail TEXT NULL,
+            INDEX idx_console_audit_at (at),
+            INDEX idx_console_audit_user (username)
+        ) ENGINE=InnoDB"#,
         r#"CREATE TABLE IF NOT EXISTS meta (
             `key` VARCHAR(255) PRIMARY KEY,
             `value` TEXT

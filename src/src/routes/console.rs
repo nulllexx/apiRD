@@ -12,7 +12,8 @@ use crate::console::inventory::{self, InventoryError};
 use crate::console::textures::TextureError;
 use crate::console::players::{self, PlayerAction};
 use crate::console::stats::{self, STATS_MAX_AGE};
-use crate::console::{sse_frame, strip_ansi, LogSource};
+use crate::console::audit::{self, Kind, Outcome};
+use crate::console::{sse_event, sse_frame, strip_ansi, LogSource};
 use crate::error::AppError;
 use crate::middleware::admin_auth::AdminUser;
 use crate::AppState;
@@ -30,28 +31,73 @@ fn sse_response() -> actix_web::HttpResponseBuilder {
     builder
 }
 
+/// The SSE event name attribution lines are delivered under.
+///
+/// A `&'static str` chosen here and nowhere else. See `console::audit` for why
+/// that is the security property and not just a naming convention.
+const AUDIT_EVENT: &str = "audit";
+
 fn log_stream(
     backlog: Vec<Arc<str>>,
     rx: broadcast::Receiver<Arc<str>>,
+    audit: Option<(Vec<Arc<str>>, broadcast::Receiver<Arc<str>>)>,
     heartbeat: Duration,
 ) -> impl futures_util::Stream<Item = Result<web::Bytes, actix_web::Error>> {
     // The whole replay buffer goes out as one frame so a reconnecting client
-    // repaints in a single pass rather than a few hundred.
-    let head = web::Bytes::from(backlog.iter().map(|line| sse_frame(line)).collect::<String>());
+    // repaints in a single pass rather than a few hundred. Recent attribution
+    // rides along in the same frame, named, so a console opened mid-session
+    // starts with the actions it missed rather than only future ones.
+    let (audit_backlog, audit_rx) = match audit {
+        Some((backlog, rx)) => (backlog, Some(rx)),
+        None => (Vec::new(), None),
+    };
 
-    let live = futures_util::stream::unfold(rx, move |mut rx| async move {
-        // `timeout` doubles as the heartbeat clock, which avoids pulling in
-        // tokio-stream or hand-rolling a select! just for a keepalive.
-        let frame = match tokio::time::timeout(heartbeat, rx.recv()).await {
-            Ok(Ok(line)) => web::Bytes::from(sse_frame(&line)),
-            // Surfaced rather than swallowed, so a slow client can see that it
-            // missed lines instead of silently believing the log went quiet.
-            Ok(Err(RecvError::Lagged(n))) => web::Bytes::from(format!(": lagged {n}\n\n")),
-            Ok(Err(RecvError::Closed)) => return None,
-            Err(_elapsed) => web::Bytes::from_static(b": ping\n\n"),
-        };
-        Some((Ok::<_, actix_web::Error>(frame), rx))
-    });
+    let mut head = backlog.iter().map(|line| sse_frame(line)).collect::<String>();
+    for line in &audit_backlog {
+        head.push_str(&sse_event(AUDIT_EVENT, line));
+    }
+    let head = web::Bytes::from(head);
+
+    let live = futures_util::stream::unfold(
+        (rx, audit_rx),
+        move |(mut rx, mut audit_rx)| async move {
+            // A closed audit channel must not become a busy loop, so it is
+            // dropped from the select rather than polled forever. `pending()`
+            // is what lets one select arm be absent.
+            let frame = tokio::select! {
+                // `timeout` doubles as the heartbeat clock, which avoids pulling
+                // in tokio-stream or hand-rolling a select! just for a keepalive.
+                result = tokio::time::timeout(heartbeat, rx.recv()) => match result {
+                    Ok(Ok(line)) => web::Bytes::from(sse_frame(&line)),
+                    // Surfaced rather than swallowed, so a slow client can see
+                    // that it missed lines instead of silently believing the log
+                    // went quiet.
+                    Ok(Err(RecvError::Lagged(n))) => web::Bytes::from(format!(": lagged {n}\n\n")),
+                    Ok(Err(RecvError::Closed)) => return None,
+                    Err(_elapsed) => web::Bytes::from_static(b": ping\n\n"),
+                },
+                result = async {
+                    match audit_rx.as_mut() {
+                        Some(rx) => rx.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => match result {
+                    Ok(line) => web::Bytes::from(sse_event(AUDIT_EVENT, &line)),
+                    Err(RecvError::Lagged(n)) => {
+                        web::Bytes::from(format!(": audit lagged {n}\n\n"))
+                    }
+                    // The log stream outlives the audit channel rather than
+                    // ending with it: losing attribution is bad, losing the
+                    // console as well would be worse.
+                    Err(RecvError::Closed) => {
+                        audit_rx = None;
+                        web::Bytes::from_static(b": audit closed\n\n")
+                    }
+                },
+            };
+            Some((Ok::<_, actix_web::Error>(frame), (rx, audit_rx)))
+        },
+    );
 
     futures_util::stream::once(async move { Ok::<_, actix_web::Error>(head) }).chain(live)
 }
@@ -69,7 +115,10 @@ async fn stream_log(
 ) -> HttpResponse {
     let source = LogSource::parse(query.source.as_deref());
     let (backlog, rx) = state.console.get(source).subscribe();
-    sse_response().streaming(log_stream(backlog, rx, HEARTBEAT))
+    // Attribution rides along with whichever log the viewer chose, since it
+    // belongs to neither and is relevant to both.
+    let audit = state.console.audit.subscribe();
+    sse_response().streaming(log_stream(backlog, rx, Some(audit), HEARTBEAT))
 }
 
 #[derive(Deserialize)]
@@ -85,16 +134,49 @@ async fn run_command(
 ) -> Result<HttpResponse, AppError> {
     let command = validate_command(&body.command)?;
 
-    // Audit trail: who ran what. There is deliberately no denylist — the route
-    // is admin-only, and operators need the full command set.
+    // Who ran what. There is deliberately no denylist — the route is
+    // admin-only and operators need the full command set — so attribution is
+    // what makes that safe to offer rather than restriction.
     log::info!("console command by {}: {}", admin.username, command);
+    let record = audit_or_refuse(&state, &admin, Kind::Command, &command, None).await?;
 
-    let output = run_rcon(&state, &command).await?;
+    let output = audit::settle(
+        &state.pool,
+        &state.console.audit,
+        record,
+        run_rcon(&state, &command).await,
+    )
+    .await?;
 
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "command": command,
         "output": strip_ansi(output.trim()),
     })))
+}
+
+/// Open an audit record, or refuse the action.
+///
+/// Every mutating console route goes through here first. The refusal is the
+/// point: an action nobody can be shown to have taken is exactly what this
+/// exists to prevent, so failing to record one means not doing it. That costs
+/// nothing in practice — `AdminUser` is itself resolved by a database query, so
+/// a database that cannot be written to has already turned every one of these
+/// routes into a 401.
+async fn audit_or_refuse(
+    state: &AppState,
+    admin: &AdminUser,
+    kind: Kind,
+    command: &str,
+    target: Option<&str>,
+) -> Result<audit::Record, AppError> {
+    audit::begin(&state.pool, &admin.username, kind, command, target)
+        .await
+        .map_err(|e| {
+            log::error!("console: refusing to run `{command}` unrecorded: {e}");
+            AppError::Internal(
+                "The action was not run: it could not be recorded in the audit log".to_string(),
+            )
+        })
 }
 
 /// Run a command that has already been validated, mapping any failure onto the
@@ -141,13 +223,23 @@ async fn power(
     })?;
 
     log::info!("console power action by {}: {}", admin.username, action.as_str());
+    let record = audit_or_refuse(&state, &admin, Kind::Power, action.as_str(), None).await?;
 
-    control::request(&state.config.control_dir, action)
-        .await
-        .map_err(|e| {
-            log::error!("console: cannot queue {} for the sidecar: {}", action.as_str(), e);
-            AppError::Internal("Server control is unavailable".to_string())
-        })?;
+    // Recorded as queued rather than done, which is all this route can honestly
+    // claim: the sidecar acts on it afterwards, and a stop that succeeds here
+    // takes the server down before anything could report back.
+    audit::settle(
+        &state.pool,
+        &state.console.audit,
+        record,
+        control::request(&state.config.control_dir, action)
+            .await
+            .map_err(|e| {
+                log::error!("console: cannot queue {} for the sidecar: {}", action.as_str(), e);
+                AppError::Internal("Server control is unavailable".to_string())
+            }),
+    )
+    .await?;
 
     // The sidecar polls the spool directory, so this is an acknowledgement that
     // the request was queued, not that the container has finished acting on it.
@@ -483,10 +575,18 @@ async fn player_action(
 
     let command = players::command_for(action, player, body.reason.as_deref());
 
-    // Audit trail: who did what to whom.
+    // Who did what to whom.
     log::info!("console player action by {}: {}", admin.username, command);
+    let record =
+        audit_or_refuse(&state, &admin, Kind::Player, &command, Some(player)).await?;
 
-    let output = run_rcon(&state, &command).await?;
+    let output = audit::settle(
+        &state.pool,
+        &state.console.audit,
+        record,
+        run_rcon(&state, &command).await,
+    )
+    .await?;
 
     // The roster is about to be out of date by exactly the change just made.
     state.snapshot.invalidate().await;
@@ -560,8 +660,18 @@ async fn offline_vitals(
         vital.as_str(),
         uuid
     );
+    // The command column holds what was done, not a command string — there is
+    // no command here, which is the point of recording it the same way.
+    let record = audit_or_refuse(
+        &state,
+        &admin,
+        Kind::Vitals,
+        &format!("{} (offline, saved file)", vital.as_str()),
+        Some(&uuid),
+    )
+    .await?;
 
-    let snapshot = inventory::apply_offline_vital(
+    let edit = inventory::apply_offline_vital(
         &state.config.server_properties_path,
         &uuid,
         vital,
@@ -577,13 +687,50 @@ async fn offline_vitals(
             // passed through rather than replaced with a generic failure.
             AppError::BadRequest(why)
         }
-    })?;
+    });
+
+    let snapshot = audit::settle(&state.pool, &state.console.audit, record, edit).await?;
 
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "uuid": uuid,
         "action": vital.as_str(),
         "vitals": snapshot.vitals,
     })))
+}
+
+#[derive(Deserialize)]
+struct AuditQuery {
+    limit: Option<u32>,
+    /// Narrow to one operator, which is the shape the question gets asked in.
+    user: Option<String>,
+}
+
+/// GET /api/admin/console/audit — who ran what, newest first.
+///
+/// The live stream carries attribution as it happens; this is the same record
+/// afterwards, which is when it is actually needed. Read-only and admin-only:
+/// there is deliberately no route that edits or deletes an entry, because a
+/// record an operator can revise is not one that settles an argument about an
+/// operator.
+async fn audit_history(
+    state: web::Data<AppState>,
+    _admin: AdminUser,
+    query: web::Query<AuditQuery>,
+) -> Result<HttpResponse, AppError> {
+    let user = query
+        .user
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty());
+
+    let entries = audit::recent(&state.pool, query.limit, user)
+        .await
+        .map_err(|e| {
+            log::error!("console: cannot read the audit log: {e}");
+            AppError::Internal("Could not read the audit log".to_string())
+        })?;
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({ "entries": entries })))
 }
 
 /// GET /api/admin/console/download — the raw `latest.log`.
@@ -622,6 +769,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .route("/command", web::post().to(run_command))
             .route("/download", web::get().to(download_log))
             .route("/stats", web::get().to(server_stats))
+            .route("/audit", web::get().to(audit_history))
             .route("/online", web::get().to(online_players))
             .route("/players", web::get().to(list_players))
             // Three segments, so it cannot be swallowed by the two-segment
@@ -716,6 +864,147 @@ mod tests {
         assert!(validate_command(&multibyte).is_ok());
     }
 
+    /* ------------------------------------------------ attribution channel */
+
+    /// The property the whole audit design rests on: an operator's identity
+    /// arrives on a channel that server output cannot reach.
+    ///
+    /// Anyone who can make the server print a line — `/say`, or just typing in
+    /// chat — can print one that *reads* like an attribution. On a single
+    /// channel that would be indistinguishable from a real one, and forging an
+    /// accusation would be a chat message. Here, a log line that impersonates
+    /// an audit entry word for word still comes out as an unnamed frame.
+    #[tokio::test]
+    async fn a_forged_log_line_cannot_arrive_as_an_audit_entry() {
+        let log = LogHub::new(10);
+        let audit = LogHub::new(10);
+
+        let (backlog, rx) = log.subscribe();
+        let mut stream = Box::pin(log_stream(
+            backlog,
+            rx,
+            Some(audit.subscribe()),
+            Duration::from_secs(30),
+        ));
+        let _head = next_frame(&mut stream).await;
+
+        // Someone in chat doing their best impression of an audit entry.
+        let forgery = r#"{"username":"someone-else","command":"ban Steve"}"#;
+        log.push(format!("[12:00:00] [Server thread/INFO]: <Mallory> {forgery}"));
+
+        let frame = next_frame(&mut stream).await;
+        assert!(
+            !frame.starts_with("event: "),
+            "server output must stay unnamed: {frame}"
+        );
+        assert!(!frame.contains("event: audit"), "and must not be an audit frame");
+        assert!(frame.contains(forgery), "but is still shown as the log line it is");
+    }
+
+    #[tokio::test]
+    async fn an_audit_entry_arrives_on_its_own_named_event() {
+        let log = LogHub::new(10);
+        let audit = LogHub::new(10);
+
+        let (backlog, rx) = log.subscribe();
+        let mut stream = Box::pin(log_stream(
+            backlog,
+            rx,
+            Some(audit.subscribe()),
+            Duration::from_secs(30),
+        ));
+        let _head = next_frame(&mut stream).await;
+
+        audit.push(r#"{"username":"bs","command":"ban Steve"}"#);
+
+        let frame = next_frame(&mut stream).await;
+        assert_eq!(
+            frame,
+            "event: audit\ndata: {\"username\":\"bs\",\"command\":\"ban Steve\"}\n\n"
+        );
+    }
+
+    /// A console opened after the fact still shows what it missed, so an
+    /// operator joining mid-argument sees the actions rather than only the
+    /// next one.
+    #[tokio::test]
+    async fn the_opening_frame_replays_attribution_alongside_the_log() {
+        let log = LogHub::new(10);
+        let audit = LogHub::new(10);
+
+        log.push("[12:00:00] [Server thread/INFO]: Done");
+        audit.push(r#"{"username":"bs","command":"ban Steve"}"#);
+
+        let (backlog, rx) = log.subscribe();
+        let mut stream = Box::pin(log_stream(
+            backlog,
+            rx,
+            Some(audit.subscribe()),
+            Duration::from_secs(30),
+        ));
+
+        let head = next_frame(&mut stream).await;
+        assert!(head.contains("data: [12:00:00] [Server thread/INFO]: Done\n\n"));
+        assert!(head.contains("event: audit\ndata: {\"username\":\"bs\""));
+    }
+
+    /// Both channels feed one stream, and neither starves the other.
+    #[tokio::test]
+    async fn log_and_audit_lines_interleave() {
+        let log = LogHub::new(10);
+        let audit = LogHub::new(10);
+
+        let (backlog, rx) = log.subscribe();
+        let mut stream = Box::pin(log_stream(
+            backlog,
+            rx,
+            Some(audit.subscribe()),
+            Duration::from_secs(30),
+        ));
+        let _head = next_frame(&mut stream).await;
+
+        audit.push(r#"{"id":1}"#);
+        assert!(next_frame(&mut stream).await.starts_with("event: audit\n"));
+
+        log.push("[12:00:01] [Server thread/INFO]: still here");
+        let frame = next_frame(&mut stream).await;
+        assert!(!frame.starts_with("event: "), "{frame}");
+
+        audit.push(r#"{"id":2}"#);
+        assert!(next_frame(&mut stream).await.starts_with("event: audit\n"));
+    }
+
+    /// Losing attribution must not take the console with it. Dropping the hub
+    /// closes the channel; the log stream carries on.
+    #[tokio::test]
+    async fn the_log_survives_the_audit_channel_closing() {
+        let log = LogHub::new(10);
+        let audit = LogHub::new(10);
+
+        let (backlog, rx) = log.subscribe();
+        let subscription = audit.subscribe();
+        let mut stream = Box::pin(log_stream(
+            backlog,
+            rx,
+            Some(subscription),
+            Duration::from_secs(30),
+        ));
+        let _head = next_frame(&mut stream).await;
+
+        drop(audit);
+
+        // One comment frame noting the loss...
+        assert_eq!(next_frame(&mut stream).await, ": audit closed\n\n");
+
+        // ...and then the log continues, rather than the stream ending or
+        // spinning on a channel that will never produce anything again.
+        log.push("[12:00:02] [Server thread/INFO]: still here");
+        assert_eq!(
+            next_frame(&mut stream).await,
+            "data: [12:00:02] [Server thread/INFO]: still here\n\n"
+        );
+    }
+
     #[tokio::test]
     async fn stream_opens_with_the_backlog_then_follows_live_lines() {
         let hub = LogHub::new(10);
@@ -723,7 +1012,7 @@ mod tests {
         hub.push("[12:00:01] [Server thread/WARN]: Slow tick");
 
         let (backlog, rx) = hub.subscribe();
-        let mut stream = Box::pin(log_stream(backlog, rx, Duration::from_secs(30)));
+        let mut stream = Box::pin(log_stream(backlog, rx, None, Duration::from_secs(30)));
 
         // The whole replay buffer arrives as one opening frame.
         let head = next_frame(&mut stream).await;
@@ -744,7 +1033,7 @@ mod tests {
     async fn stream_emits_a_heartbeat_while_the_log_is_quiet() {
         let hub = LogHub::new(10);
         let (backlog, rx) = hub.subscribe();
-        let mut stream = Box::pin(log_stream(backlog, rx, Duration::from_millis(50)));
+        let mut stream = Box::pin(log_stream(backlog, rx, None, Duration::from_millis(50)));
 
         // Empty backlog still produces an opening frame, just an empty one.
         assert_eq!(next_frame(&mut stream).await, "");
@@ -763,7 +1052,7 @@ mod tests {
             hub.push(format!("line {i}"));
         }
 
-        let mut stream = Box::pin(log_stream(backlog, rx, Duration::from_secs(30)));
+        let mut stream = Box::pin(log_stream(backlog, rx, None, Duration::from_secs(30)));
         assert_eq!(next_frame(&mut stream).await, "");
 
         let frame = next_frame(&mut stream).await;
@@ -777,7 +1066,7 @@ mod tests {
     async fn stream_ends_when_the_hub_is_dropped() {
         let hub = LogHub::new(10);
         let (backlog, rx) = hub.subscribe();
-        let mut stream = Box::pin(log_stream(backlog, rx, Duration::from_secs(30)));
+        let mut stream = Box::pin(log_stream(backlog, rx, None, Duration::from_secs(30)));
 
         assert_eq!(next_frame(&mut stream).await, "");
         drop(hub);
@@ -806,7 +1095,7 @@ mod tests {
                 let hub = Arc::clone(&hub);
                 async move {
                     let (backlog, rx) = hub.subscribe();
-                    sse_response().streaming(log_stream(backlog, rx, Duration::from_secs(30)))
+                    sse_response().streaming(log_stream(backlog, rx, None, Duration::from_secs(30)))
                 }
             }),
         ))
@@ -829,7 +1118,7 @@ mod tests {
     async fn stream_escapes_newlines_embedded_in_a_log_line() {
         let hub = LogHub::new(10);
         let (backlog, rx) = hub.subscribe();
-        let mut stream = Box::pin(log_stream(backlog, rx, Duration::from_secs(30)));
+        let mut stream = Box::pin(log_stream(backlog, rx, None, Duration::from_secs(30)));
         assert_eq!(next_frame(&mut stream).await, "");
 
         // A crafted chat message must not be able to terminate the event early
