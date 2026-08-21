@@ -344,6 +344,44 @@ pub struct Online {
     pub reported: Option<usize>,
 }
 
+impl Online {
+    /// Whether this answer can be acted on as it stands.
+    ///
+    /// Names are obviously usable. No names is usable only when the reply also
+    /// claimed nobody was on — otherwise it is a reply worded in a way the
+    /// parser cannot read, and taking it for an empty server is what silently
+    /// blanks the roster out from under whoever is playing.
+    ///
+    /// The same distinction decides whether to try the next `list` command and
+    /// whether the caller may overwrite its presence set, so it lives here
+    /// rather than being spelled out at both sites.
+    pub fn is_readable(&self) -> bool {
+        !self.names.is_empty() || self.reported == Some(0)
+    }
+
+    /// Whether the names account for everyone the reply said was online.
+    ///
+    /// A `list` reply carries its own checksum: a count at the front, and a
+    /// list of names. When they disagree it is the names that were misread —
+    /// the count is one number in a fixed place, the names are whatever shape
+    /// the server's owner gave them.
+    ///
+    /// Worth checking rather than trusting, because a name list can be wrong
+    /// without looking wrong. This server groups its players by rank across
+    /// several lines, and the parser that read only the last group returned one
+    /// player out of two while appearing to succeed. Nothing downstream could
+    /// tell; the roster simply marked the other player offline. Comparing
+    /// against the count is what turns that into something noticeable, whatever
+    /// the next unexpected format turns out to be.
+    pub fn is_complete(&self) -> bool {
+        match self.reported {
+            Some(count) => self.names.len() == count,
+            // No count to check against, so the names are all there is to go on.
+            None => !self.names.is_empty(),
+        }
+    }
+}
+
 /// Caches what has to be asked of the game server itself.
 ///
 /// Every value here costs an RCON command, and the server logs a line for each
@@ -440,6 +478,27 @@ async fn probe_health(rcon: &RconClient) -> Health {
     health
 }
 
+/// The commands tried, in order, to find out who is online.
+///
+/// `list` is the one to ask, and on most servers the only one ever run — the
+/// loop stops at the first reply whose names account for its own count.
+///
+/// The fallback is for when they do not. A plugin can reword `list` into
+/// anything, and a rewording that the parser reads only part of is the
+/// dangerous kind: it yields a short list that looks like a good one. Rather
+/// than teach the parser every possible layout, ask the server for the layout
+/// it was built for.
+///
+/// Every vanilla command is *also* registered under the `minecraft:` namespace
+/// on any server with a Bukkit command map underneath it, and a plugin that
+/// takes over `list` does not take over `minecraft:list`. So the namespaced
+/// form reaches the original command and its original wording.
+///
+/// A server without it answers "Unknown or incomplete command", which parses to
+/// no names and leaves the outcome exactly as it was before the fallback
+/// existed.
+const LIST_COMMANDS: [&str; 2] = ["list", "minecraft:list"];
+
 async fn probe_online(rcon: &RconClient) -> Online {
     let mut online = Online::default();
 
@@ -448,23 +507,186 @@ async fn probe_online(rcon: &RconClient) -> Online {
         return online;
     }
 
-    match rcon.execute("list").await {
-        Ok(output) => {
-            online.names = players::parse_online_list(&output);
-            online.reported = players::parse_online_count(&output);
+    // Best answer seen so far, kept in case no command produces a complete one.
+    let mut best = online;
+
+    for (attempt, command) in LIST_COMMANDS.iter().enumerate() {
+        let output = match rcon.execute(command).await {
+            Ok(output) => output,
+            Err(e) => {
+                log::debug!("console: `{command}` failed: {e}");
+                // Only the first command speaks for the connection. A fallback
+                // failing on a server whose `list` answered fine says nothing
+                // about reachability, and reporting it would put an RCON error
+                // in the panel for a server that is plainly reachable.
+                if attempt == 0 {
+                    best.rcon_error = Some(e.user_message());
+                }
+                continue;
+            }
+        };
+
+        let candidate = Online {
+            names: players::parse_online_list(&output),
+            reported: players::parse_online_count(&output),
+            rcon_error: None,
+        };
+
+        if candidate.is_complete() {
+            return candidate;
         }
-        Err(e) => {
-            log::debug!("console: could not list players: {e}");
-            online.rcon_error = Some(e.user_message());
+
+        log::debug!(
+            "console: `{command}` listed {} of {:?} online: {output:?}",
+            candidate.names.len(),
+            candidate.reported
+        );
+
+        // Incomplete, so the next command gets a turn. Keep whichever answer
+        // found the most players, and any count at all — a partial list still
+        // beats none, and the count is what stops the caller reading an
+        // unreadable reply as an empty server.
+        let reported = best.reported.or(candidate.reported);
+        if candidate.names.len() > best.names.len() {
+            best = candidate;
         }
+        best.reported = reported;
+        best.rcon_error = None;
     }
 
-    online
+    if best.rcon_error.is_none() && !best.is_complete() {
+        log::warn!(
+            "console: no `list` command accounted for every player -- listed {:?}, \
+             but the server claims {:?} online. Presence will be as good as the \
+             log stream and no better.",
+            best.names,
+            best.reported
+        );
+    }
+
+    best
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /* --------------------------------------------------------------- online */
+
+    fn answer(reply: &str) -> Online {
+        Online {
+            names: players::parse_online_list(reply),
+            reported: players::parse_online_count(reply),
+            rcon_error: None,
+        }
+    }
+
+    #[test]
+    fn a_vanilla_reply_is_readable() {
+        let online = answer("There are 2 of a max of 20 players online: Steve, Alex");
+        assert!(online.is_readable());
+        assert_eq!(online.names, vec!["Steve".to_string(), "Alex".to_string()]);
+    }
+
+    /// The reply this server's plugin sends. It has a count and no names, which
+    /// is precisely the case that must *not* be taken for an empty server —
+    /// doing so blanks whoever the log stream just reported joining.
+    #[test]
+    fn a_count_without_names_is_not_readable() {
+        let online = answer("\u{a7}6There are \u{a7}c1\u{a7}6 out of maximum \u{a7}c20\u{a7}6 players online.");
+        assert_eq!(online.reported, Some(1));
+        assert!(online.names.is_empty());
+        assert!(!online.is_readable(), "it must fall through to the fallback");
+    }
+
+    /// The one case where no names is the truth, and so the only one that may
+    /// clear the roster.
+    #[test]
+    fn a_claim_of_nobody_is_readable() {
+        let online = answer("\u{a7}6There are \u{a7}c0\u{a7}6 out of maximum \u{a7}c20\u{a7}6 players online.");
+        assert!(online.is_readable());
+        assert!(online.names.is_empty());
+    }
+
+    /// What a server without the namespaced form answers when the fallback is
+    /// tried. It must read as unusable rather than as an empty server.
+    #[test]
+    fn an_unknown_command_reply_is_not_readable() {
+        let online = answer("Unknown or incomplete command, see below for error");
+        assert_eq!(online.reported, None);
+        assert!(!online.is_readable());
+    }
+
+    /// The bug this checksum exists for. Before the parser understood grouped
+    /// replies it found one of the two players -- a non-empty list, which
+    /// `is_readable` accepts, so nothing downstream could tell it was wrong and
+    /// the roster marked the other player offline every reconcile.
+    #[test]
+    fn a_partial_name_list_fails_its_own_count() {
+        let partial = Online {
+            names: vec!["MapiccOnMC".to_string()],
+            reported: Some(2),
+            rcon_error: None,
+        };
+
+        // Readable, which is why this went unnoticed...
+        assert!(partial.is_readable());
+        // ...but not complete, which is what now sends it to the fallback.
+        assert!(!partial.is_complete());
+    }
+
+    #[test]
+    fn the_grouped_reply_is_complete_once_every_group_is_read() {
+        let online = answer(
+            "There are 2 out of maximum 20 players online.\n\
+             CITIZEN: Joe\n\
+             STAFF: MapiccOnMC",
+        );
+
+        assert_eq!(online.names.len(), 2);
+        assert!(online.is_complete(), "no fallback command should be needed");
+    }
+
+    /// An empty server is a complete answer, not a failed one -- otherwise the
+    /// fallback would run on every poll of an idle server.
+    #[test]
+    fn nobody_online_is_a_complete_answer() {
+        let online = answer("\u{a7}6There are \u{a7}c0\u{a7}6 out of maximum \u{a7}c20\u{a7}6 players online.");
+
+        assert!(online.is_complete());
+        assert!(online.is_readable());
+    }
+
+    #[test]
+    fn an_unknown_command_reply_is_not_complete() {
+        let online = answer("Unknown or incomplete command, see below for error");
+
+        assert!(!online.is_complete());
+        assert!(!online.is_readable());
+    }
+
+    /// A count with no names is incomplete, and must stay unreadable too: it is
+    /// the case that would blank the roster if it were mistaken for an empty
+    /// server.
+    #[test]
+    fn a_count_with_no_names_is_neither_complete_nor_readable() {
+        let online = Online {
+            names: Vec::new(),
+            reported: Some(3),
+            rcon_error: None,
+        };
+
+        assert!(!online.is_complete());
+        assert!(!online.is_readable());
+    }
+
+    /// The fallback exists to reach the vanilla wording behind a plugin's, so
+    /// the vanilla wording had better be the thing the parser can read.
+    #[test]
+    fn the_fallback_command_is_the_namespaced_vanilla_one() {
+        assert_eq!(LIST_COMMANDS[0], "list");
+        assert_eq!(LIST_COMMANDS[1], "minecraft:list");
+    }
 
     /* ------------------------------------------------------------------ tps */
 

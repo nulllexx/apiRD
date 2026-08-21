@@ -182,21 +182,18 @@ async fn online_now(state: &AppState) -> (Vec<String>, Option<String>) {
 
     let online = state.snapshot.online(&state.rcon).await;
 
-    // An empty name list is only believed when the server said zero.
+    // An empty name list is only believed when the server said zero — see
+    // `Online::is_readable`. `list` replies are rewritten freely by plugins,
+    // and one that yields no names may mean nobody is on *or* that the wording
+    // is one the parser cannot read. This server's reply is the second kind, so
+    // trusting it blanked the roster every reconcile: the log put a player
+    // online the instant they joined, and five minutes later this wiped them
+    // again. They reappeared only by rejoining, which is a fresh log line.
     //
-    // `list` replies are rewritten freely by plugins, and one that yields no
-    // names may mean nobody is on *or* that the wording is one the parser
-    // cannot read. This server's reply is the second kind, so trusting it
-    // blanked the roster every reconcile: the log put a player online the
-    // instant they joined, and five minutes later this wiped them again. They
-    // reappeared only by rejoining, which is a fresh log line.
-    //
-    // Same principle as the RCON error below — an unreachable server is not an
-    // empty one, and neither is an unreadable answer.
-    let believable = !online.names.is_empty() || online.reported == Some(0);
-
+    // Same principle as the RCON error — an unreachable server is not an empty
+    // one, and neither is an unreadable answer.
     match &online.rcon_error {
-        None if believable => state.presence.replace(&online.names),
+        None if online.is_readable() => state.presence.replace(&online.names),
         // Keeps the last known set rather than blanking it.
         _ => state.presence.record_failure(),
     }

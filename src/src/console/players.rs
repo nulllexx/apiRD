@@ -369,43 +369,70 @@ pub fn build_roster(sources: RosterSources<'_>) -> Vec<Player> {
 
 /// Extract the player names from an RCON `list` reply.
 ///
-/// The vanilla format is `There are 2 of a max of 20 players online: A, B`, but
-/// plugins rewrite it freely — this server's own reply is
-/// `§6There are §c0§6 out of maximum §c20§6 players online.`, which has no
-/// colon at all and so correctly yields nobody. Taking everything after the
-/// *last* colon and keeping only well-formed names is what makes that
-/// tolerable: a reworded preamble cannot turn into a fake player.
+/// The vanilla format is one line — `There are 2 of a max of 20 players
+/// online: A, B` — but plugins rewrite it freely, and this server's groups its
+/// players by rank across several:
+///
+/// ```text
+/// There are 2 out of maximum 20 players online.
+/// CITIZEN: Joe
+/// STAFF: MapiccOnMC
+/// ```
+///
+/// So names are collected from **every** line rather than from the reply as a
+/// whole. Reading the whole reply and taking everything after its last colon —
+/// which is what this used to do — finds `MapiccOnMC` and nobody else, and the
+/// failure is invisible: a list with a name in it looks like a list that
+/// worked, so the roster quietly marked Joe offline every reconcile.
+///
+/// Per line, the names are whatever follows that line's last colon. A line
+/// without one is the preamble and contributes nothing, and only well-formed
+/// names survive, so a reworded sentence cannot become a fake player.
+/// [`parse_online_count`] is the cross-check on whatever comes out of here.
 pub fn parse_online_list(raw: &str) -> Vec<String> {
     let plain = strip_formatting(raw);
-    let Some(colon) = plain.rfind(':') else {
-        return Vec::new();
-    };
+    let mut names: Vec<String> = Vec::new();
 
-    plain[colon + 1..]
-        .split(',')
-        .map(str::trim)
-        .filter(|name| is_valid_name(name))
-        .map(str::to_string)
-        .collect()
+    for line in plain.lines() {
+        let Some(colon) = line.rfind(':') else {
+            continue;
+        };
+
+        for name in line[colon + 1..].split(',').map(str::trim) {
+            // Deduplicated because a player who holds two ranks would otherwise
+            // be counted twice, and the count cross-check would then reject an
+            // answer that is actually correct.
+            if is_valid_name(name) && !names.iter().any(|held| held == name) {
+                names.push(name.to_string());
+            }
+        }
+    }
+
+    names
 }
 
 /// How many players an RCON `list` reply *claims* are online.
 ///
-/// Needed because [`parse_online_list`] cannot tell "nobody is online" apart
-/// from "this reply is worded in a way I cannot read". Both yield no names, and
-/// treating the second as the first silently empties the roster — which is
-/// exactly what happened here: this server answers
-/// `There are 1 out of maximum 20 players online.`, with the names in a form
-/// this parser does not recognise, so every reconcile blanked whoever the log
-/// had just reported joining.
+/// This is the checksum on [`parse_online_list`]. The count is one number in a
+/// fixed place at the front of the reply; the names are whatever shape the
+/// server's owner gave them. So when the two disagree it is the names that were
+/// misread, and that is a thing worth knowing — a name list can be wrong
+/// without looking wrong, which is how a parser that found one player out of
+/// two went unnoticed.
 ///
-/// The count is read from the text *before* the last colon, so a player whose
-/// name contains digits cannot be mistaken for it.
+/// It also separates "nobody is online" from "this reply is worded in a way I
+/// cannot read". Both yield no names, and treating the second as the first
+/// silently empties the roster.
+///
+/// Read from the first line only, and from before any colon on it, so neither a
+/// group heading nor a player whose name contains digits can be mistaken for
+/// the count.
 pub fn parse_online_count(raw: &str) -> Option<usize> {
     let plain = strip_formatting(raw);
-    let head = match plain.rfind(':') {
-        Some(colon) => &plain[..colon],
-        None => &plain[..],
+    let first = plain.lines().next().unwrap_or_default();
+    let head = match first.rfind(':') {
+        Some(colon) => &first[..colon],
+        None => first,
     };
 
     let digits: String = head
@@ -884,9 +911,12 @@ mod online_count_tests {
         );
     }
 
-    /// The shape this server actually sends. It carries no colon, so
-    /// `parse_online_list` finds no names -- but the count still says someone
-    /// is on, which is what stops the roster being blanked.
+    /// A reply that names nobody while claiming somebody, which is the case the
+    /// count exists to catch: no names is only the truth when the count agrees.
+    ///
+    /// (This was once believed to be what this server sends. It is not -- see
+    /// `reads_a_reply_that_groups_players_by_rank` for the real one. Kept
+    /// because the shape is still the one that must never be read as empty.)
     #[test]
     fn reads_the_count_when_no_names_can_be_parsed() {
         let reply = "\u{a7}6There are \u{a7}c1\u{a7}6 out of maximum \u{a7}c20\u{a7}6 players online.";
@@ -895,7 +925,7 @@ mod online_count_tests {
     }
 
     #[test]
-    fn an_genuinely_empty_server_reports_zero() {
+    fn a_genuinely_empty_server_reports_zero() {
         let reply = "\u{a7}6There are \u{a7}c0\u{a7}6 out of maximum \u{a7}c20\u{a7}6 players online.";
         assert!(parse_online_list(reply).is_empty());
         // Some(0) is what permits the roster to be cleared.
@@ -913,6 +943,65 @@ mod online_count_tests {
             parse_online_list("There are 1 of a max of 20 players online: Robighost01"),
             vec!["Robighost01".to_string()]
         );
+    }
+
+    /// The reply this server actually sends, pasted from its console. Every
+    /// group contributes, not just the last one.
+    #[test]
+    fn reads_a_reply_that_groups_players_by_rank() {
+        let reply = "There are 2 out of maximum 20 players online.\n\
+                     CITIZEN: Joe\n\
+                     STAFF: MapiccOnMC";
+
+        assert_eq!(
+            parse_online_list(reply),
+            vec!["Joe".to_string(), "MapiccOnMC".to_string()]
+        );
+        assert_eq!(parse_online_count(reply), Some(2));
+    }
+
+    /// What `minecraft:list` answers on the same server -- the vanilla wording,
+    /// which is what the fallback reaches for.
+    #[test]
+    fn reads_the_vanilla_reply_behind_the_plugin() {
+        let reply = "There are 2 of a max of 20 players online: Joe, MapiccOnMC";
+
+        assert_eq!(
+            parse_online_list(reply),
+            vec!["Joe".to_string(), "MapiccOnMC".to_string()]
+        );
+        assert_eq!(parse_online_count(reply), Some(2));
+    }
+
+    /// A group heading is not a count. Reading the number from anywhere but the
+    /// first line would find this one.
+    #[test]
+    fn a_group_heading_with_digits_is_not_the_count() {
+        let reply = "There are 1 out of maximum 20 players online.\n\
+                     TIER3: Joe";
+
+        assert_eq!(parse_online_count(reply), Some(1));
+        assert_eq!(parse_online_list(reply), vec!["Joe".to_string()]);
+    }
+
+    /// Two ranks, one player. Counting them twice would make a correct answer
+    /// fail its own checksum.
+    #[test]
+    fn a_player_listed_under_two_groups_appears_once() {
+        let reply = "There are 1 out of maximum 20 players online.\n\
+                     STAFF: Joe\n\
+                     BUILDER: Joe";
+
+        assert_eq!(parse_online_list(reply), vec!["Joe".to_string()]);
+    }
+
+    /// The grouped reply with nobody on: preamble only, no group lines.
+    #[test]
+    fn a_grouped_reply_with_nobody_on_yields_nobody() {
+        let reply = "\u{a7}6There are \u{a7}c0\u{a7}6 out of maximum \u{a7}c20\u{a7}6 players online.";
+
+        assert!(parse_online_list(reply).is_empty());
+        assert_eq!(parse_online_count(reply), Some(0));
     }
 
     #[test]
