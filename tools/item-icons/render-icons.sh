@@ -153,6 +153,60 @@ extract_mods() {
   rm -rf "$WORK/nested"
   log "read $count jar(s), $bundled bundled jar(s)"
   log "mod namespaces: $(ls "$MOD_ASSETS" 2>/dev/null | tr '\n' ' ')"
+
+  generate_atlases
+}
+
+# Give every mod namespace an atlas definition, because Renderchest needs one
+# and mods do not ship them.
+#
+# Renderchest resolves textures through Minecraft's atlas definitions rather
+# than by looking for the file directly. It scans each namespace for
+# `<ns>/atlases/*.json` and registers every source it finds *against that
+# namespace*:
+#
+#     $this->atlasTextureResolver->add($namespace, $source);
+#
+# Vanilla ships assets/minecraft/atlases/blocks.json, so `minecraft` gets its
+# directory sources and renders perfectly. No mod ships one -- in the real game
+# vanilla's `directory` sources scan every loaded namespace, so a mod never
+# needs its own. Renderchest binds them to the declaring namespace instead, so
+# no modded texture is resolvable at all and every modded item fails with
+# "Cannot resolve texture locator".
+#
+# Writing one atlas per mod namespace, mirroring vanilla's structure, is what
+# makes modded items render. It is additive: Renderchest reads every file in
+# atlases/, so a mod that does ship its own keeps it and this is read alongside.
+generate_atlases() {
+  local ns_dir ns tex sub name first count=0
+
+  for ns_dir in "$MOD_ASSETS"/*; do
+    [ -d "$ns_dir" ] || continue
+    tex="$ns_dir/textures"
+    [ -d "$tex" ] || continue
+    ns="$(basename "$ns_dir")"
+
+    mkdir -p "$ns_dir/atlases"
+    {
+      printf '{\n  "sources": [\n'
+      first=1
+      # One directory source per top-level texture directory. A directory
+      # source strips its prefix and re-prepends its source, so "block/" also
+      # covers nested paths like block/projectile/ap_shell_bottom.
+      for sub in "$tex"/*; do
+        [ -d "$sub" ] || continue
+        name="$(basename "$sub")"
+        [ "$first" -eq 1 ] || printf ',\n'
+        first=0
+        printf '    {"type": "directory", "source": "%s", "prefix": "%s/"}' "$name" "$name"
+      done
+      printf '\n  ]\n}\n'
+    } > "$ns_dir/atlases/zz-renderchest-generated.json"
+
+    count=$((count + 1))
+  done
+
+  log "wrote atlas definitions for $count mod namespace(s)"
 }
 
 namespaces() {

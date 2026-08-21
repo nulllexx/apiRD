@@ -94,6 +94,47 @@ like a small success.
 `MC_VERSION` is part of the cache path, so it has to match the API's
 `MINECRAFT_ASSETS_VERSION` or the icons land where nothing will look for them.
 
+## Why mod namespaces need a generated atlas
+
+Renderchest does not look textures up by path. It resolves them through
+Minecraft's atlas definitions, scanning each namespace for `<ns>/atlases/*.json`
+and registering every source it finds **against that namespace**:
+
+```php
+$this->atlasTextureResolver->add($namespace, $source);
+```
+
+Vanilla ships `assets/minecraft/atlases/blocks.json`, so `minecraft` gets its
+directory sources and renders perfectly. No mod ships one -- in the real game
+vanilla's `directory` sources scan every loaded namespace, so a mod never needs
+its own.
+
+Renderchest binds them to the declaring namespace instead. The result is that
+**no modded texture is resolvable at all**, and every modded item fails with:
+
+```
+Cannot resolve texture locator createbigcannons:item/ap_autocannon_round
+```
+
+So `extract_mods` writes `assets/<ns>/atlases/zz-renderchest-generated.json` for
+every mod namespace that has textures, with one `directory` source per top-level
+texture directory, mirroring vanilla's structure:
+
+```json
+{
+  "sources": [
+    {"type": "directory", "source": "block", "prefix": "block/"},
+    {"type": "directory", "source": "item", "prefix": "item/"}
+  ]
+}
+```
+
+A directory source strips its prefix and re-prepends its source, so `block/`
+also covers nested paths such as `block/projectile/ap_shell_bottom`.
+
+This is additive rather than destructive: Renderchest reads every file in
+`atlases/`, so a mod that does ship its own keeps it and this is read alongside.
+
 ## Why it renders in one process
 
 Renderchest farms items out to parallel workers by default, and that pool cannot
