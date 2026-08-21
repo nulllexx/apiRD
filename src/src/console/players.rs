@@ -344,6 +344,34 @@ pub fn parse_online_list(raw: &str) -> Vec<String> {
         .collect()
 }
 
+/// How many players an RCON `list` reply *claims* are online.
+///
+/// Needed because [`parse_online_list`] cannot tell "nobody is online" apart
+/// from "this reply is worded in a way I cannot read". Both yield no names, and
+/// treating the second as the first silently empties the roster — which is
+/// exactly what happened here: this server answers
+/// `There are 1 out of maximum 20 players online.`, with the names in a form
+/// this parser does not recognise, so every reconcile blanked whoever the log
+/// had just reported joining.
+///
+/// The count is read from the text *before* the last colon, so a player whose
+/// name contains digits cannot be mistaken for it.
+pub fn parse_online_count(raw: &str) -> Option<usize> {
+    let plain = strip_formatting(raw);
+    let head = match plain.rfind(':') {
+        Some(colon) => &plain[..colon],
+        None => &plain[..],
+    };
+
+    let digits: String = head
+        .chars()
+        .skip_while(|c| !c.is_ascii_digit())
+        .take_while(char::is_ascii_digit)
+        .collect();
+
+    digits.parse().ok()
+}
+
 /// Directory holding `server.properties` — and, next to it, every file the
 /// roster is built from.
 ///
@@ -754,5 +782,55 @@ mod tests {
     async fn a_missing_playerdata_directory_is_empty_not_an_error() {
         let missing = std::env::temp_dir().join("apird-playerdata-does-not-exist");
         assert!(last_seen_map(&missing).await.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod online_count_tests {
+    use super::*;
+
+    #[test]
+    fn reads_the_count_from_the_vanilla_reply() {
+        assert_eq!(
+            parse_online_count("There are 2 of a max of 20 players online: Steve, Alex"),
+            Some(2)
+        );
+    }
+
+    /// The shape this server actually sends. It carries no colon, so
+    /// `parse_online_list` finds no names -- but the count still says someone
+    /// is on, which is what stops the roster being blanked.
+    #[test]
+    fn reads_the_count_when_no_names_can_be_parsed() {
+        let reply = "\u{a7}6There are \u{a7}c1\u{a7}6 out of maximum \u{a7}c20\u{a7}6 players online.";
+        assert!(parse_online_list(reply).is_empty(), "no names are parseable");
+        assert_eq!(parse_online_count(reply), Some(1), "but the count is");
+    }
+
+    #[test]
+    fn an_genuinely_empty_server_reports_zero() {
+        let reply = "\u{a7}6There are \u{a7}c0\u{a7}6 out of maximum \u{a7}c20\u{a7}6 players online.";
+        assert!(parse_online_list(reply).is_empty());
+        // Some(0) is what permits the roster to be cleared.
+        assert_eq!(parse_online_count(reply), Some(0));
+    }
+
+    #[test]
+    fn digits_in_a_player_name_are_not_the_count() {
+        // The count is read before the last colon; names come after it.
+        assert_eq!(
+            parse_online_count("There are 1 of a max of 20 players online: Robighost01"),
+            Some(1)
+        );
+        assert_eq!(
+            parse_online_list("There are 1 of a max of 20 players online: Robighost01"),
+            vec!["Robighost01".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_reply_with_no_number_at_all_is_unknown() {
+        // Unknown is deliberately not zero: the caller must not clear on it.
+        assert_eq!(parse_online_count("who knows"), None);
     }
 }

@@ -335,6 +335,13 @@ pub struct Online {
     pub names: Vec<String>,
     #[serde(rename = "rconError")]
     pub rcon_error: Option<String>,
+    /// How many players the reply claimed, when that could be read.
+    ///
+    /// Kept out of the JSON: it exists so a caller can tell "nobody is online"
+    /// apart from "the names were in a form the parser does not recognise",
+    /// which the name list alone cannot express.
+    #[serde(skip)]
+    pub reported: Option<usize>,
 }
 
 /// Caches what has to be asked of the game server itself.
@@ -442,7 +449,10 @@ async fn probe_online(rcon: &RconClient) -> Online {
     }
 
     match rcon.execute("list").await {
-        Ok(output) => online.names = players::parse_online_list(&output),
+        Ok(output) => {
+            online.names = players::parse_online_list(&output);
+            online.reported = players::parse_online_count(&output);
+        }
         Err(e) => {
             log::debug!("console: could not list players: {e}");
             online.rcon_error = Some(e.user_message());
