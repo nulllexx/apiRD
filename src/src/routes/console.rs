@@ -356,15 +356,18 @@ async fn player_inventory(
     // and its vitals fill the header when the live paths do not carry them.
     let saved = inventory::load_snapshot(&state.config.server_properties_path, &uuid).await;
 
+    // Whether any part of the header had to come off disk. Only meaningful on
+    // the live path; a saved read is stale by definition and says so already.
+    let mut vitals_borrowed = false;
+
     let (snapshot, source, saved_at) = match (live_snapshot, saved) {
         (Some(mut live), saved) => {
             let saved_at = match saved {
                 Ok((from_file, saved_at)) => {
-                    // Vitals are not on any of the live paths, so they come off
-                    // disk. Health from the last save next to a live inventory
-                    // is still worth showing, and the response marks the source
-                    // so the panel can say which is which.
-                    live.vitals = from_file.vitals;
+                    // The live paths carry vitals now, so the file is a
+                    // backstop rather than the source: it covers any field the
+                    // server did not answer for and leaves the rest alone.
+                    vitals_borrowed = live.vitals.fill_gaps_from(&from_file.vitals);
                     saved_at
                 }
                 Err(_) => None,
@@ -388,6 +391,14 @@ async fn player_inventory(
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "uuid": uuid,
         "source": source,
+        // Separate from `source` because the two can disagree: a live inventory
+        // whose health reply did not parse is "live" with "mixed" vitals, and
+        // the bars are the one place where that difference matters.
+        "vitalsSource": match (source, vitals_borrowed) {
+            ("live", false) => "live",
+            ("live", true) => "mixed",
+            _ => "saved",
+        },
         "savedAt": saved_at,
         "liveError": live_error,
         "items": snapshot.item_count(),

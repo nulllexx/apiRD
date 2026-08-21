@@ -804,6 +804,60 @@
             border: 1px solid var(--line) !important;
         }
 
+        /* Vitals, drawn the way the game draws them. The panel ships no
+           Minecraft artwork and the item-texture endpoint only serves items,
+           so the hearts and drumsticks are SVG pixel maps built in JS rather
+           than sprites lifted out of the client jar. They fill in halves,
+           which is the whole reason a bar beats "17.5 / 20" as a chip. */
+        .inv-vitals { display: flex; flex-direction: column; gap: 8px; margin: 16px 0 4px; }
+        .inv-vital { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .inv-vital-name {
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-faint) !important;
+            width: 56px;
+            flex: 0 0 auto;
+        }
+        .inv-bar { display: flex; gap: 1px; color: var(--text-faint); }
+        .inv-pip { width: 17px; height: 17px; display: block; flex: 0 0 auto; }
+        /* Empty pips take the theme's faint colour so the row reads in both
+           light and dark; the filled ones are the game's own reds and browns,
+           which are the same in every theme because they are the game's. */
+        .inv-pip .pip-empty { fill: currentColor; opacity: 0.26; }
+        .inv-vital-value { font-size: 0.78rem; color: var(--text-muted) !important; font-variant-numeric: tabular-nums; }
+
+        /* The XP bar is one strip rather than pips, as in game, with the level
+           sitting on it. */
+        .inv-xp-track {
+            position: relative;
+            height: 12px;
+            width: 182px;
+            border-radius: 2px;
+            background: var(--line) !important;
+            overflow: hidden;
+        }
+        .inv-xp { display: flex; align-items: center; gap: 10px; }
+        .inv-xp-fill { position: absolute; inset: 0 auto 0 0; background: #7ee02b; }
+        .inv-xp-level { font-size: 0.8rem; font-weight: 700; color: #7ee02b !important; font-variant-numeric: tabular-nums; }
+
+        /* The vitals buttons. Kill and Starve are the two that cannot be
+           undone by clicking the other one, so they are marked as such. */
+        .inv-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+        .inv-acts button {
+            padding: 5px 13px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            border-radius: var(--radius-sm);
+            background: var(--bg-raised) !important;
+            color: var(--text) !important;
+            border: 1px solid var(--line) !important;
+        }
+        .inv-acts button:hover:not(:disabled) { border-color: var(--accent) !important; }
+        .inv-acts button:disabled { opacity: 0.45; cursor: not-allowed; }
+        .inv-acts button.harmful { color: var(--danger) !important; border-color: var(--danger-soft) !important; }
+        .inv-acts button.harmful:hover:not(:disabled) { background: var(--danger-soft) !important; border-color: var(--danger) !important; }
+
         .inv-boxes { margin: 0; padding: 0; list-style: none; font-size: 0.82rem; }
         .inv-boxes li { padding: 6px 0; border-bottom: 1px solid var(--line-soft) !important; color: var(--text-muted) !important; }
         .inv-boxes li:last-child { border-bottom: none; }
@@ -1421,11 +1475,11 @@
     </div>
 </div>
 
-<!-- Player inventory viewer, filled in by openInventory() -->
+<!-- Player overview, filled in by openOverview() -->
 <div id="invOverlay">
     <div id="invPanel" role="dialog" aria-modal="true" aria-labelledby="invTitle">
         <div class="inv-head">
-            <h3 id="invTitle">Inventory</h3>
+            <h3 id="invTitle">Overview</h3>
             <span class="inv-uuid" id="invUuid"></span>
             <span class="inv-source" id="invSource" style="display: none;"></span>
             <button type="button" id="invRefresh">Refresh</button>
@@ -2809,14 +2863,16 @@
         return button;
     }
 
+    /* Returns whether the command was accepted, so a caller that is showing
+       state the command just changed knows whether to re-read it. */
     async function runPlayerAction(name, action, label) {
         let reason = null;
 
         if (action === 'kick' || action === 'ban') {
             reason = prompt(`${label} ${name} — reason (optional):`, '');
-            if (reason === null) return;
+            if (reason === null) return false;
         } else if (!confirm(`Really ${label.toLowerCase()} ${name}?`)) {
-            return;
+            return false;
         }
 
         try {
@@ -2830,7 +2886,7 @@
 
             if (!response.ok) {
                 appendLine(data.error || `Failed to ${action} ${name}`, 'lvl-ERROR');
-                return;
+                return false;
             }
 
             appendLine('> ' + data.command, 'lvl-echo');
@@ -2840,11 +2896,12 @@
         } catch (err) {
             console.error(err);
             appendLine('Failed to reach the server', 'lvl-ERROR');
-            return;
+            return false;
         }
 
         loadPlayers();
         refreshOnline();
+        return true;
     }
 
     /* ------------------------------------------------- Player inventory viewer */
@@ -2974,18 +3031,230 @@
         return chip;
     }
 
+    /* ------------------------------------------------------------ Vitals bars
+
+       Health and hunger are drawn as the game draws them. The panel ships no
+       Minecraft artwork and the item-texture endpoint only answers for items,
+       so the icons are 9x9 pixel maps -- the size of the real HUD sprites --
+       painted as SVG rects rather than lifted out of the client jar.
+
+       '.' is a hole, 'X' the body, 'h' the highlight, 'o' the shaded edge and
+       'b' the bone. */
+    const MC_HEART = [
+        '.XX...XX.',
+        'XhhX.XXXX',
+        'XhXXXXXXX',
+        'XXXXXXXXX',
+        'XXXXXXXXo',
+        '.XXXXXXo.',
+        '..XXXXo..',
+        '...XXo...',
+        '....X....'
+    ];
+
+    const MC_DRUMSTICK = [
+        '..XXXX...',
+        '.XhXXXX..',
+        '.XhXXXXo.',
+        '.XXXXXXo.',
+        '..XXXXo..',
+        '..bXXo...',
+        '.bbo.....',
+        'bb.......',
+        'b........'
+    ];
+
+    /* Game colours, hardcoded rather than themed: a heart is that red in every
+       theme because it is that red in the game. Only the empty pips follow the
+       panel, and they do it through currentColor in the stylesheet. */
+    const MC_PALETTE = {
+        heart: { X: '#e33b30', h: '#ff6d63', o: '#8f1d18' },
+        food: { X: '#c8873c', h: '#e8b96b', o: '#8a5a25', b: '#e9e3d2' }
+    };
+
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+
+    /* One icon, filled `fraction` of the way across. Half is a clip at the
+       middle column rather than a second sprite, which is how the game draws a
+       half heart too -- and it means a third of a heart would work as well if
+       a mod ever needed one. */
+    function pixelIcon(map, palette, fraction) {
+        const svg = document.createElementNS(SVG_NS, 'svg');
+        svg.setAttribute('class', 'inv-pip');
+        svg.setAttribute('viewBox', '0 0 9 9');
+        svg.setAttribute('aria-hidden', 'true');
+
+        const paint = (limit, colourFor, className) => {
+            map.forEach((row, y) => {
+                for (let x = 0; x < row.length; x++) {
+                    if (row[x] === '.') continue;
+                    const width = Math.min(1, limit - x);
+                    if (width <= 0) continue;
+                    const rect = document.createElementNS(SVG_NS, 'rect');
+                    rect.setAttribute('x', x);
+                    rect.setAttribute('y', y);
+                    rect.setAttribute('width', width);
+                    rect.setAttribute('height', 1);
+                    if (className) rect.setAttribute('class', className);
+                    const colour = colourFor(row[x]);
+                    if (colour) rect.setAttribute('fill', colour);
+                    svg.appendChild(rect);
+                }
+            });
+        };
+
+        // The empty silhouette underneath is always whole, so a bar at zero is
+        // still ten readable holes rather than blank space.
+        paint(9, () => null, 'pip-empty');
+        if (fraction > 0) paint(9 * fraction, ch => palette[ch] || palette.X, null);
+
+        return svg;
+    }
+
+    function pipRow(value, max, map, palette) {
+        const bar = document.createElement('div');
+        bar.className = 'inv-bar';
+
+        // One pip per two points: ten hearts for twenty health, and more only
+        // if a mod raised the ceiling.
+        for (let i = 0; i < Math.ceil(max / 2); i++) {
+            const left = value - i * 2;
+            bar.appendChild(pixelIcon(map, palette, left >= 2 ? 1 : left >= 1 ? 0.5 : 0));
+        }
+
+        return bar;
+    }
+
+    function vitalLine(name, body, readout) {
+        const line = document.createElement('div');
+        line.className = 'inv-vital';
+
+        const label = document.createElement('span');
+        label.className = 'inv-vital-name';
+        label.textContent = name;
+        line.appendChild(label);
+        line.appendChild(body);
+
+        if (readout) {
+            const value = document.createElement('span');
+            value.className = 'inv-vital-value';
+            value.textContent = readout;
+            line.appendChild(value);
+        }
+
+        return line;
+    }
+
+    function xpBar(vitals) {
+        const holder = document.createElement('div');
+        holder.className = 'inv-xp';
+
+        const track = document.createElement('div');
+        track.className = 'inv-xp-track';
+        const fill = document.createElement('div');
+        fill.className = 'inv-xp-fill';
+        // XpP is how far along to the next level they are, 0 to 1. Absent on an
+        // old save, where an empty bar under the right level number beats no
+        // bar at all.
+        const progress = typeof vitals.xpProgress === 'number' ? vitals.xpProgress : 0;
+        fill.style.width = `${Math.max(0, Math.min(1, progress)) * 100}%`;
+        track.appendChild(fill);
+
+        const level = document.createElement('span');
+        level.className = 'inv-xp-level';
+        level.textContent = vitals.xpLevel;
+
+        holder.appendChild(track);
+        holder.appendChild(level);
+        return holder;
+    }
+
+    function vitalBars(vitals) {
+        const wrap = document.createElement('div');
+        wrap.className = 'inv-vitals';
+
+        if (typeof vitals.health === 'number') {
+            // Twenty unless a mod says otherwise, and the readout says which,
+            // so half a row of hearts never silently means half of thirty.
+            const max = Math.max(20, Math.ceil(vitals.health));
+            const shown = Math.round(vitals.health * 10) / 10;
+            wrap.appendChild(vitalLine(
+                'Health',
+                pipRow(vitals.health, max, MC_HEART, MC_PALETTE.heart),
+                `${shown} / ${max}`
+            ));
+        }
+
+        if (typeof vitals.food === 'number') {
+            wrap.appendChild(vitalLine(
+                'Hunger',
+                pipRow(vitals.food, 20, MC_DRUMSTICK, MC_PALETTE.food),
+                `${vitals.food} / 20`
+            ));
+        }
+
+        if (typeof vitals.xpLevel === 'number') {
+            wrap.appendChild(vitalLine('XP', xpBar(vitals), null));
+        }
+
+        return wrap.childElementCount ? wrap : null;
+    }
+
+    /* What is left of the header once health, hunger and XP have bars of their
+       own: the parts that are a word rather than a quantity. */
     function vitalChips(vitals) {
         const row = document.createElement('div');
         row.className = 'inv-chips';
 
-        if (typeof vitals.health === 'number') row.appendChild(invChip(`${Math.round(vitals.health * 10) / 10} / 20 health`));
-        if (typeof vitals.food === 'number') row.appendChild(invChip(`${vitals.food} / 20 food`));
-        if (typeof vitals.xpLevel === 'number') row.appendChild(invChip(`Level ${vitals.xpLevel}`));
         if (vitals.gameMode) row.appendChild(invChip(vitals.gameMode));
         if (vitals.dimension) row.appendChild(invChip(vitals.dimension.replace('minecraft:', '')));
         if (vitals.position) row.appendChild(invChip(vitals.position.join(', ')));
+        if (typeof vitals.score === 'number') row.appendChild(invChip(`Score ${vitals.score}`));
 
         return row.childElementCount ? row : null;
+    }
+
+    /* The four vitals commands. Minecraft has no way to set health or hunger
+       directly, so three of these are status effects -- command_for in
+       console/players.rs is where the actual commands live. Starve is the one
+       that is not instant: it drains over a few seconds rather than snapping to
+       zero, because draining is all the game offers. */
+    const VITAL_ACTIONS = [
+        { action: 'heal', label: 'Heal' },
+        { action: 'feed', label: 'Feed' },
+        { action: 'starve', label: 'Starve', harmful: true },
+        { action: 'kill', label: 'Kill', harmful: true }
+    ];
+
+    /* Disabled rather than hidden when the player is offline: all four go
+       through the running server, and a row of buttons that vanishes reads as a
+       missing feature rather than an unavailable one. */
+    function vitalActions(player) {
+        const row = document.createElement('div');
+        row.className = 'inv-acts';
+        const reachable = !!(player && player.online && player.name);
+
+        VITAL_ACTIONS.forEach(spec => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = spec.label;
+            if (spec.harmful) button.classList.add('harmful');
+            button.disabled = !reachable;
+            if (!reachable) button.title = 'Only possible while they are online';
+
+            button.addEventListener('click', async () => {
+                if (!await runPlayerAction(player.name, spec.action, spec.label)) return;
+                // The bars are now wrong by exactly the change just made. The
+                // effect lands on the server's next tick, so the re-read waits
+                // one out rather than racing it and redrawing the old numbers.
+                await new Promise(resolve => setTimeout(resolve, 400));
+                await loadOverview();
+            });
+
+            row.appendChild(button);
+        });
+
+        return row;
     }
 
     /* Shulker boxes and bundles are where the interesting loot is, and a
@@ -3027,12 +3296,18 @@
         return list;
     }
 
-    function renderInventory(data, player) {
+    function renderOverview(data, player) {
         const snapshot = data.inventory || {};
+        const vitals = snapshot.vitals || {};
         invBody.innerHTML = '';
 
-        const chips = vitalChips(snapshot.vitals || {});
+        const bars = vitalBars(vitals);
+        if (bars) invBody.appendChild(bars);
+
+        const chips = vitalChips(vitals);
         if (chips) invBody.appendChild(chips);
+
+        invBody.appendChild(vitalActions(player));
 
         const worn = document.createElement('div');
         worn.className = 'inv-worn';
@@ -3072,7 +3347,11 @@
             // header numbers are not on any of the live paths and still come
             // off disk, which is worth saying rather than implying.
             parts.push('read live from the server');
-            if (data.savedAt) parts.push(`health and XP are from the save ${saved}`);
+            // Only when part of the header could not be read live, which is one
+            // `/data get` reply failing while the rest came back.
+            if (data.vitalsSource === 'mixed' && data.savedAt) {
+                parts.push(`some header values are from the save ${saved}`);
+            }
         } else {
             parts.push(`from the save ${saved}`);
             // The server writes that file on autosave and on disconnect, so for
@@ -3096,15 +3375,16 @@
         }
     }
 
-    function closeInventory() {
+    function closeOverview() {
         if (invOverlay) invOverlay.style.display = 'none';
     }
 
-    /* Whoever the modal is currently showing, so Refresh knows what to re-ask
-       for without the caller having to thread it back through. */
+    /* Whoever the modal is currently showing, so Refresh and the vitals
+       buttons know what to re-ask for without the caller having to thread it
+       back through. */
     let invPlayer = null;
 
-    async function openInventory(player) {
+    async function openOverview(player) {
         if (!invOverlay || !player || !player.uuid) return;
 
         invPlayer = player;
@@ -3112,10 +3392,10 @@
         invUuid.textContent = player.uuid;
         invBody.innerHTML = '';
         invOverlay.style.display = 'flex';
-        await loadInventory();
+        await loadOverview();
     }
 
-    async function loadInventory() {
+    async function loadOverview() {
         const player = invPlayer;
         if (!player) return;
 
@@ -3143,7 +3423,7 @@
                 return;
             }
 
-            renderInventory(data, player);
+            renderOverview(data, player);
         } catch (err) {
             console.error(err);
             invMeta.textContent = 'Could not reach the server.';
@@ -3152,26 +3432,26 @@
 
     if (invOverlay) {
         invOverlay.addEventListener('click', (e) => {
-            if (e.target === invOverlay) closeInventory();
+            if (e.target === invOverlay) closeOverview();
         });
     }
     const invCloseBtn = document.getElementById('invClose');
-    if (invCloseBtn) invCloseBtn.addEventListener('click', closeInventory);
+    if (invCloseBtn) invCloseBtn.addEventListener('click', closeOverview);
     const invRefreshBtn = document.getElementById('invRefresh');
-    if (invRefreshBtn) invRefreshBtn.addEventListener('click', () => loadInventory());
+    if (invRefreshBtn) invRefreshBtn.addEventListener('click', () => loadOverview());
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') closeInventory();
+        if (e.key === 'Escape') closeOverview();
     });
 
     /* Enabled on UUID rather than on name: the file is named by UUID, and a
        row that has only ever been seen by name has nothing to read. */
-    function inventoryButton(player) {
+    function overviewButton(player) {
         const button = document.createElement('button');
         button.type = 'button';
-        button.textContent = 'Inventory';
+        button.textContent = 'Overview';
         button.disabled = !player.uuid;
         if (!player.uuid) button.title = 'No UUID on record for this player yet';
-        button.addEventListener('click', () => openInventory(player));
+        button.addEventListener('click', () => openOverview(player));
         return button;
     }
 
@@ -3223,7 +3503,7 @@
 
             const actionCell = document.createElement('td');
             actionCell.dataset.label = 'Actions';
-            actionCell.appendChild(inventoryButton(player));
+            actionCell.appendChild(overviewButton(player));
             actionCell.appendChild(actionButton(player, player.op ? 'De-op' : 'Op', player.op ? 'deop' : 'op'));
             if (player.online) {
                 actionCell.appendChild(actionButton(player, 'Kick', 'kick'));

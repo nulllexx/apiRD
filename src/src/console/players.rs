@@ -46,11 +46,17 @@ pub enum PlayerAction {
     Ban,
     Pardon,
     ClearInventory,
+    Heal,
+    Feed,
+    Starve,
+    Kill,
 }
 
 impl PlayerAction {
     /// Canonical names, in the order the UI offers them.
-    pub const NAMES: [&'static str; 6] = ["op", "deop", "kick", "ban", "pardon", "clear"];
+    pub const NAMES: [&'static str; 10] = [
+        "op", "deop", "kick", "ban", "pardon", "clear", "heal", "feed", "starve", "kill",
+    ];
 
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
@@ -62,6 +68,10 @@ impl PlayerAction {
             // "pardon".
             "pardon" | "unban" => Some(PlayerAction::Pardon),
             "clear" | "clearinventory" => Some(PlayerAction::ClearInventory),
+            "heal" => Some(PlayerAction::Heal),
+            "feed" => Some(PlayerAction::Feed),
+            "starve" => Some(PlayerAction::Starve),
+            "kill" => Some(PlayerAction::Kill),
             _ => None,
         }
     }
@@ -74,6 +84,10 @@ impl PlayerAction {
             PlayerAction::Ban => "ban",
             PlayerAction::Pardon => "pardon",
             PlayerAction::ClearInventory => "clear",
+            PlayerAction::Heal => "heal",
+            PlayerAction::Feed => "feed",
+            PlayerAction::Starve => "starve",
+            PlayerAction::Kill => "kill",
         }
     }
 
@@ -84,7 +98,38 @@ impl PlayerAction {
 }
 
 /// Build the RCON command for one action.
+///
+/// Most actions are a verb and a name. The three vitals buttons are not:
+/// Minecraft has no command that sets a player's health or hunger, because
+/// `/data merge entity` refuses to touch players. They go through status
+/// effects instead, with amplifiers set far past what a twenty-point bar needs
+/// so that one application saturates it — a modpack that raises the ceiling
+/// must not quietly turn "heal" into "heal a bit". The trailing `true` hides
+/// the particles, so the target sees the result rather than the mechanism.
 pub fn command_for(action: PlayerAction, player: &str, reason: Option<&str>) -> String {
+    match action {
+        // Instant effects apply on their first tick, so the duration is a
+        // formality. Instant Health heals 4 x 2^amplifier half-hearts.
+        PlayerAction::Heal => {
+            return format!("effect give {player} minecraft:instant_health 1 10 true")
+        }
+        // Saturation, not a food value: it refills hunger and saturation
+        // together, which is what a fed player actually looks like. Filling the
+        // bar alone leaves them one sprint from hungry again.
+        PlayerAction::Feed => {
+            return format!("effect give {player} minecraft:saturation 1 10 true")
+        }
+        // The one that cannot be instant. Hunger drains through the exhaustion
+        // meter over time, so this is a few seconds rather than a keystroke:
+        // at the maximum amplifier a full bar empties in about three, and the
+        // ten-second duration is what makes that hold for someone who started
+        // fully saturated.
+        PlayerAction::Starve => {
+            return format!("effect give {player} minecraft:hunger 10 255 true")
+        }
+        _ => {}
+    }
+
     let mut command = format!("{} {}", action.as_str(), player);
 
     if action.takes_reason() {
@@ -557,6 +602,48 @@ mod tests {
             "kick Steve"
         );
         assert_eq!(command_for(PlayerAction::Kick, "Steve", None), "kick Steve");
+    }
+
+    #[test]
+    fn the_vitals_actions_become_effect_commands() {
+        assert_eq!(
+            command_for(PlayerAction::Heal, "Steve", None),
+            "effect give Steve minecraft:instant_health 1 10 true"
+        );
+        assert_eq!(
+            command_for(PlayerAction::Feed, "Steve", None),
+            "effect give Steve minecraft:saturation 1 10 true"
+        );
+        assert_eq!(
+            command_for(PlayerAction::Starve, "Steve", None),
+            "effect give Steve minecraft:hunger 10 255 true"
+        );
+    }
+
+    /// Kill is the one vitals-adjacent action that *is* a plain verb, so it
+    /// must not be swept into the effect branch with the other three.
+    #[test]
+    fn kill_stays_a_plain_command() {
+        assert_eq!(command_for(PlayerAction::Kill, "Steve", None), "kill Steve");
+    }
+
+    /// A reason is meaningless for these, and appending one would turn it into
+    /// stray arguments on an `effect give`.
+    #[test]
+    fn the_new_actions_ignore_a_reason() {
+        for action in [
+            PlayerAction::Heal,
+            PlayerAction::Feed,
+            PlayerAction::Starve,
+            PlayerAction::Kill,
+        ] {
+            assert!(!action.takes_reason(), "{action:?} must not take a reason");
+            assert_eq!(
+                command_for(action, "Steve", Some("because")),
+                command_for(action, "Steve", None),
+                "{action:?} must ignore a reason"
+            );
+        }
     }
 
     /* ----------------------------------------------------------- validation */

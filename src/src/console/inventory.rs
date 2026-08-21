@@ -119,6 +119,9 @@ pub struct Vitals {
     pub food: Option<i32>,
     #[serde(rename = "xpLevel", skip_serializing_if = "Option::is_none")]
     pub xp_level: Option<i32>,
+    /// Progress towards the next level, 0.0 to 1.0 — the fill of the XP bar.
+    #[serde(rename = "xpProgress", skip_serializing_if = "Option::is_none")]
+    pub xp_progress: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub score: Option<i32>,
     /// "survival", "creative", … or `None` when the field is absent.
@@ -129,6 +132,44 @@ pub struct Vitals {
     /// Rounded block coordinates; fractional position is noise at this size.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub position: Option<[i64; 3]>,
+}
+
+impl Vitals {
+    /// Fill anything this set is missing from `other`, and report whether it
+    /// had to borrow.
+    ///
+    /// The live view assembles vitals from one `/data get` per field, and any
+    /// one of those can come back unparseable while the rest succeed. This lets
+    /// the saved file cover the holes without replacing the fields that *did*
+    /// answer, and the returned flag is what lets the panel say "live" only
+    /// when it means it.
+    pub fn fill_gaps_from(&mut self, other: &Vitals) -> bool {
+        let mut borrowed = false;
+
+        macro_rules! fill {
+            ($($field:ident),+ $(,)?) => {$(
+                if self.$field.is_none() {
+                    if other.$field.is_some() {
+                        borrowed = true;
+                    }
+                    self.$field = other.$field.clone();
+                }
+            )+};
+        }
+
+        fill!(
+            health,
+            food,
+            xp_level,
+            xp_progress,
+            score,
+            game_mode,
+            dimension,
+            position,
+        );
+
+        borrowed
+    }
 }
 
 /// Everything one "See inventory" click returns.
@@ -536,6 +577,7 @@ fn read_vitals(root: &HashMap<String, Value>) -> Vitals {
         health: root.get("Health").and_then(as_f32),
         food: root.get("foodLevel").and_then(as_i32),
         xp_level: root.get("XpLevel").and_then(as_i32),
+        xp_progress: root.get("XpP").and_then(as_f32),
         score: root.get("Score").and_then(as_i32),
         game_mode,
         dimension: root
@@ -605,7 +647,26 @@ pub fn snapshot_from_root(root: &HashMap<String, Value>) -> PlayerSnapshot {
 /// attribute list, which is both enormous and none of this panel's business.
 /// Each path also fails independently, so a server too old to have `equipment`
 /// still answers the other three.
-pub const LIVE_PATHS: [&str; 4] = ["Inventory", "EnderItems", "equipment", "SelectedItemSlot"];
+pub const LIVE_PATHS: [&str; 12] = [
+    // The grids.
+    "Inventory",
+    "EnderItems",
+    "equipment",
+    "SelectedItemSlot",
+    // The header. One `/data get` each, because the command takes a single
+    // path and there is no batching form of it. They are small replies on a
+    // local socket, and the alternative is an Overview whose health bar shows
+    // whatever the player had at the last autosave — which for someone who is
+    // online is precisely the number an operator must not act on.
+    "Health",
+    "foodLevel",
+    "XpLevel",
+    "XpP",
+    "Score",
+    "playerGameType",
+    "Dimension",
+    "Pos",
+];
 
 /// Build the `/data get` command for one path.
 ///
@@ -1307,6 +1368,75 @@ mod tests {
     }
 
     /* -------------------------------------------------------------- vitals */
+
+    /// The header is only live because these are on the live path. If one is
+    /// dropped, the bars silently go back to showing the last autosave.
+    #[test]
+    fn the_live_paths_cover_the_whole_header() {
+        for field in [
+            "Health",
+            "foodLevel",
+            "XpLevel",
+            "XpP",
+            "playerGameType",
+            "Dimension",
+            "Pos",
+        ] {
+            assert!(
+                LIVE_PATHS.contains(&field),
+                "{field} must be read live or the bars show stale data"
+            );
+        }
+    }
+
+    #[test]
+    fn every_live_path_builds_a_command() {
+        for path in LIVE_PATHS {
+            assert_eq!(
+                live_command("Steve", path),
+                Some(format!("data get entity Steve {path}")),
+                "{path} must build a command"
+            );
+        }
+    }
+
+    #[test]
+    fn a_gap_is_filled_from_the_save_and_reported() {
+        let mut live = Vitals {
+            health: Some(20.0),
+            ..Vitals::default()
+        };
+        let saved = Vitals {
+            health: Some(3.0),
+            food: Some(11),
+            ..Vitals::default()
+        };
+
+        assert!(live.fill_gaps_from(&saved), "food came off disk");
+        // The field that answered live is not overwritten by the stale one.
+        assert_eq!(live.health, Some(20.0));
+        assert_eq!(live.food, Some(11));
+    }
+
+    #[test]
+    fn a_complete_live_header_borrows_nothing() {
+        let mut live = Vitals {
+            health: Some(20.0),
+            food: Some(20),
+            ..Vitals::default()
+        };
+        let saved = live.clone();
+
+        assert!(!live.fill_gaps_from(&saved), "nothing was missing");
+    }
+
+    /// A field neither side has is not a borrow — otherwise a player with no
+    /// score would make an otherwise-live header report itself as mixed.
+    #[test]
+    fn a_field_missing_from_both_is_not_a_borrow() {
+        let mut live = Vitals::default();
+        assert!(!live.fill_gaps_from(&Vitals::default()));
+    }
 
     #[test]
     fn reads_the_header_fields() {
