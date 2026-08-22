@@ -859,6 +859,84 @@
         .inv-acts button.harmful { color: var(--danger) !important; border-color: var(--danger-soft) !important; }
         .inv-acts button.harmful:hover:not(:disabled) { background: var(--danger-soft) !important; border-color: var(--danger) !important; }
 
+        /* Confirmation dialog, replacing the browser's confirm() and prompt().
+
+           Above everything else it can be opened from, which is the whole
+           reason it is not the existing #overlay: that sits at 1000, below the
+           player Overview at 1100, so a confirmation raised by a button inside
+           the Overview would have opened behind it. */
+        #askOverlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(6, 8, 12, 0.72) !important;
+            backdrop-filter: blur(2px);
+            z-index: 1300;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        #askDialog {
+            background: var(--bg-panel) !important;
+            border: 1px solid var(--line) !important;
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            padding: 24px;
+            width: 100%;
+            max-width: 440px;
+        }
+
+        #askTitle {
+            margin: 0 0 10px;
+            font-size: 1.02rem;
+            font-weight: 600;
+            color: var(--text) !important;
+            text-transform: none;
+            letter-spacing: normal;
+        }
+
+        /* pre-line so a message can use blank lines to separate the action from
+           its consequence, which is the part worth reading twice. */
+        #askBody {
+            margin: 0;
+            font-size: 0.87rem;
+            line-height: 1.55;
+            color: var(--text-muted) !important;
+            white-space: pre-line;
+        }
+
+        #askInput {
+            display: none;
+            width: 100%;
+            margin-top: 14px;
+            padding: 8px 10px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--line) !important;
+            background: var(--bg-raised) !important;
+            color: var(--text) !important;
+            font: inherit;
+        }
+        #askInput:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+        #askButtons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+        #askButtons button {
+            padding: 8px 16px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--line) !important;
+            background: var(--bg-raised) !important;
+            color: var(--text) !important;
+        }
+        #askButtons button:hover { border-color: var(--accent) !important; }
+        #askOk { background: var(--accent) !important; color: var(--accent-contrast) !important; border-color: var(--accent) !important; font-weight: 600; }
+        #askOk:hover { background: var(--accent-dim) !important; }
+        /* Destructive actions get the danger colour, so the button that bans
+           somebody does not look like the button that heals them. */
+        #askOk.danger { background: var(--danger) !important; border-color: var(--danger) !important; color: #ffffff !important; }
+        #askOk.danger:hover { filter: brightness(1.1); }
+
         /* Item tooltip, drawn the way the game draws one.
 
            Replaces a `title` attribute, which had two problems: it cannot show
@@ -1567,6 +1645,19 @@
     </div>
 </div>
 
+<!-- Confirmation dialog, driven by ask(). Replaces confirm() and prompt(). -->
+<div id="askOverlay">
+    <div id="askDialog" role="dialog" aria-modal="true" aria-labelledby="askTitle" aria-describedby="askBody">
+        <h3 id="askTitle"></h3>
+        <p id="askBody"></p>
+        <input type="text" id="askInput" autocomplete="off">
+        <div id="askButtons">
+            <button type="button" id="askCancel">Cancel</button>
+            <button type="button" id="askOk">Confirm</button>
+        </div>
+    </div>
+</div>
+
 <!-- Item tooltip, filled in by showItemTip(). Lives at the top level rather
      than inside a slot so it is never clipped by the modal's own scrolling. -->
 <div id="itemTip" role="tooltip" aria-hidden="true"></div>
@@ -1652,6 +1743,143 @@
             });
         }
     })();
+
+    const askOverlay = document.getElementById('askOverlay');
+    const askDialog = document.getElementById('askDialog');
+    const askTitle = document.getElementById('askTitle');
+    const askBody = document.getElementById('askBody');
+    const askInput = document.getElementById('askInput');
+    const askOk = document.getElementById('askOk');
+    const askCancel = document.getElementById('askCancel');
+
+    /* The dialog currently on screen: how to settle it, what a cancel returns,
+       and what to put focus back on afterwards. Null when nothing is open. */
+    let askPending = null;
+
+    function askIsOpen() {
+        return askPending !== null;
+    }
+
+    function askSettle(value) {
+        if (!askPending) return;
+        const { resolve, restoreFocus } = askPending;
+        askPending = null;
+
+        askOverlay.style.display = 'none';
+        askInput.style.display = 'none';
+        askInput.value = '';
+        askOk.classList.remove('danger');
+
+        // Back to whatever was focused before, so keyboard users are not
+        // returned to the top of the document.
+        if (restoreFocus && document.contains(restoreFocus)) restoreFocus.focus();
+        resolve(value);
+    }
+
+    /* Open the dialog and resolve with what the operator chose.
+
+       `input` turns it into a prompt: the resolved value is the text, or
+       `cancelValue` if they backed out. Without it the dialog is a confirm and
+       resolves true or false. */
+    function ask(options) {
+        const opts = options || {};
+        const cancelValue = 'input' in opts ? null : false;
+
+        // Only one at a time. A second request settles the first as cancelled
+        // rather than stacking dialogs or silently dropping either.
+        if (askPending) askSettle(askPending.cancelValue);
+
+        askTitle.textContent = opts.title || 'Are you sure?';
+        askBody.textContent = opts.body || '';
+        askOk.textContent = opts.confirmLabel || 'Confirm';
+        askCancel.textContent = opts.cancelLabel || 'Cancel';
+        if (opts.danger) askOk.classList.add('danger');
+
+        // Set both ways round rather than only when showing it: relying on the
+        // close path to have hidden it makes the first open depend on the
+        // stylesheet and every later one on the previous dialog.
+        askInput.style.display = 'input' in opts ? 'block' : 'none';
+        if ('input' in opts) {
+            askInput.value = opts.input || '';
+            askInput.placeholder = opts.placeholder || '';
+        }
+
+        askOverlay.style.display = 'flex';
+
+        return new Promise(resolve => {
+            askPending = {
+                resolve,
+                cancelValue,
+                isPrompt: 'input' in opts,
+                restoreFocus: document.activeElement,
+            };
+            // The input when there is one, otherwise the confirm button -- so
+            // Enter does the obvious thing either way.
+            ('input' in opts ? askInput : askOk).focus();
+        });
+    }
+
+    function askConfirm(options) {
+        return ask(options);
+    }
+
+    /* Resolves to the entered text, or null if cancelled. An empty string is a
+       real answer -- "no reason given" is not the same as "changed my mind" --
+       so callers must test against null rather than for falsiness. */
+    function askPrompt(options) {
+        return ask(Object.assign({ input: '' }, options));
+    }
+
+    askOk.addEventListener('click', () => {
+        askSettle(askPending && askPending.isPrompt ? askInput.value : true);
+    });
+    askCancel.addEventListener('click', () => askSettle(askPending ? askPending.cancelValue : false));
+
+    // Clicking the backdrop cancels, the way clicking away from a dialog
+    // usually does. Clicks inside must not reach it.
+    askOverlay.addEventListener('click', (e) => {
+        if (e.target === askOverlay) askSettle(askPending ? askPending.cancelValue : false);
+    });
+    askDialog.addEventListener('click', (e) => e.stopPropagation());
+
+    /* Captured rather than bubbled, and only while a dialog is open, so Escape
+       settles this dialog instead of also reaching the handlers that close the
+       Overview and the item tooltip behind it. */
+    document.addEventListener('keydown', (e) => {
+        if (!askPending) return;
+
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            askSettle(askPending.cancelValue);
+            return;
+        }
+
+        if (e.key === 'Enter' && e.target !== askCancel) {
+            e.preventDefault();
+            e.stopPropagation();
+            askSettle(askPending.isPrompt ? askInput.value : true);
+            return;
+        }
+
+        // Keep Tab inside the dialog. Without this it walks into the page
+        // behind, which is still there and still clickable-looking.
+        if (e.key === 'Tab') {
+            const focusable = [askInput, askCancel, askOk]
+                .filter(el => el.offsetParent !== null);
+            if (!focusable.length) return;
+
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (e.shiftKey && document.activeElement === first) {
+                e.preventDefault();
+                last.focus();
+            } else if (!e.shiftKey && document.activeElement === last) {
+                e.preventDefault();
+                first.focus();
+            }
+        }
+    }, true);
 
     /* --------------------------------------------------------- Users Tab & Overlay */
 
@@ -1840,9 +2068,13 @@
         document.querySelectorAll('.deleteBtn').forEach(btn => {
             btn.addEventListener('click', async () => {
                 const username = btn.dataset.username;
-                if (!confirm(`Are you sure you want to delete the account "${username}"? This action cannot be undone.`)) {
-                    return;
-                }
+                const ok = await askConfirm({
+                    title: 'Delete this account?',
+                    body: `${username} will be removed permanently.\n\nThis cannot be undone.`,
+                    confirmLabel: 'Delete account',
+                    danger: true
+                });
+                if (!ok) return;
                 try {
                     const response = await fetch('/api/admin/delete-user', {
                         method: 'DELETE',
@@ -2861,7 +3093,17 @@
     document.querySelectorAll('.powerBtn').forEach(btn => {
         btn.addEventListener('click', async () => {
             const action = btn.dataset.action;
-            if (action !== 'start' && !confirm(`Really ${action} the Minecraft server?`)) return;
+            // Starting is the one that cannot lose anything, so it goes
+            // straight through. Stopping and restarting disconnect everybody.
+            if (action !== 'start') {
+                const ok = await askConfirm({
+                    title: `${action.charAt(0).toUpperCase() + action.slice(1)} the server?`,
+                    body: 'Everyone online will be disconnected.',
+                    confirmLabel: action.charAt(0).toUpperCase() + action.slice(1),
+                    danger: true
+                });
+                if (!ok) return;
+            }
 
             document.querySelectorAll('.powerBtn').forEach(b => b.disabled = true);
             try {
@@ -3113,10 +3355,22 @@
         let reason = null;
 
         if (action === 'kick' || action === 'ban') {
-            reason = prompt(`${label} ${name} — reason (optional):`, '');
+            reason = await askPrompt({
+                title: `${label} ${name}?`,
+                body: 'The reason is shown to them, and is optional.',
+                placeholder: 'Reason (optional)',
+                confirmLabel: label,
+                danger: true
+            });
+            // Null is a cancel; an empty string is a deliberate "no reason".
             if (reason === null) return false;
-        } else if (!confirm(`Really ${label.toLowerCase()} ${name}?`)) {
-            return false;
+        } else {
+            const ok = await askConfirm({
+                title: `${label} ${name}?`,
+                confirmLabel: label,
+                danger: action === 'kill' || action === 'starve' || action === 'clear'
+            });
+            if (!ok) return false;
         }
 
         try {
@@ -3354,7 +3608,10 @@
     // Anywhere else dismisses a pinned tooltip, including a scroll that would
     // otherwise leave it floating next to the wrong slot.
     document.addEventListener('click', () => { if (tippedSlot) hideItemTip(); });
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideItemTip(); });
+    document.addEventListener('keydown', (e) => {
+        if (askIsOpen()) return;
+        if (e.key === 'Escape') hideItemTip();
+    });
     window.addEventListener('resize', hideItemTip);
     if (invBody) invBody.addEventListener('scroll', hideItemTip, true);
 
@@ -3657,9 +3914,13 @@
        report is which file changed. Returns the same accepted/refused flag. */
     async function runOfflineVital(player, spec) {
         const who = playerLabel(player);
-        if (!confirm(`Really ${spec.label.toLowerCase()} ${who}?\n\nThey are offline, so this edits their saved player file directly.`)) {
-            return false;
-        }
+        const ok = await askConfirm({
+            title: `${spec.label} ${who}?`,
+            body: 'They are offline, so this edits their saved player file directly.',
+            confirmLabel: spec.label,
+            danger: !!spec.harmful
+        });
+        if (!ok) return false;
 
         try {
             const response = await fetch(
@@ -3927,6 +4188,9 @@
     const invRefreshBtn = document.getElementById('invRefresh');
     if (invRefreshBtn) invRefreshBtn.addEventListener('click', () => loadOverview());
     document.addEventListener('keydown', (e) => {
+        // A confirmation opened from inside the Overview handles its own
+        // Escape; without this guard one press would close both.
+        if (askIsOpen()) return;
         if (e.key === 'Escape') closeOverview();
     });
 
