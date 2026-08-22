@@ -2593,6 +2593,41 @@
         }
     }
 
+    /* Attribution entries already on screen, so a reconnection does not print
+       them twice.
+
+       Every new stream opens with the audit backlog replayed, and the console
+       opens a new stream more often than it looks: switching between the log
+       and stdout sources builds a fresh EventSource, and so does the automatic
+       retry after a dropped connection. Neither clears what is already
+       displayed, so without this the same entries pile up -- and on a source
+       switch they pile up detached from the log lines they belong to, which is
+       what makes them look like a block of unrelated noise.
+
+       Keyed on the entry id, which is its database row and therefore unique and
+       stable across reconnects. Not a high-water mark: two commands can finish
+       out of order, so a lower id arriving after a higher one is a real entry
+       and not a repeat. */
+    const shownAudit = new Set();
+    const shownAuditOrder = [];
+    /* Comfortably more than the backlog the server replays, so an entry can
+       never age out of here while still being replayed into the page. */
+    const SHOWN_AUDIT_LIMIT = 400;
+
+    function auditAlreadyShown(entry) {
+        // An entry with no id cannot be recognised on the way back, so it is
+        // shown rather than risk swallowing something real.
+        if (typeof entry.id !== 'number') return false;
+        if (shownAudit.has(entry.id)) return true;
+
+        shownAudit.add(entry.id);
+        shownAuditOrder.push(entry.id);
+        while (shownAuditOrder.length > SHOWN_AUDIT_LIMIT) {
+            shownAudit.delete(shownAuditOrder.shift());
+        }
+        return false;
+    }
+
     /* Render one attribution entry.
 
        These arrive on their own SSE event, never as log text, so this is the
@@ -2690,6 +2725,7 @@
                 console.error('unreadable audit entry', err);
                 return;
             }
+            if (auditAlreadyShown(entry)) return;
             appendAuditLine(entry);
         });
 
@@ -2720,6 +2756,11 @@
     if (clearConsoleBtn) {
         clearConsoleBtn.addEventListener('click', () => {
             if (consoleOutput) consoleOutput.innerHTML = '';
+            // Clearing is a deliberate reset, so the record of what has been
+            // shown resets with it. Otherwise the next reconnect suppresses
+            // attribution as already-seen when nothing is on screen at all.
+            shownAudit.clear();
+            shownAuditOrder.length = 0;
         });
     }
 
