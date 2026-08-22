@@ -181,7 +181,171 @@ impl LineSplitter {
 
 fn decode_line(bytes: &[u8]) -> String {
     let text = String::from_utf8_lossy(bytes);
-    strip_ansi(text.trim_end_matches('\r'))
+    ansi_to_section(text.trim_end_matches('\r'))
+}
+
+/// The ANSI foreground colours Minecraft's console appender emits, and the
+/// section code each one means.
+///
+/// The order is the terminal's, not the game's: ANSI numbers its colours
+/// black-red-green-yellow-blue-magenta-cyan-white, which is a different
+/// sequence from Minecraft's. Mapping by position rather than by name is how
+/// blue and green get swapped, so this pairs them explicitly.
+const ANSI_COLOURS: [(u32, char); 16] = [
+    (30, '0'), // black
+    (34, '1'), // dark blue
+    (32, '2'), // dark green
+    (36, '3'), // dark aqua
+    (31, '4'), // dark red
+    (35, '5'), // dark purple
+    (33, '6'), // gold
+    (37, '7'), // gray
+    (90, '8'), // dark gray
+    (94, '9'), // blue
+    (92, 'a'), // green
+    (96, 'b'), // aqua
+    (91, 'c'), // red
+    (95, 'd'), // light purple
+    (93, 'e'), // yellow
+    (97, 'f'), // white
+];
+
+/// Rewrite ANSI colour escapes as Minecraft section codes, dropping the rest.
+///
+/// The server's console appender renders rank prefixes and chat colours as ANSI
+/// before writing them to stdout — which is why `docker compose logs` shows
+/// them in colour. This used to call [`strip_ansi`], which threw that away, so
+/// every line reached the browser grey. Deleting the codes was the right call at
+/// the time, because the alternative then was rendering them as literal
+/// `[0;32m` noise; the panel can render section codes now, so translating beats
+/// deleting.
+///
+/// Section codes rather than passing the escapes through, because the panel
+/// already has one renderer for those — the same one the item tooltip and the
+/// RCON echo use — and a second colour syntax in the same stream would mean two.
+///
+/// Everything that is not a colour or a style still goes: cursor movement,
+/// window titles and the rest have no meaning in a browser and would show as
+/// gibberish.
+pub fn ansi_to_section(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars();
+
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            // CSI — runs until a byte in the @..~ range. Only SGR (`m`) can
+            // carry a colour; anything else is dropped as before.
+            Some('[') => {
+                let mut params = String::new();
+                let mut final_byte = None;
+                for c in chars.by_ref() {
+                    if ('\x40'..='\x7e').contains(&c) {
+                        final_byte = Some(c);
+                        break;
+                    }
+                    params.push(c);
+                }
+                if final_byte == Some('m') {
+                    push_sgr(&params, &mut out);
+                }
+            }
+            // OSC — terminated by BEL or by ST (ESC \).
+            Some(']') => {
+                while let Some(c) = chars.next() {
+                    if c == '\x07' {
+                        break;
+                    }
+                    if c == '\x1b' {
+                        chars.next();
+                        break;
+                    }
+                }
+            }
+            // A two-character escape; the second character is the whole thing.
+            Some(_) => {}
+            None => {}
+        }
+    }
+
+    out
+}
+
+/// Translate the parameters of one SGR escape.
+///
+/// A single escape can carry several, semicolon-separated and applied in order
+/// — `ESC[0;32m` is a reset followed by a colour — so each is handled in turn
+/// rather than only the first.
+fn push_sgr(params: &str, out: &mut String) {
+    let mut parts = params.split(';');
+
+    while let Some(part) = parts.next() {
+        // An omitted parameter means zero: `ESC[m` is `ESC[0m`.
+        let code: u32 = if part.is_empty() {
+            0
+        } else {
+            match part.parse() {
+                Ok(code) => code,
+                Err(_) => continue,
+            }
+        };
+
+        match code {
+            0 => out.push_str("\u{a7}r"),
+            1 => out.push_str("\u{a7}l"),
+            3 => out.push_str("\u{a7}o"),
+            4 => out.push_str("\u{a7}n"),
+            9 => out.push_str("\u{a7}m"),
+            // Extended colour: `38;2;r;g;b` is 24-bit, `38;5;n` is indexed.
+            // Paper emits the 24-bit form for hex rank colours, which most
+            // networks now use, so this is not a theoretical branch.
+            38 | 48 => match parts.next().and_then(|v| v.parse::<u32>().ok()) {
+                Some(2) => {
+                    let mut rgb = [0u8; 3];
+                    for channel in &mut rgb {
+                        *channel = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+                    }
+                    // Only a foreground colour has a section-code equivalent;
+                    // a background one is dropped rather than painted as text.
+                    if code == 38 {
+                        push_hex(rgb, out);
+                    }
+                }
+                // Indexed colour eats one parameter and is not translated: the
+                // 256-colour cube has no section code, and the nearest of
+                // sixteen would be a guess presented as a fact.
+                Some(5) => {
+                    parts.next();
+                }
+                _ => {}
+            },
+            _ => {
+                if let Some((_, section)) = ANSI_COLOURS.iter().find(|(ansi, _)| *ansi == code) {
+                    out.push('\u{a7}');
+                    out.push(*section);
+                }
+            }
+        }
+    }
+}
+
+/// Write a 24-bit colour in the `\u{a7}x\u{a7}r\u{a7}r\u{a7}g\u{a7}g\u{a7}b\u{a7}b` form.
+///
+/// Minecraft's own encoding for hex in a section-code string, introduced by
+/// BungeeCord and understood everywhere since: one section code per hex digit,
+/// behind a leading `x`. Using it means the panel learns one syntax rather than
+/// acquiring a bespoke one.
+fn push_hex(rgb: [u8; 3], out: &mut String) {
+    out.push_str("\u{a7}x");
+    for channel in rgb {
+        for digit in [channel >> 4, channel & 0x0f] {
+            out.push('\u{a7}');
+            out.push(char::from_digit(u32::from(digit), 16).unwrap_or('0'));
+        }
+    }
 }
 
 /// Remove ANSI escape sequences.
@@ -357,6 +521,120 @@ mod tests {
         );
     }
 
+    /* -------------------------------------------- ANSI to section codes */
+
+    /// The case this exists for. `docker compose logs` shows a rank prefix in
+    /// colour because the server's console appender already wrote it as ANSI;
+    /// the panel used to strip that and render the line grey.
+    #[test]
+    fn a_coloured_rank_prefix_survives_as_section_codes() {
+        assert_eq!(
+            ansi_to_section("\x1b[0;32m[CITIZEN]\x1b[0m Joe: hello"),
+            "\u{a7}r\u{a7}2[CITIZEN]\u{a7}r Joe: hello"
+        );
+    }
+
+    /// ANSI numbers its colours in a different order from Minecraft, so a
+    /// positional mapping silently swaps blue with green. These four are the
+    /// pairs that get confused.
+    #[test]
+    fn the_blues_and_greens_map_to_the_right_codes() {
+        for (ansi, section) in [(34, '1'), (32, '2'), (94, '9'), (92, 'a')] {
+            assert_eq!(
+                ansi_to_section(&format!("\x1b[{ansi}mx")),
+                format!("\u{a7}{section}x"),
+                "ANSI {ansi}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_ansi_colour_has_a_distinct_section_code() {
+        let codes: std::collections::HashSet<char> =
+            ANSI_COLOURS.iter().map(|(_, code)| *code).collect();
+        assert_eq!(codes.len(), 16, "no two colours may share a code");
+    }
+
+    /// One escape can carry several parameters, applied in order. Handling only
+    /// the first would drop the colour in `ESC[0;32m`, which is the exact shape
+    /// Minecraft emits.
+    #[test]
+    fn every_parameter_of_one_escape_is_applied() {
+        assert_eq!(
+            ansi_to_section("\x1b[1;4;31mloud\x1b[0m"),
+            "\u{a7}l\u{a7}n\u{a7}4loud\u{a7}r"
+        );
+    }
+
+    #[test]
+    fn styles_become_their_section_codes() {
+        assert_eq!(ansi_to_section("\x1b[1mb"), "\u{a7}lb");
+        assert_eq!(ansi_to_section("\x1b[3mi"), "\u{a7}oi");
+        assert_eq!(ansi_to_section("\x1b[4mu"), "\u{a7}nu");
+        assert_eq!(ansi_to_section("\x1b[9ms"), "\u{a7}ms");
+    }
+
+    /// `ESC[m` with no parameter is a reset.
+    #[test]
+    fn an_empty_parameter_is_a_reset() {
+        assert_eq!(ansi_to_section("\x1b[mplain"), "\u{a7}rplain");
+    }
+
+    /// Paper emits 24-bit colour for the hex rank colours most networks use
+    /// now, so this is not a theoretical branch.
+    #[test]
+    fn a_24_bit_colour_becomes_the_hex_section_form() {
+        // #FFAA00, written the way BungeeCord encodes hex.
+        assert_eq!(
+            ansi_to_section("\x1b[38;2;255;170;0mgold"),
+            "\u{a7}x\u{a7}f\u{a7}f\u{a7}a\u{a7}a\u{a7}0\u{a7}0gold"
+        );
+    }
+
+    #[test]
+    fn a_24_bit_background_is_dropped_rather_than_painted() {
+        // 48 is a background colour, which has no section-code equivalent.
+        assert_eq!(ansi_to_section("\x1b[48;2;255;0;0mtext"), "text");
+    }
+
+    /// The 256-colour cube has no section code, and the nearest of sixteen
+    /// would be a guess. It must consume its parameter and emit nothing.
+    #[test]
+    fn an_indexed_colour_is_skipped_without_eating_the_text() {
+        assert_eq!(ansi_to_section("\x1b[38;5;213mtext"), "text");
+    }
+
+    /// Anything that is not a colour still has to go: cursor movement and
+    /// window titles have no meaning in a browser.
+    #[test]
+    fn non_colour_escapes_are_still_removed() {
+        assert_eq!(ansi_to_section("\x1b[2Ktext"), "text");
+        assert_eq!(ansi_to_section("\x1b]0;title\x07text"), "text");
+        assert_eq!(ansi_to_section("\x1b[1;1Htext"), "text");
+    }
+
+    #[test]
+    fn plain_text_is_untouched() {
+        let plain = "[12:00:00] [Server thread/INFO]: Done (1.234s)!";
+        assert_eq!(ansi_to_section(plain), plain);
+    }
+
+    /// A line that already carries section codes — an RCON reply echoed into
+    /// the log, say — must pass through rather than being escaped again.
+    #[test]
+    fn existing_section_codes_pass_through() {
+        let already = "\u{a7}6There are \u{a7}c1\u{a7}6 players online.";
+        assert_eq!(ansi_to_section(already), already);
+    }
+
+    /// An escape cut off by a chunk boundary must not swallow the rest of the
+    /// line looking for a terminator that never comes.
+    #[test]
+    fn a_truncated_escape_does_not_eat_the_line() {
+        assert_eq!(ansi_to_section("text\x1b["), "text");
+        assert_eq!(ansi_to_section("text\x1b"), "text");
+    }
+
     #[test]
     fn strip_ansi_removes_colour_codes() {
         assert_eq!(strip_ansi("\x1b[0;32mINFO\x1b[0m ready"), "INFO ready");
@@ -390,9 +668,26 @@ mod tests {
     }
 
     #[test]
-    fn splitter_strips_crlf_and_ansi_per_line() {
+    fn splitter_strips_crlf_and_translates_ansi_per_line() {
         let mut s = LineSplitter::new();
-        assert_eq!(s.push(b"\x1b[32mok\x1b[0m\r\n"), vec!["ok"]);
+        // The carriage return goes; the colour is kept, as a section code.
+        assert_eq!(
+            s.push(b"\x1b[32mok\x1b[0m\r\n"),
+            vec!["\u{a7}2ok\u{a7}r"]
+        );
+    }
+
+    /// Colour has to survive a line arriving in pieces, which is the normal
+    /// case for a log being tailed: the escape and the text it colours can land
+    /// in different reads.
+    #[test]
+    fn a_line_split_across_chunks_keeps_its_colour() {
+        let mut s = LineSplitter::new();
+        assert!(s.push(b"\x1b[32m[CITIZEN]").is_empty());
+        assert_eq!(
+            s.push(b" Joe\x1b[0m\n"),
+            vec!["\u{a7}2[CITIZEN] Joe\u{a7}r"]
+        );
     }
 
     #[test]

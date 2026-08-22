@@ -2496,6 +2496,31 @@
         'c': '#ff5555', 'd': '#ff55ff', 'e': '#ffff55', 'f': '#ffffff'
     };
 
+    /* Read a hex colour written as §x§R§R§G§G§B§B.
+
+       Minecraft's own encoding for hex inside a section-code string: a leading
+       `x`, then one section code per hex digit. The server-side ANSI translator
+       emits this for the 24-bit colours a hex rank prefix produces, so the
+       panel understands one syntax rather than two.
+
+       Takes the index of the `x` segment and returns where to resume, or null
+       if the six digits are not all there -- a literal §x in chat is not a
+       colour and must not eat the text after it. */
+    function readHexColour(parts, at) {
+        const digits = [];
+        let i = at + 1;
+
+        for (; i < parts.length && digits.length < 6; i++) {
+            const segment = parts[i];
+            if (!segment || !/^[0-9a-fA-F]/.test(segment)) return null;
+            digits.push(segment[0]);
+        }
+        if (digits.length !== 6) return null;
+
+        // The sixth segment carries the text that follows the colour.
+        return { colour: '#' + digits.join('').toLowerCase(), next: i - 1 };
+    }
+
     function renderMinecraftFormatting(container, text) {
         const parts = text.split('§');
         if (parts[0]) container.appendChild(document.createTextNode(parts[0]));
@@ -2503,14 +2528,24 @@
         let colour = null, bold = false, italic = false, underline = false, strike = false;
 
         for (let i = 1; i < parts.length; i++) {
-            const segment = parts[i];
+            let segment = parts[i];
             if (!segment) continue;
 
             const code = segment[0].toLowerCase();
-            const rest = segment.slice(1);
+            let rest = segment.slice(1);
 
             if (code === 'r') {
                 colour = null; bold = italic = underline = strike = false;
+            } else if (code === 'x') {
+                const hex = readHexColour(parts, i);
+                if (!hex) {
+                    container.appendChild(document.createTextNode('§' + segment));
+                    continue;
+                }
+                colour = hex.colour;
+                bold = italic = underline = strike = false;
+                i = hex.next;
+                rest = parts[i].slice(1);
             } else if (MC_COLOURS[code]) {
                 colour = MC_COLOURS[code];
                 bold = italic = underline = strike = false;

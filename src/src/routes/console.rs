@@ -12,7 +12,7 @@ use crate::console::inventory::{self, InventoryError};
 use crate::console::textures::TextureError;
 use crate::console::players::{self, PlayerAction};
 use crate::console::stats::{self, STATS_MAX_AGE};
-use crate::console::audit::{self, Kind, Outcome};
+use crate::console::audit::{self, Kind};
 use crate::console::{sse_event, sse_frame, strip_ansi, LogSource};
 use crate::error::AppError;
 use crate::middleware::admin_auth::AdminUser;
