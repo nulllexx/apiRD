@@ -24,10 +24,14 @@ services:
       # published port below), so the API needs no Docker access for them.
       #
       # This MUST equal `rcon.password` in /home/useradmin/mcserver/server.properties.
-      # That file is authoritative: the minecraft service below overrides itzg's
-      # entrypoint with /data/start.sh, which bypasses the image's normal
-      # env-var -> server.properties handling, so setting RCON_PASSWORD there
-      # does not necessarily change what the server actually accepts.
+      # That file is authoritative, and stays that way: the minecraft service
+      # below sets SKIP_SERVER_PROPERTIES, so the image never rewrites it from
+      # environment variables. Setting an RCON password on that service would
+      # therefore change nothing about what the server accepts, which is why it
+      # no longer carries one.
+      #
+      # (Until recently the reason was different -- that service overrode the
+      # image's entrypoint entirely -- but the conclusion was the same.)
       #
       # Supplied by the deploy workflow's .env (secrets.RCON_PASSWORD). If it is
       # blank, compose warns and the console's command box reports
@@ -172,37 +176,94 @@ services:
       - "29709:29709"
       - "29710:29710"
       - "29875:29875"
+    # The image's own entrypoint runs mc-server-runner, which holds the server's
+    # stdin, traps SIGTERM and sends it the `stop` command -- the server's real
+    # shutdown path, rather than a JVM shutdown hook racing the process exit.
+    #
+    # This used to be overridden with `entrypoint: [/bin/bash, /data/start.sh]`,
+    # and that override is what cost players their inventories on every restart:
+    # the script ran `java` without `exec`, so PID 1 was bash, bash neither
+    # forwards SIGTERM nor acts on it while a foreground child is running, and
+    # the JVM was never told to stop. Docker killed it outright at the end of
+    # the grace period (exit 137) and every online player rolled back to the
+    # last autosave.
+    #
+    # Everything start.sh used to do is expressed below instead. To go back,
+    # restore the entrypoint line -- nothing else here depends on the change.
     environment:
       EULA: "TRUE"
+
+      # The jar start.sh ran. TYPE=CUSTOM means the image uses this file as-is
+      # and downloads nothing.
+      TYPE: "CUSTOM"
+      CUSTOM_SERVER: "/data/software.jar"
+
+      # Leave server.properties exactly as it is on disk.
+      #
+      # This is the setting that keeps the switch behaviour-neutral. The image
+      # normally writes server.properties from environment variables, and the
+      # ones it defaults are not harmless here: SERVER_PORT alone would move
+      # the server from 29704 to 25565. Because the entrypoint has been
+      # overridden since day one, that step has never run -- the file on disk is
+      # the only source of truth, and it stays that way.
+      #
+      # RCON is configured in that same file (the panel talks to it on 29875),
+      # so there are deliberately no ENABLE_RCON / RCON_PASSWORD / RCON_PORT
+      # variables here. They would do nothing while this is set, and a variable
+      # that does nothing is worse than no variable.
+      SKIP_SERVER_PROPERTIES: "true"
+
+      # -Xms4G -Xmx4G, which is what start.sh passed.
       MEMORY: "4G"
-      JVM_OPTS: >
-        -Xms4G -Xmx4G -XX:+UseG1GC -XX:+ParallelRefProcEnabled
-        -XX:MaxGCPauseMillis=200 -XX:+UnlockExperimentalVMOptions
-        -XX:+DisableExplicitGC -XX:+AlwaysPreTouch -XX:G1NewSizePercent=20
-        -XX:G1ReservePercent=20 -XX:G1HeapRegionSize=16M
-        -XX:InitiatingHeapOccupancyPercent=15 -XX:G1MixedGCCountTarget=4
-        -XX:SurvivorRatio=32
-      ENABLE_RCON: "true"
-      RCON_PASSWORD: "${RCON_PASSWORD}"
-      RCON_PORT: 29875
+
+      # Aikar's flags, copied verbatim from start.sh rather than generated.
+      # USE_AIKAR_FLAGS would very likely produce the same set at this heap
+      # size, but "very likely" is not the promise being made here: these are
+      # readable straight across against the old command line.
+      JVM_XX_OPTS: >-
+        -XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200
+        -XX:+UnlockExperimentalVMOptions -XX:+DisableExplicitGC
+        -XX:+AlwaysPreTouch -XX:G1NewSizePercent=30 -XX:G1MaxNewSizePercent=40
+        -XX:G1HeapRegionSize=8M -XX:G1ReservePercent=20
+        -XX:G1HeapWastePercent=5 -XX:G1MixedGCCountTarget=4
+        -XX:InitiatingHeapOccupancyPercent=15
+        -XX:G1MixedGCLiveThresholdPercent=90
+        -XX:G1RSetUpdatingPauseTimePercent=5 -XX:SurvivorRatio=32
+        -XX:+PerfDisableSharedMem -XX:MaxTenuringThreshold=1
+      JVM_OPTS: >-
+        -Dusing.aikars.flags=https://mcflags.emc.gs -Daikars.new.flags=true
+
+      # How long mc-server-runner waits for the server to finish stopping before
+      # giving up. Comfortably inside the 180s grace period below, so the server
+      # runs out of its own allowance before Docker runs out of patience --
+      # which is the order that produces a clean shutdown rather than a kill.
+      STOP_DURATION: "120"
+
+      # Ownership of /home/useradmin/mcserver on the host, checked rather than
+      # assumed: `stat -c '%u %g' /home/useradmin/mcserver` reports 1000 1000.
+      #
+      # It has to match. The image runs the server as this uid/gid and chowns
+      # /data to suit, so a wrong value here either rewrites ownership across
+      # the entire world directory or leaves the server unable to write it.
+      # Because it already matches, that chown is a no-op.
+      #
+      # Hardcoded like the paths and ports around it: this file describes one
+      # host, and a variable nobody will ever set is just a second place to
+      # look. Recheck with the command above if the world ever moves.
+      UID: "1000"
+      GID: "1000"
     volumes:
       - /home/useradmin/mcserver:/data
-    working_dir: /data
-    # NOTE: this replaces the image's own entrypoint, and with it the signal
-    # handling that would normally shut the server down cleanly. itzg's image
-    # runs mc-server-runner, which traps SIGTERM and sends `stop` to the server
-    # console; overriding the entrypoint means start.sh has to do that job
-    # itself. If it launches Java without `exec`, or through a pipe, the JVM
-    # never receives the signal and the container is killed outright when the
-    # grace period runs out.
-    entrypoint: ["/bin/bash", "/data/start.sh"]
+    # stdin stays open because mc-server-runner writes `stop` into it. Without
+    # it the graceful shutdown has nowhere to send the command.
     stdin_open: true
     tty: true
     # How long Docker waits after SIGTERM before SIGKILL. The default is ten
-    # seconds, which a modpack this size cannot save and exit within, so a stop
-    # would take the server down mid-shutdown. Sets the container's StopTimeout,
-    # which `docker stop` uses when no -t is given -- the sidecar passes one
-    # anyway, since this only applies once the container has been recreated.
+    # seconds, which a modpack this size cannot save and exit within. Longer
+    # than STOP_DURATION above on purpose: the server should always be the one
+    # that decides it has finished. Sets the container's StopTimeout, which
+    # `docker stop` uses when no -t is given -- the sidecar passes one anyway,
+    # since this only applies once the container has been recreated.
     stop_grace_period: 180s
     restart: unless-stopped
 
