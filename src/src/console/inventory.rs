@@ -98,6 +98,13 @@ pub struct Item {
     /// An anvil-renamed or otherwise named stack, flattened to plain text.
     #[serde(rename = "customName", skip_serializing_if = "Option::is_none")]
     pub custom_name: Option<String>,
+    /// The colour that name is written in, as `#rrggbb`.
+    ///
+    /// Named after the NBT field it comes from rather than translated, because
+    /// it is a passthrough: Minecraft's `color` is either one of sixteen names
+    /// or a hex literal, and both end up here as hex.
+    #[serde(rename = "customNameColor", skip_serializing_if = "Option::is_none")]
+    pub custom_name_color: Option<String>,
     /// Durability used, for tools that carry it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub damage: Option<i32>,
@@ -289,11 +296,66 @@ pub fn pretty_name(id: &str) -> String {
         .join(" ")
 }
 
+/// Minecraft's sixteen named colours, as the client draws them.
+///
+/// A text component's `color` is either one of these or a `#rrggbb` literal.
+/// Resolving the names here means the panel only ever deals in hex.
+const NAMED_COLOURS: [(&str, &str); 16] = [
+    ("black", "#000000"),
+    ("dark_blue", "#0000aa"),
+    ("dark_green", "#00aa00"),
+    ("dark_aqua", "#00aaaa"),
+    ("dark_red", "#aa0000"),
+    ("dark_purple", "#aa00aa"),
+    ("gold", "#ffaa00"),
+    ("gray", "#aaaaaa"),
+    ("dark_gray", "#555555"),
+    ("blue", "#5555ff"),
+    ("green", "#55ff55"),
+    ("aqua", "#55ffff"),
+    ("red", "#ff5555"),
+    ("light_purple", "#ff55ff"),
+    ("yellow", "#ffff55"),
+    ("white", "#ffffff"),
+];
+
+/// Resolve a component's colour to `#rrggbb`.
+///
+/// Only the root component's colour is read. A name assembled out of `extra`
+/// children in several colours cannot be described by one value, and the panel
+/// falls back to rendering such a name in the default colour rather than
+/// picking one of them and being confidently wrong.
+fn text_colour(value: &Value) -> Option<String> {
+    let raw = match value {
+        Value::String(raw) => serde_json::from_str::<serde_json::Value>(raw)
+            .ok()?
+            .get("color")?
+            .as_str()?
+            .to_string(),
+        Value::Compound(map) => field(map, &["color"]).and_then(as_str)?.to_string(),
+        _ => return None,
+    };
+
+    let raw = raw.trim().to_ascii_lowercase();
+
+    // A hex literal, which the game accepts as `#rrggbb` only.
+    if let Some(digits) = raw.strip_prefix('#') {
+        return (digits.len() == 6 && digits.chars().all(|c| c.is_ascii_hexdigit()))
+            .then(|| format!("#{digits}"));
+    }
+
+    NAMED_COLOURS
+        .iter()
+        .find(|(name, _)| *name == raw)
+        .map(|(_, hex)| (*hex).to_string())
+}
+
 /// Flatten a text component down to the string a human reads.
 ///
 /// Custom names arrive as a JSON string before 1.21.5 and as an NBT compound
-/// after it, and either can be a tree of `extra` children. Only the text is
-/// wanted here — colour and formatting are the client's business.
+/// after it, and either can be a tree of `extra` children. Only the text comes
+/// out here; [`text_colour`] reads the colour separately, because the two are
+/// wanted in different places and a name is useful without one.
 fn plain_text(value: &Value) -> Option<String> {
     let text = match value {
         Value::String(raw) => match serde_json::from_str::<serde_json::Value>(raw) {
@@ -476,7 +538,7 @@ fn read_item(item: &HashMap<String, Value>, recurse: bool) -> Option<Item> {
         return None;
     }
 
-    let custom_name = field(item, &["components"])
+    let name_component = field(item, &["components"])
         .and_then(as_compound)
         .and_then(|components| components.get("minecraft:custom_name"))
         .or_else(|| {
@@ -485,8 +547,14 @@ fn read_item(item: &HashMap<String, Value>, recurse: bool) -> Option<Item> {
                 .and_then(|tag| tag.get("display"))
                 .and_then(as_compound)
                 .and_then(|display| display.get("Name"))
-        })
-        .and_then(plain_text);
+        });
+
+    let custom_name = name_component.and_then(plain_text);
+    // Only meaningful next to a name, so it is not read when there is none.
+    let custom_name_color = custom_name
+        .as_ref()
+        .and_then(|_| name_component)
+        .and_then(text_colour);
 
     let damage = field(item, &["components"])
         .and_then(as_compound)
@@ -504,6 +572,7 @@ fn read_item(item: &HashMap<String, Value>, recurse: bool) -> Option<Item> {
         id: id.to_string(),
         count,
         custom_name,
+        custom_name_color,
         damage,
         enchantments: read_enchantments(item),
         contents: if recurse { read_contents(item) } else { Vec::new() },
@@ -1879,6 +1948,104 @@ mod tests {
         ]);
 
         assert!(survives_a_round_trip(&root));
+    }
+
+    /* ------------------------------------------------- custom name colours */
+
+    /// `compound()` returns a Value; `read_item` wants the map inside it.
+    fn map_of(fields: &[(&str, Value)]) -> HashMap<String, Value> {
+        match compound(fields) {
+            Value::Compound(map) => map,
+            _ => unreachable!("compound() builds a compound"),
+        }
+    }
+
+    #[test]
+    fn a_named_colour_resolves_to_hex() {
+        for (name, hex) in [("gold", "#ffaa00"), ("light_purple", "#ff55ff"), ("black", "#000000")] {
+            let component = compound(&[
+                ("text", Value::String("Excalibur".to_string())),
+                ("color", Value::String(name.to_string())),
+            ]);
+            assert_eq!(text_colour(&component).as_deref(), Some(hex), "{name}");
+        }
+    }
+
+    /// 1.21.5 stores the component as NBT; everything before it as a JSON
+    /// string. Both have to yield the same colour.
+    #[test]
+    fn a_colour_is_read_from_either_component_encoding() {
+        let as_json = Value::String(r#"{"text":"Excalibur","color":"gold"}"#.to_string());
+        assert_eq!(text_colour(&as_json).as_deref(), Some("#ffaa00"));
+
+        let as_nbt = compound(&[
+            ("text", Value::String("Excalibur".to_string())),
+            ("color", Value::String("gold".to_string())),
+        ]);
+        assert_eq!(text_colour(&as_nbt).as_deref(), Some("#ffaa00"));
+    }
+
+    #[test]
+    fn a_hex_literal_passes_through() {
+        let component = compound(&[("color", Value::String("#1A2B3C".to_string()))]);
+        // Lowercased, so the panel never has to compare case-insensitively.
+        assert_eq!(text_colour(&component).as_deref(), Some("#1a2b3c"));
+    }
+
+    /// Anything that is not a colour must be dropped rather than passed to the
+    /// panel, where it would end up in a style attribute.
+    #[test]
+    fn a_malformed_colour_is_refused() {
+        for bogus in [
+            "#12345",
+            "#1234567",
+            "#GGGGGG",
+            "rebeccapurple",
+            "red; background: url(x)",
+            "",
+        ] {
+            let component = compound(&[("color", Value::String(bogus.to_string()))]);
+            assert_eq!(text_colour(&component), None, "{bogus:?} must be refused");
+        }
+    }
+
+    #[test]
+    fn a_component_with_no_colour_has_none() {
+        let component = compound(&[("text", Value::String("Excalibur".to_string()))]);
+        assert_eq!(text_colour(&component), None);
+    }
+
+    #[test]
+    fn an_item_carries_its_name_and_its_colour() {
+        let item = map_of(&[
+            ("id", Value::String("minecraft:diamond_sword".to_string())),
+            ("count", Value::Int(1)),
+            ("components", compound(&[(
+                "minecraft:custom_name",
+                compound(&[
+                    ("text", Value::String("Excalibur".to_string())),
+                    ("color", Value::String("gold".to_string())),
+                ]),
+            )])),
+        ]);
+
+        let parsed = read_item(&item, false).expect("the stack parses");
+        assert_eq!(parsed.custom_name.as_deref(), Some("Excalibur"));
+        assert_eq!(parsed.custom_name_color.as_deref(), Some("#ffaa00"));
+    }
+
+    /// A colour with no name to paint would be a value the panel has nowhere to
+    /// put, so it is not read at all.
+    #[test]
+    fn a_colour_without_a_name_is_not_reported() {
+        let item = map_of(&[
+            ("id", Value::String("minecraft:stone".to_string())),
+            ("count", Value::Int(1)),
+        ]);
+
+        let parsed = read_item(&item, false).expect("the stack parses");
+        assert_eq!(parsed.custom_name, None);
+        assert_eq!(parsed.custom_name_color, None);
     }
 
     /* ---------------------------------------------------- round-trip probe */

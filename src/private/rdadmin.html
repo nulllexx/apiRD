@@ -859,6 +859,70 @@
         .inv-acts button.harmful { color: var(--danger) !important; border-color: var(--danger-soft) !important; }
         .inv-acts button.harmful:hover:not(:disabled) { background: var(--danger-soft) !important; border-color: var(--danger) !important; }
 
+        /* Item tooltip, drawn the way the game draws one.
+
+           Replaces a `title` attribute, which had two problems: it cannot show
+           colour, and on a touch screen it never appears at all -- there is no
+           hover to trigger it, so the whole tooltip was simply missing on
+           mobile. This is a real element instead, shown on hover with a mouse
+           and pinned by tap on a touch screen.
+
+           The colours are the game's own, from its tooltip renderer:
+           background 0xF0100010, and a border that fades from 0x505000FF at the
+           top to 0x5028007F at the bottom. Alpha 0x50 is 0.31. */
+        #itemTip {
+            display: none;
+            position: fixed;
+            z-index: 1200;
+            max-width: min(320px, calc(100vw - 24px));
+            padding: 6px 8px;
+            background: rgba(16, 0, 16, 0.94) !important;
+            pointer-events: none;
+            font-size: 0.78rem;
+            line-height: 1.45;
+            color: #ffffff !important;
+        }
+        /* The inner 1px gradient border, inset the way the game insets it. */
+        #itemTip::before {
+            content: '';
+            position: absolute;
+            inset: 2px;
+            border: 1px solid transparent;
+            border-image: linear-gradient(
+                to bottom,
+                rgba(80, 0, 255, 0.31),
+                rgba(40, 0, 127, 0.31)
+            ) 1;
+            pointer-events: none;
+        }
+        #itemTip .tip-line { position: relative; white-space: pre-wrap; word-break: break-word; }
+        /* Vanilla writes the item name in white and everything under it in
+           grey, with the id in dark grey as an advanced-tooltip line. */
+        #itemTip .tip-name { font-weight: 600; }
+        #itemTip .tip-grey { color: #aaaaaa !important; }
+        #itemTip .tip-dark { color: #555555 !important; }
+        #itemTip .tip-count { color: #aaaaaa !important; }
+        /* A renamed stack is italic in game, and stays italic here. */
+        #itemTip .tip-renamed { font-style: italic; }
+
+        /* On a touch screen the tooltip is pinned rather than followed, and the
+           slot it belongs to is marked so it is obvious which one was tapped. */
+        .inv-slot.tipped { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+        @media (max-width: 640px) {
+            /* Anchoring a floating box to a 32px slot on a narrow screen puts it
+               half off the edge as often as not. Docking it to the bottom means
+               it is always fully visible and always in the same place. */
+            #itemTip {
+                left: 8px !important;
+                right: 8px !important;
+                bottom: 8px !important;
+                top: auto !important;
+                max-width: none;
+                font-size: 0.85rem;
+            }
+        }
+
         .inv-boxes { margin: 0; padding: 0; list-style: none; font-size: 0.82rem; }
         .inv-boxes li { padding: 6px 0; border-bottom: 1px solid var(--line-soft) !important; color: var(--text-muted) !important; }
         .inv-boxes li:last-child { border-bottom: none; }
@@ -1502,6 +1566,10 @@
         <div id="overlayButtons"></div>
     </div>
 </div>
+
+<!-- Item tooltip, filled in by showItemTip(). Lives at the top level rather
+     than inside a slot so it is never clipped by the modal's own scrolling. -->
+<div id="itemTip" role="tooltip" aria-hidden="true"></div>
 
 <!-- Player overview, filled in by openOverview() -->
 <div id="invOverlay">
@@ -2416,10 +2484,15 @@
         return match ? match[1].toUpperCase() : '';
     }
 
+    /* The sixteen section-code colours, in code order. Both blues were wrong
+       here until an item tooltip started using this table for names too:
+       §1 (dark blue) and §9 (blue) were the two greens, so anything written in
+       blue rendered green. Paired by shade, each dark code is one row above its
+       bright counterpart. */
     const MC_COLOURS = {
-        '0': '#000000', '1': '#00aa00', '2': '#00aa00', '3': '#00aaaa',
+        '0': '#000000', '1': '#0000aa', '2': '#00aa00', '3': '#00aaaa',
         '4': '#aa0000', '5': '#aa00aa', '6': '#ffaa00', '7': '#aaaaaa',
-        '8': '#555555', '9': '#55ff55', 'a': '#55ff55', 'b': '#55ffff',
+        '8': '#555555', '9': '#5555ff', 'a': '#55ff55', 'b': '#55ffff',
         'c': '#ff5555', 'd': '#ff55ff', 'e': '#ffff55', 'f': '#ffffff'
     };
 
@@ -3026,19 +3099,188 @@
         return (words[0] || '?').slice(0, 3).toUpperCase();
     }
 
-    function itemTooltip(item) {
-        const lines = [`${item.count}x ${item.name}`];
-        if (item.customName) lines.push(`Named "${item.customName}"`);
-        lines.push(item.id);
-        if (typeof item.damage === 'number') lines.push(`Damage: ${item.damage}`);
-        (item.enchantments || []).forEach(enchant => {
-            lines.push(`${enchant.stored ? 'Stores' : 'Enchanted'}: ${enchant.name} ${enchant.level}`);
-        });
-        if (item.contents && item.contents.length) {
-            lines.push(`Contains ${item.contents.length} stack${item.contents.length === 1 ? '' : 's'}`);
-        }
-        return lines.join('\n');
+    /* --------------------------------------------------------- Item tooltip
+
+       Built as a real element rather than a `title` attribute. The attribute
+       had to go for two reasons: it cannot carry colour, and a touch screen has
+       no hover, so on mobile the tooltip did not exist at all -- there was no
+       way to find out what an item was.
+
+       Everything here is textContent on DOM nodes, never innerHTML: an item's
+       custom name is player-controlled text arriving from a save file, and it
+       is not going to be parsed as markup. */
+
+    const itemTip = document.getElementById('itemTip');
+
+    /* Roman numerals for enchantment levels, as the game writes them. Levels
+       past ten are not a thing vanilla produces but mods and commands do, so
+       anything out of range falls back to the digits. */
+    const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
+
+    /* The enchantments that only ever have one level. The game omits the
+       numeral for exactly these and prints it for everything else, so "Mending"
+       reads right and "Sharpness I" does too. */
+    const SINGLE_LEVEL_ENCHANTS = new Set([
+        'minecraft:mending', 'minecraft:silk_touch', 'minecraft:flame',
+        'minecraft:infinity', 'minecraft:channeling', 'minecraft:multishot',
+        'minecraft:aqua_affinity', 'minecraft:binding_curse',
+        'minecraft:vanishing_curse'
+    ]);
+
+    function enchantLabel(enchant) {
+        const level = Number(enchant.level) || 1;
+        if (SINGLE_LEVEL_ENCHANTS.has(enchant.id) && level === 1) return enchant.name;
+        return `${enchant.name} ${ROMAN[level] || level}`;
     }
+
+    function tipLine(text, className) {
+        const line = document.createElement('div');
+        line.className = 'tip-line' + (className ? ' ' + className : '');
+        line.textContent = text;
+        return line;
+    }
+
+    /* The item name: the first line, and the only one that carries colour.
+
+       Three sources, in the order the game resolves them. A legacy name with
+       section codes in it is handed to the console's own formatter, which
+       already knows how to turn those into spans. */
+    function tipName(item) {
+        const line = document.createElement('div');
+        line.className = 'tip-line tip-name';
+
+        const name = item.customName || item.name;
+        if (item.customName) line.classList.add('tip-renamed');
+
+        if (name.indexOf('\u00a7') !== -1) {
+            renderMinecraftFormatting(line, name);
+        } else {
+            line.textContent = name;
+            // Validated server-side to `#rrggbb`, so this cannot carry anything
+            // but a colour into the style attribute.
+            if (item.customNameColor) line.style.color = item.customNameColor;
+        }
+
+        return line;
+    }
+
+    function buildItemTip(item) {
+        const tip = document.createDocumentFragment();
+        tip.appendChild(tipName(item));
+
+        // Enchantments come straight under the name, in grey, as in game.
+        (item.enchantments || []).forEach(enchant => {
+            tip.appendChild(tipLine(enchantLabel(enchant), 'tip-grey'));
+        });
+
+        if (item.count > 1) {
+            tip.appendChild(tipLine(`Stack of ${item.count}`, 'tip-count'));
+        }
+        if (typeof item.damage === 'number' && item.damage > 0) {
+            tip.appendChild(tipLine(`Damage taken: ${item.damage}`, 'tip-grey'));
+        }
+
+        // Nested loot spelled out, since a tooltip cannot nest another tooltip
+        // and this is where confiscated gear actually hides.
+        (item.contents || []).forEach(inner => {
+            tip.appendChild(tipLine(
+                `  ${inner.count}x ${inner.customName || inner.name}`,
+                'tip-grey'
+            ));
+        });
+
+        // The id last and dark, which is where the game puts it with advanced
+        // tooltips on -- and it is what an operator types back into a /give.
+        tip.appendChild(tipLine(item.id, 'tip-dark'));
+
+        return tip;
+    }
+
+    /* Which slot is currently pinned, on a touch screen. Null with a mouse,
+       where the tooltip simply follows the pointer. */
+    let tippedSlot = null;
+
+    function positionItemTip(x, y) {
+        if (!itemTip) return;
+        // Below 640px the stylesheet docks the tooltip to the bottom of the
+        // screen, so there is nothing to position.
+        if (window.matchMedia('(max-width: 640px)').matches) return;
+
+        const box = itemTip.getBoundingClientRect();
+        const margin = 12;
+        // Offset from the cursor the way the game offsets from the mouse, then
+        // clamped so an item near an edge does not push the box off-screen.
+        let left = x + margin;
+        let top = y + margin;
+        if (left + box.width > window.innerWidth - 8) left = x - box.width - margin;
+        if (top + box.height > window.innerHeight - 8) top = y - box.height - margin;
+
+        itemTip.style.left = Math.max(8, left) + 'px';
+        itemTip.style.top = Math.max(8, top) + 'px';
+    }
+
+    function showItemTip(item, x, y) {
+        if (!itemTip || !item) return;
+        itemTip.innerHTML = '';
+        itemTip.appendChild(buildItemTip(item));
+        itemTip.style.display = 'block';
+        itemTip.setAttribute('aria-hidden', 'false');
+        positionItemTip(x, y);
+    }
+
+    function hideItemTip() {
+        if (!itemTip) return;
+        itemTip.style.display = 'none';
+        itemTip.setAttribute('aria-hidden', 'true');
+        if (tippedSlot) {
+            tippedSlot.classList.remove('tipped');
+            tippedSlot = null;
+        }
+    }
+
+    /* Wire one slot up for both input styles.
+
+       A mouse hovers and the tooltip follows. A finger taps and it pins, which
+       is the whole reason this exists: there is no hover on a touch screen, so
+       tap-to-pin is the only gesture that can show a tooltip at all. Tapping
+       the same slot again, or anywhere else, dismisses it. */
+    function attachItemTip(slot, item) {
+        slot.addEventListener('pointerenter', (e) => {
+            if (e.pointerType === 'touch') return;
+            // Moving onto a different slot releases a pin left by a click, so
+            // the highlight never marks a slot the tooltip stopped describing.
+            if (tippedSlot && tippedSlot !== slot) hideItemTip();
+            showItemTip(item, e.clientX, e.clientY);
+        });
+
+        slot.addEventListener('pointermove', (e) => {
+            if (e.pointerType === 'touch' || tippedSlot) return;
+            positionItemTip(e.clientX, e.clientY);
+        });
+
+        slot.addEventListener('pointerleave', (e) => {
+            if (e.pointerType === 'touch' || tippedSlot) return;
+            hideItemTip();
+        });
+
+        slot.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const wasPinned = tippedSlot === slot;
+            hideItemTip();
+            if (wasPinned) return;
+
+            showItemTip(item, e.clientX, e.clientY);
+            tippedSlot = slot;
+            slot.classList.add('tipped');
+        });
+    }
+
+    // Anywhere else dismisses a pinned tooltip, including a scroll that would
+    // otherwise leave it floating next to the wrong slot.
+    document.addEventListener('click', () => { if (tippedSlot) hideItemTip(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideItemTip(); });
+    window.addEventListener('resize', hideItemTip);
+    if (invBody) invBody.addEventListener('scroll', hideItemTip, true);
 
     /* Textures are served from this API rather than hotlinked: the first request
        for an id fetches it from the assets mirror and caches it on disk, so
@@ -3080,7 +3322,7 @@
 
         slot.classList.add('filled');
         if ((item.enchantments || []).length) slot.classList.add('enchanted');
-        slot.title = itemTooltip(item);
+        attachItemTip(slot, item);
 
         const label = document.createElement('span');
         label.className = 'inv-initials';
@@ -3544,6 +3786,7 @@
     }
 
     function closeOverview() {
+        hideItemTip();
         if (invOverlay) invOverlay.style.display = 'none';
     }
 
