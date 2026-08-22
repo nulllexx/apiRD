@@ -12,7 +12,7 @@ use crate::console::inventory::{self, InventoryError};
 use crate::console::textures::TextureError;
 use crate::console::players::{self, PlayerAction};
 use crate::console::stats::{self, STATS_MAX_AGE};
-use crate::console::audit::{self, Kind};
+use crate::console::audit::{self, Kind, Outcome};
 use crate::console::{sse_event, sse_frame, strip_ansi, Line, LogSource};
 use crate::error::AppError;
 use crate::middleware::admin_auth::AdminUser;
@@ -244,27 +244,95 @@ async fn power(
     log::info!("console power action by {}: {}", admin.username, action.as_str());
     let record = audit_or_refuse(&state, &admin, Kind::Power, action.as_str(), None).await?;
 
+    // Force a save before handing the container over to be stopped.
+    //
+    // Without this, a stop or restart costs players up to one autosave
+    // interval of inventory — five minutes by default — while the world comes
+    // back nearly intact. The asymmetry is not a coincidence: chunks are
+    // written continuously as they unload, whereas a player's file is only
+    // written at an autosave, when they log out, or during a clean shutdown.
+    // Lose the clean shutdown and the world barely notices while every player
+    // is rolled back to the last autosave, which is exactly what an operator
+    // gets reported to them.
+    //
+    // Best effort, and deliberately not fatal: an operator who asked to stop a
+    // server gets a stop. A save that failed is worth saying so in the audit
+    // record, not worth refusing to act on.
+    let mut saved = None;
+    if action.saves_first() {
+        saved = Some(flush_saves(&state).await);
+    }
+
     // Recorded as queued rather than done, which is all this route can honestly
     // claim: the sidecar acts on it afterwards, and a stop that succeeds here
     // takes the server down before anything could report back.
-    audit::settle(
-        &state.pool,
-        &state.console.audit,
-        record,
-        control::request(&state.config.control_dir, action)
-            .await
-            .map_err(|e| {
-                log::error!("console: cannot queue {} for the sidecar: {}", action.as_str(), e);
-                AppError::Internal("Server control is unavailable".to_string())
-            }),
-    )
-    .await?;
+    let queued = control::request(&state.config.control_dir, action)
+        .await
+        .map_err(|e| {
+            log::error!("console: cannot queue {} for the sidecar: {}", action.as_str(), e);
+            AppError::Internal("Server control is unavailable".to_string())
+        });
+
+    // The save is part of the record: "restarted, and the save before it did
+    // not go through" is the line that explains a rollback afterwards.
+    match (&queued, saved.as_ref()) {
+        (Ok(_), Some(Err(why))) => {
+            audit::finish(
+                &state.pool,
+                &state.console.audit,
+                record,
+                Outcome::Ok,
+                Some(&format!("world was not saved first: {why}")),
+            )
+            .await;
+        }
+        _ => {
+            audit::settle(&state.pool, &state.console.audit, record, queued.as_ref()).await.ok();
+        }
+    }
+    queued?;
 
     // The sidecar polls the spool directory, so this is an acknowledgement that
     // the request was queued, not that the container has finished acting on it.
     Ok(HttpResponse::Accepted().json(serde_json::json!({
         "queued": action.as_str(),
+        // Null when the action does not save first; otherwise whether it worked,
+        // so the panel can warn before the server goes down rather than leaving
+        // players to discover it.
+        "saved": saved.as_ref().map(|result| result.is_ok()),
+        "saveError": saved.as_ref().and_then(|result| result.as_ref().err().cloned()),
     })))
+}
+
+/// Write every player and every loaded chunk to disk, and wait for it.
+///
+/// `save-all flush` is synchronous: the reply does not arrive until the server
+/// has finished writing. Waiting for it is the entire point — queueing a stop
+/// while the save is still running puts us back where we started.
+///
+/// The wait is long ([`SLOW_COMMAND_TIMEOUT`]) because a large modded world
+/// takes far longer than an ordinary command. A timeout here does not stop the
+/// save, which runs to completion server-side regardless; it only means this
+/// could not confirm it finished, which is reported rather than assumed away.
+async fn flush_saves(state: &AppState) -> Result<(), String> {
+    if !state.rcon.is_configured() {
+        return Err("RCON is not configured, so nothing could be saved first".to_string());
+    }
+
+    match state
+        .rcon
+        .execute_within("save-all flush", crate::rcon::SLOW_COMMAND_TIMEOUT)
+        .await
+    {
+        Ok(reply) => {
+            log::info!("console: saved before power action: {}", reply.trim());
+            Ok(())
+        }
+        Err(e) => {
+            log::error!("console: could not save before a power action: {e}");
+            Err(e.user_message())
+        }
+    }
 }
 
 /// GET /api/admin/console/power/status — what the sidecar last observed.

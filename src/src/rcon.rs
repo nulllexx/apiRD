@@ -33,6 +33,17 @@ const MAX_PACKET: i32 = 4096;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long to wait for a command that is expected to block the server thread.
+///
+/// [`IO_TIMEOUT`] is sized for commands that answer immediately, which is
+/// almost all of them. `save-all flush` is the exception: it writes every
+/// loaded chunk and every player synchronously, and on a large modded world
+/// that is comfortably longer than five seconds. Giving up early would not stop
+/// the save — it runs to completion server-side either way — but it would leave
+/// the caller unable to tell when it had finished, which is the one thing the
+/// caller actually needs to know before shutting the server down.
+pub const SLOW_COMMAND_TIMEOUT: Duration = Duration::from_secs(180);
 /// How long to wait for further packets once a response has been received.
 const DRAIN_TIMEOUT: Duration = Duration::from_millis(300);
 
@@ -168,6 +179,19 @@ impl RconClient {
     /// failure is reported rather than retried, so a genuinely broken server
     /// does not turn one command into an unbounded reconnect loop.
     pub async fn execute(&self, command: &str) -> Result<String, RconError> {
+        self.execute_within(command, IO_TIMEOUT).await
+    }
+
+    /// Run one command, allowing longer than usual for the reply.
+    ///
+    /// Only the wait for the *response* is extended; connecting and writing
+    /// keep the ordinary timeouts, because neither gets slower just because the
+    /// command will. See [`SLOW_COMMAND_TIMEOUT`].
+    pub async fn execute_within(
+        &self,
+        command: &str,
+        read_timeout: Duration,
+    ) -> Result<String, RconError> {
         if !self.is_configured() {
             return Err(RconError::NotConfigured);
         }
@@ -188,7 +212,7 @@ impl RconClient {
             let stream = held.as_mut().expect("connected just above");
             let id = self.next_id.fetch_add(1, Ordering::Relaxed);
 
-            match run_command(stream, id, command).await {
+            match run_command(stream, id, command, read_timeout).await {
                 Ok(output) => return Ok(output),
                 Err(e) => {
                     // However this failed, the socket now sits at an unknown
@@ -219,7 +243,7 @@ async fn connect_and_auth(address: &str, password: &str) -> Result<TcpStream, Rc
     // Some servers emit an empty RESPONSE_VALUE before the auth result; the
     // auth outcome is the first packet of type COMMAND.
     loop {
-        let (request_id, packet_type, _) = read_packet(&mut stream).await?;
+        let (request_id, packet_type, _) = read_packet(&mut stream, IO_TIMEOUT).await?;
         if packet_type != TYPE_COMMAND {
             continue;
         }
@@ -232,7 +256,12 @@ async fn connect_and_auth(address: &str, password: &str) -> Result<TcpStream, Rc
     Ok(stream)
 }
 
-async fn run_command(stream: &mut TcpStream, id: i32, command: &str) -> Result<String, RconError> {
+async fn run_command(
+    stream: &mut TcpStream,
+    id: i32,
+    command: &str,
+    read_timeout: Duration,
+) -> Result<String, RconError> {
     write_packet(stream, id, TYPE_COMMAND, command).await?;
 
     // Skip anything that is not the reply to *this* request. On a reused
@@ -242,7 +271,7 @@ async fn run_command(stream: &mut TcpStream, id: i32, command: &str) -> Result<S
     let mut output = String::new();
     let mut skipped = 0;
     loop {
-        let (request_id, _, body) = read_packet(stream).await?;
+        let (request_id, _, body) = read_packet(stream, read_timeout).await?;
         if request_id == id {
             output.push_str(&body);
             break;
@@ -259,7 +288,7 @@ async fn run_command(stream: &mut TcpStream, id: i32, command: &str) -> Result<S
     // otherwise every command would pay the drain window in latency.
     if output.len() >= SPLIT_THRESHOLD {
         while let Ok(Ok((request_id, packet_type, chunk))) =
-            tokio::time::timeout(DRAIN_TIMEOUT, read_packet(stream)).await
+            tokio::time::timeout(DRAIN_TIMEOUT, read_packet(stream, IO_TIMEOUT)).await
         {
             if request_id != id || packet_type != TYPE_RESPONSE {
                 break;
@@ -284,9 +313,12 @@ async fn write_packet(
         .map_err(|e| RconError::Io(e.to_string()))
 }
 
-async fn read_packet(stream: &mut TcpStream) -> Result<(i32, i32, String), RconError> {
+async fn read_packet(
+    stream: &mut TcpStream,
+    read_timeout: Duration,
+) -> Result<(i32, i32, String), RconError> {
     let mut length_bytes = [0u8; 4];
-    read_exact(stream, &mut length_bytes).await?;
+    read_exact(stream, &mut length_bytes, read_timeout).await?;
     let length = i32::from_le_bytes(length_bytes);
 
     if !(10..=MAX_PACKET).contains(&length) {
@@ -296,12 +328,16 @@ async fn read_packet(stream: &mut TcpStream) -> Result<(i32, i32, String), RconE
     }
 
     let mut payload = vec![0u8; length as usize];
-    read_exact(stream, &mut payload).await?;
+    read_exact(stream, &mut payload, IO_TIMEOUT).await?;
     decode_payload(&payload)
 }
 
-async fn read_exact(stream: &mut TcpStream, buf: &mut [u8]) -> Result<(), RconError> {
-    match tokio::time::timeout(IO_TIMEOUT, stream.read_exact(buf)).await {
+async fn read_exact(
+    stream: &mut TcpStream,
+    buf: &mut [u8],
+    read_timeout: Duration,
+) -> Result<(), RconError> {
+    match tokio::time::timeout(read_timeout, stream.read_exact(buf)).await {
         Ok(Ok(_)) => Ok(()),
         Ok(Err(e)) if e.kind() == io::ErrorKind::UnexpectedEof => {
             Err(RconError::Protocol("connection closed early".to_string()))
@@ -313,6 +349,22 @@ async fn read_exact(stream: &mut TcpStream, buf: &mut [u8]) -> Result<(), RconEr
 
 #[cfg(test)]
 mod tests {
+
+    /// The slow timeout has to be longer than the ordinary one by enough to
+    /// matter, and longer than the grace period Docker gives the container --
+    /// otherwise the save this exists to wait for is still running when the
+    /// server is killed, which is the whole failure being fixed.
+    #[test]
+    fn the_slow_command_timeout_outlasts_a_shutdown() {
+        assert!(
+            super::SLOW_COMMAND_TIMEOUT > super::IO_TIMEOUT,
+            "a slow command needs longer than an ordinary one"
+        );
+        assert!(
+            super::SLOW_COMMAND_TIMEOUT >= std::time::Duration::from_secs(180),
+            "must cover the 180s stop_grace_period in docker-compose.yml"
+        );
+    }
     use super::*;
     use tokio::net::TcpListener;
 

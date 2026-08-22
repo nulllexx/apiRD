@@ -31,6 +31,15 @@ impl PowerAction {
         }
     }
 
+    /// Whether the server should be forced to save before this runs.
+    ///
+    /// Stopping and restarting both take the server down, and a shutdown that
+    /// gets killed before it finishes loses every player's inventory back to
+    /// the last autosave. Starting has nothing to save yet.
+    pub fn saves_first(self) -> bool {
+        matches!(self, PowerAction::Stop | PowerAction::Restart)
+    }
+
     /// Parse a URL path segment. Returns `None` for anything unrecognised, so
     /// an unknown verb never reaches the spool directory in the first place.
     pub fn parse(value: &str) -> Option<Self> {
@@ -113,6 +122,21 @@ pub async fn status(control_dir: &str) -> ServerState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Which actions force a save first.
+    ///
+    /// Both of the ones that take the server down, and neither more. Getting
+    /// this wrong is silent: a stop that skipped the save looks identical until
+    /// players report losing their inventories.
+    #[test]
+    fn the_actions_that_stop_the_server_save_first() {
+        assert!(PowerAction::Stop.saves_first(), "stop takes the server down");
+        assert!(PowerAction::Restart.saves_first(), "so does restart");
+        assert!(
+            !PowerAction::Start.saves_first(),
+            "a stopped server has nothing to save"
+        );
+    }
 
     #[test]
     fn parses_the_three_supported_actions() {

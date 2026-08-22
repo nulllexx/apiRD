@@ -143,9 +143,17 @@ services:
             cmd=$$(cat "$$f" 2>/dev/null || echo "")
             rm -f "$$f"
             case "$$cmd" in
-              start)   echo "mc-control: start";   docker start "$$TARGET"   || true ;;
-              stop)    echo "mc-control: stop";    docker stop "$$TARGET"    || true ;;
-              restart) echo "mc-control: restart"; docker restart "$$TARGET" || true ;;
+              # -t is explicit rather than inherited. `docker stop` falls back
+              # to ten seconds unless the container was created with a longer
+              # StopTimeout, and ten seconds is not remotely enough for a modded
+              # server to save and shut down: it gets SIGKILLed mid-shutdown,
+              # and every player is rolled back to the last autosave while the
+              # world -- whose chunks are written continuously -- looks fine.
+              # The API also forces a save before queueing either of these, so
+              # this is the second of two defences rather than the only one.
+              start)   echo "mc-control: start";   docker start "$$TARGET"          || true ;;
+              stop)    echo "mc-control: stop";    docker stop -t 180 "$$TARGET"    || true ;;
+              restart) echo "mc-control: restart"; docker restart -t 180 "$$TARGET" || true ;;
               *)       echo "mc-control: rejected unknown command" ;;
             esac
           done
@@ -180,9 +188,22 @@ services:
     volumes:
       - /home/useradmin/mcserver:/data
     working_dir: /data
+    # NOTE: this replaces the image's own entrypoint, and with it the signal
+    # handling that would normally shut the server down cleanly. itzg's image
+    # runs mc-server-runner, which traps SIGTERM and sends `stop` to the server
+    # console; overriding the entrypoint means start.sh has to do that job
+    # itself. If it launches Java without `exec`, or through a pipe, the JVM
+    # never receives the signal and the container is killed outright when the
+    # grace period runs out.
     entrypoint: ["/bin/bash", "/data/start.sh"]
     stdin_open: true
     tty: true
+    # How long Docker waits after SIGTERM before SIGKILL. The default is ten
+    # seconds, which a modpack this size cannot save and exit within, so a stop
+    # would take the server down mid-shutdown. Sets the container's StopTimeout,
+    # which `docker stop` uses when no -t is given -- the sidecar passes one
+    # anyway, since this only applies once the container has been recreated.
+    stop_grace_period: 180s
     restart: unless-stopped
 
 # Shared spool between the API and the mc-control sidecar: the API writes
