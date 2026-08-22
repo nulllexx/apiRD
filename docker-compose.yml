@@ -239,19 +239,33 @@ services:
       # which is the order that produces a clean shutdown rather than a kill.
       STOP_DURATION: "120"
 
-      # Ownership of /home/useradmin/mcserver on the host, checked rather than
-      # assumed: `stat -c '%u %g' /home/useradmin/mcserver` reports 1000 1000.
+      # Run the server as root, which is what it has always done.
       #
-      # It has to match. The image runs the server as this uid/gid and chowns
-      # /data to suit, so a wrong value here either rewrites ownership across
-      # the entire world directory or leaves the server unable to write it.
-      # Because it already matches, that chown is a no-op.
+      # Not a recommendation -- see below -- but it is the existing behaviour,
+      # and restoring the clean shutdown was not the moment to also change which
+      # user runs the server.
       #
-      # Hardcoded like the paths and ports around it: this file describes one
-      # host, and a variable nobody will ever set is just a second place to
-      # look. Recheck with the command above if the world ever moves.
-      UID: "1000"
-      GID: "1000"
+      # The image has no USER of its own: it starts as root and drops privileges
+      # inside the entrypoint that used to be overridden. So overriding it meant
+      # the server ran as root, and every file it has written since is root
+      # owned -- config/, logs/, the world. Setting uid 1000 here made the
+      # server unable to write its own files:
+      #
+      #   java.nio.file.AccessDeniedException: /data/config/fml.toml
+      #   java.io.FileNotFoundException: logs/latest.log (Permission denied)
+      #
+      # Note that `stat` on the directory itself reports 1000:1000 and tells you
+      # nothing -- a human created the mount point, the container filled it. What
+      # matters is the contents:
+      #
+      #   find /home/useradmin/mcserver -maxdepth 2 -printf '%u:%g\n' | sort -u
+      #
+      # To move off root, which is worth doing on a server that executes mod
+      # code: stop the container, `chown -R 1000:1000 /home/useradmin/mcserver`,
+      # set both of these to "1000", and start it again. One-time, reversible,
+      # and independent of everything else in this file.
+      UID: "0"
+      GID: "0"
     volumes:
       - /home/useradmin/mcserver:/data
     # stdin stays open because mc-server-runner writes `stop` into it. Without
