@@ -23,6 +23,7 @@ pub mod tail;
 pub mod textures;
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast;
 
@@ -61,12 +62,23 @@ pub struct Consoles {
     pub audit: Arc<LogHub>,
 }
 
+/// How much attribution a reconnecting console replays.
+///
+/// Much smaller than the log buffer, and deliberately so: the two hold lines at
+/// wildly different rates. A busy server fills a few hundred log lines in
+/// minutes, while a few hundred console actions can span days, so matching the
+/// sizes would open every reload with a wall of old attribution above the
+/// oldest log line. Bounding the buffer is the right place to solve that --
+/// filtering by age at replay time cuts off the entry that explains the very
+/// first log line.
+const AUDIT_BACKLOG_LINES: usize = 40;
+
 impl Consoles {
     pub fn new(capacity: usize) -> Arc<Self> {
         Arc::new(Self {
             server_log: LogHub::new(capacity),
             stdout: LogHub::new(capacity),
-            audit: LogHub::new(capacity),
+            audit: LogHub::new(AUDIT_BACKLOG_LINES),
         })
     }
 
@@ -75,6 +87,37 @@ impl Consoles {
             LogSource::ServerLog => &self.server_log,
             LogSource::Stdout => &self.stdout,
         }
+    }
+}
+
+/// Arrival order, counted across every hub in the process.
+///
+/// The console shows two channels at once — the server's log and this API's own
+/// attribution lines — and a reconnecting client replays both. Replaying them
+/// one after the other groups them, which is exactly wrong: the attribution for
+/// a command belongs next to the log line the command produced, not in a block
+/// at the bottom. A shared counter is what lets the two buffers be merged back
+/// into the order they actually arrived in.
+///
+/// Arrival order, not the order things happened on the server. The log is
+/// polled, so a line can be written to the file before an audit entry and still
+/// be read after it — but that is also the order a viewer who never refreshed
+/// would have seen them, and matching that is the point.
+static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+/// One buffered line, with the order it arrived in.
+///
+/// Dereferences to its text, so a caller that only wants the line can ignore
+/// the sequence entirely.
+#[derive(Debug, Clone)]
+pub struct Line {
+    pub seq: u64,
+    pub text: Arc<str>,
+}
+
+impl AsRef<str> for Line {
+    fn as_ref(&self) -> &str {
+        &self.text
     }
 }
 
@@ -87,7 +130,7 @@ const CHANNEL_CAPACITY: usize = 1024;
 /// channel for live delivery.
 pub struct LogHub {
     tx: broadcast::Sender<Arc<str>>,
-    backlog: RwLock<VecDeque<Arc<str>>>,
+    backlog: RwLock<VecDeque<Line>>,
     capacity: usize,
 }
 
@@ -110,7 +153,10 @@ impl LogHub {
         while backlog.len() >= self.capacity {
             backlog.pop_front();
         }
-        backlog.push_back(Arc::clone(&line));
+        backlog.push_back(Line {
+            seq: SEQUENCE.fetch_add(1, Ordering::Relaxed),
+            text: Arc::clone(&line),
+        });
         // Sent while the write lock is still held. Combined with `subscribe`
         // taking its snapshot under the read lock, this guarantees a new
         // subscriber sees every line exactly once: either the line is already
@@ -119,7 +165,7 @@ impl LogHub {
     }
 
     /// Snapshot the replay buffer and subscribe to live lines atomically.
-    pub fn subscribe(&self) -> (Vec<Arc<str>>, broadcast::Receiver<Arc<str>>) {
+    pub fn subscribe(&self) -> (Vec<Line>, broadcast::Receiver<Arc<str>>) {
         let backlog = self.backlog.read().unwrap_or_else(|e| e.into_inner());
         let rx = self.tx.subscribe();
         (backlog.iter().cloned().collect(), rx)

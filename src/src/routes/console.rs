@@ -13,7 +13,7 @@ use crate::console::textures::TextureError;
 use crate::console::players::{self, PlayerAction};
 use crate::console::stats::{self, STATS_MAX_AGE};
 use crate::console::audit::{self, Kind};
-use crate::console::{sse_event, sse_frame, strip_ansi, LogSource};
+use crate::console::{sse_event, sse_frame, strip_ansi, Line, LogSource};
 use crate::error::AppError;
 use crate::middleware::admin_auth::AdminUser;
 use crate::AppState;
@@ -38,9 +38,9 @@ fn sse_response() -> actix_web::HttpResponseBuilder {
 const AUDIT_EVENT: &str = "audit";
 
 fn log_stream(
-    backlog: Vec<Arc<str>>,
+    backlog: Vec<Line>,
     rx: broadcast::Receiver<Arc<str>>,
-    audit: Option<(Vec<Arc<str>>, broadcast::Receiver<Arc<str>>)>,
+    audit: Option<(Vec<Line>, broadcast::Receiver<Arc<str>>)>,
     heartbeat: Duration,
 ) -> impl futures_util::Stream<Item = Result<web::Bytes, actix_web::Error>> {
     // The whole replay buffer goes out as one frame so a reconnecting client
@@ -52,11 +52,30 @@ fn log_stream(
         None => (Vec::new(), None),
     };
 
-    let mut head = backlog.iter().map(|line| sse_frame(line)).collect::<String>();
-    for line in &audit_backlog {
-        head.push_str(&sse_event(AUDIT_EVENT, line));
-    }
-    let head = web::Bytes::from(head);
+    // Merged by arrival order, so a reconnecting client sees the interleaving a
+    // viewer who never left would have seen: each attribution line next to the
+    // log line its command produced, rather than every one of them at the end.
+    //
+    // Nothing is filtered out by age. The two buffers do cover different spans
+    // -- a busy server fills the log in minutes, while the same number of
+    // console actions can span days -- but the fix for that is the audit hub's
+    // smaller capacity, not dropping entries here. Cutting at the oldest log
+    // line looks reasonable and quietly eats the attribution for the command
+    // that produced it.
+    let mut replay: Vec<(u64, String)> = backlog
+        .iter()
+        .map(|line| (line.seq, sse_frame(line.as_ref())))
+        .chain(
+            audit_backlog
+                .iter()
+                .map(|line| (line.seq, sse_event(AUDIT_EVENT, line.as_ref()))),
+        )
+        .collect();
+    replay.sort_by_key(|(seq, _)| *seq);
+
+    let head = web::Bytes::from(
+        replay.into_iter().map(|(_, frame)| frame).collect::<String>(),
+    );
 
     let live = futures_util::stream::unfold(
         (rx, audit_rx),
@@ -946,6 +965,98 @@ mod tests {
         let head = next_frame(&mut stream).await;
         assert!(head.contains("data: [12:00:00] [Server thread/INFO]: Done\n\n"));
         assert!(head.contains("event: audit\ndata: {\"username\":\"bs\""));
+    }
+
+    /// The bug this ordering exists for.
+    ///
+    /// Live, the two channels interleave naturally: an attribution line arrives
+    /// when the command runs and the log line it produced a moment later. On
+    /// reload the replay used to send the whole log buffer and then the whole
+    /// audit buffer, so every attribution line landed in a block at the bottom,
+    /// detached from the commands it described. The same session had to read
+    /// completely differently depending on whether you had refreshed.
+    #[tokio::test]
+    async fn a_reload_replays_both_channels_in_arrival_order() {
+        let log = LogHub::new(20);
+        let audit = LogHub::new(20);
+
+        // Two commands, each attributed and then echoed by the server.
+        audit.push(r#"{"id":1,"command":"say one"}"#);
+        log.push("[08:42:47] [Server thread/INFO]: [Rcon] one");
+        audit.push(r#"{"id":2,"command":"say two"}"#);
+        log.push("[08:43:14] [Server thread/INFO]: [Rcon] two");
+
+        let (backlog, rx) = log.subscribe();
+        let mut stream = Box::pin(log_stream(
+            backlog,
+            rx,
+            Some(audit.subscribe()),
+            Duration::from_secs(30),
+        ));
+
+        let head = next_frame(&mut stream).await;
+        let order: Vec<&str> = head
+            .lines()
+            .filter(|line| line.starts_with("event: ") || line.starts_with("data: "))
+            .collect();
+
+        assert_eq!(
+            order,
+            vec![
+                "event: audit",
+                r#"data: {"id":1,"command":"say one"}"#,
+                "data: [08:42:47] [Server thread/INFO]: [Rcon] one",
+                "event: audit",
+                r#"data: {"id":2,"command":"say two"}"#,
+                "data: [08:43:14] [Server thread/INFO]: [Rcon] two",
+            ],
+            "each entry must sit next to the line its command produced"
+        );
+    }
+
+    /// Attribution is never dropped for being older than the log. An entry
+    /// that arrived just before the oldest retained log line is the one that
+    /// explains it, and cutting there would eat exactly that.
+    #[tokio::test]
+    async fn attribution_before_the_first_log_line_is_still_replayed() {
+        let log = LogHub::new(20);
+        let audit = LogHub::new(20);
+
+        audit.push(r#"{"id":1,"command":"say one"}"#);
+        log.push("[08:42:47] [Server thread/INFO]: [Rcon] one");
+
+        let (backlog, rx) = log.subscribe();
+        let mut stream = Box::pin(log_stream(
+            backlog,
+            rx,
+            Some(audit.subscribe()),
+            Duration::from_secs(30),
+        ));
+
+        let head = next_frame(&mut stream).await;
+        assert!(head.contains("say one"), "kept: {head}");
+        assert!(
+            head.find("say one") < head.find("[Rcon] one"),
+            "and still ahead of the line it produced: {head}"
+        );
+    }
+
+    /// A console with nothing in its log still replays what was done to it.
+    #[tokio::test]
+    async fn attribution_survives_an_empty_log_backlog() {
+        let log = LogHub::new(20);
+        let audit = LogHub::new(20);
+        audit.push(r#"{"id":1,"command":"say hello"}"#);
+
+        let (backlog, rx) = log.subscribe();
+        let mut stream = Box::pin(log_stream(
+            backlog,
+            rx,
+            Some(audit.subscribe()),
+            Duration::from_secs(30),
+        ));
+
+        assert!(next_frame(&mut stream).await.contains("say hello"));
     }
 
     /// Both channels feed one stream, and neither starves the other.
