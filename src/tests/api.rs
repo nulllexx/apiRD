@@ -170,6 +170,76 @@ async fn console_routes_reject_anonymous_callers() {
     }
 }
 
+/// Every poll route requires a session, and the two admin ones require an
+/// admin session.
+///
+/// `lazy_state()` points the pool at a dead port, so any route that reached a
+/// query before checking the cookie would hang rather than answer — which is
+/// exactly the regression this catches. The unknown poll id is deliberate: a
+/// 404 here would confirm to an anonymous caller which polls exist.
+#[actix_web::test]
+async fn poll_routes_reject_anonymous_callers() {
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(lazy_state()))
+            .configure(configure_api),
+    )
+    .await;
+
+    for uri in [
+        "/api/polls",
+        "/api/polls/1",
+        "/api/polls/1/access",
+        "/api/admin/polls",
+        "/api/admin/polls?status=past",
+    ] {
+        let req = test::TestRequest::get().uri(uri).to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "GET {uri} must require a session"
+        );
+    }
+
+    // Casting a vote and opening a poll both write. Auth is checked before the
+    // body is looked at, so a hostile payload never reaches validation.
+    let req = test::TestRequest::post()
+        .uri("/api/polls/1/vote")
+        .set_json(serde_json::json!({ "optionIds": [1] }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    for body in [
+        serde_json::json!({ "title": "x", "duration": "1d",
+                            "options": ["a", "b"], "audiences": ["everyone"] }),
+        serde_json::json!({ "wrong_field": true }),
+    ] {
+        let req = test::TestRequest::post()
+            .uri("/api/admin/polls")
+            .set_json(body)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "POST /api/admin/polls must require an admin session"
+        );
+    }
+
+    // Ending a poll early is the one destructive verb here.
+    let req = test::TestRequest::post()
+        .uri("/api/admin/polls/1/end")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "POST /api/admin/polls/{{id}}/end must require an admin session"
+    );
+}
+
 /// Auth is checked before the body is parsed, so a malformed or hostile
 /// payload never reaches command validation on an unauthenticated request.
 #[actix_web::test]
@@ -519,3 +589,294 @@ async fn incidents_endpoint_returns_json_array() {
     assert!(body.is_array(), "incidents endpoint should return a JSON array");
 }
 
+
+/// The full life of a poll, against a real database: open it, vote, change
+/// that vote, be refused when excluded, end it early, and be refused after.
+///
+/// This is the first test here that *writes*. The read-only tests above prove
+/// a response shape; a poll's whole risk surface is on the write side — a
+/// changed vote that adds instead of replaces, an excluded account that votes
+/// anyway, a closed poll that still accepts answers. None of that is visible
+/// from a GET.
+#[actix_web::test]
+async fn a_poll_can_be_opened_voted_on_changed_and_ended() {
+    let Some(pool) = shared_pool().await else {
+        eprintln!(
+            "skipping a_poll_can_be_opened_voted_on_changed_and_ended: TEST_DATABASE_URL not set"
+        );
+        return;
+    };
+
+    // Serialized against the other DB-backed tests; see DB_TEST_LOCK.
+    let _serialized = DB_TEST_LOCK.lock().await;
+
+    // Polls have no foreign key to `users` on `created_by`, so they outlive
+    // their author and must be removed by name rather than by cascade. Every
+    // other poll table does cascade, so this takes options, audiences,
+    // exclusions and votes with it.
+    let clean = |pool: MySqlPool| async move {
+        sqlx::query("DELETE FROM polls WHERE created_by = 'polltest_admin'")
+            .execute(&pool)
+            .await
+            .expect("clear test polls");
+        sqlx::query(r"DELETE FROM users WHERE username LIKE 'polltest\_%'")
+            .execute(&pool)
+            .await
+            .expect("clear test accounts");
+    };
+    clean(pool.clone()).await;
+
+    for (id, username, is_admin, is_member) in [
+        ("polltest-admin-id", "polltest_admin", 1, 0),
+        ("polltest-member-id", "polltest_member", 0, 1),
+        ("polltest-excluded-id", "polltest_excluded", 0, 1),
+        ("polltest-outsider-id", "polltest_outsider", 0, 0),
+    ] {
+        sqlx::query(
+            "INSERT INTO users (id, username, password_hash, is_admin, is_member, is_og)
+             VALUES (?, ?, 'x', ?, ?, 0)",
+        )
+        .bind(id)
+        .bind(username)
+        .bind(is_admin)
+        .bind(is_member)
+        .execute(&pool)
+        .await
+        .expect("create test account");
+    }
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(test_state(pool.clone())))
+            .configure(configure_api),
+    )
+    .await;
+
+    // "test-secret" is the JWT secret test_state's config carries.
+    let session = |username: &str, id: &str, is_admin: bool| {
+        let token = api_rd::middleware::auth::create_jwt(
+            username,
+            id,
+            is_admin,
+            false,
+            "test-secret",
+            3600,
+        )
+        .expect("sign a test session");
+        actix_web::cookie::Cookie::new("userToken", token)
+    };
+    let admin = session("polltest_admin", "polltest-admin-id", true);
+    let member = session("polltest_member", "polltest-member-id", false);
+    let excluded = session("polltest_excluded", "polltest-excluded-id", false);
+    let outsider = session("polltest_outsider", "polltest-outsider-id", false);
+
+    // --------------------------------------------------------------- open one
+    let req = test::TestRequest::post()
+        .uri("/api/admin/polls")
+        .cookie(admin.clone())
+        .set_json(serde_json::json!({
+            "title": "New spawn build?",
+            "description": "Concept art is in #builds.",
+            "duration": "7d",
+            "allowMultiple": false,
+            "options": ["Medieval", "Modern", "Keep current"],
+            "audiences": ["members"],
+            "exclusions": ["polltest_excluded"],
+        }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    let status = resp.status();
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(status, StatusCode::CREATED, "creating a poll failed: {body}");
+
+    let poll_id = body["id"].as_i64().expect("new poll id");
+    let options = body["poll"]["options"].as_array().expect("options").clone();
+    assert_eq!(options.len(), 3);
+    assert_eq!(body["poll"]["excludedCount"], 1);
+    assert_eq!(body["poll"]["live"], true);
+
+    let medieval = options[0]["id"].as_i64().unwrap();
+    let modern = options[1]["id"].as_i64().unwrap();
+
+    // A typo'd exclusion is refused rather than dropped -- silently ignoring
+    // one is how somebody ends up voting who was meant to be kept out.
+    let req = test::TestRequest::post()
+        .uri("/api/admin/polls")
+        .cookie(admin.clone())
+        .set_json(serde_json::json!({
+            "title": "Doomed", "duration": "1d",
+            "options": ["A", "B"], "audiences": ["everyone"],
+            "exclusions": ["polltest_nobody"],
+        }))
+        .to_request();
+    assert_eq!(
+        test::call_service(&app, req).await.status(),
+        StatusCode::BAD_REQUEST,
+        "an unknown exclusion must not be silently dropped"
+    );
+
+    // ---------------------------------------------------------- who may vote
+    let access = |cookie: actix_web::cookie::Cookie<'static>| {
+        test::TestRequest::get()
+            .uri(&format!("/api/polls/{poll_id}/access"))
+            .cookie(cookie)
+            .to_request()
+    };
+
+    let resp = test::call_service(&app, access(member.clone())).await;
+    let status = resp.status();
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "an eligible member was refused: {body}");
+    assert_eq!(body["allowed"], true);
+    assert_eq!(body["hasVoted"], false);
+
+    let resp = test::call_service(&app, access(excluded.clone())).await;
+    let status = resp.status();
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["reason"], "excluded");
+    assert_eq!(body["eligible"], false);
+
+    // Not a member, so not in the audience -- a different refusal from being
+    // named on the exclusion list, and the frontend says something different.
+    let resp = test::call_service(&app, access(outsider.clone())).await;
+    let status = resp.status();
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["reason"], "not_eligible");
+
+    // -------------------------------------------------------------- vote
+    let vote = |cookie: actix_web::cookie::Cookie<'static>, option: i64| {
+        test::TestRequest::post()
+            .uri(&format!("/api/polls/{poll_id}/vote"))
+            .cookie(cookie)
+            .set_json(serde_json::json!({ "optionIds": [option] }))
+            .to_request()
+    };
+
+    let resp = test::call_service(&app, vote(member.clone(), medieval)).await;
+    let status = resp.status();
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "casting a vote failed: {body}");
+    assert_eq!(body["voters"], 1);
+    assert_eq!(body["options"][0]["votes"], 1);
+    assert_eq!(body["options"][0]["percent"], 100.0);
+    assert_eq!(body["selected"], serde_json::json!([medieval]));
+
+    // The guarantee the whole design is for: a poll body never carries who
+    // voted, for any caller.
+    let rendered = body.to_string();
+    for trace in ["polltest-member-id", "polltest-excluded-id", "polltest_member"] {
+        assert!(
+            !rendered.contains(trace),
+            "a poll response disclosed a voter ({trace}): {rendered}"
+        );
+    }
+
+    // Changing an answer must move the vote, not add a second one.
+    let resp = test::call_service(&app, vote(member.clone(), modern)).await;
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body["voters"], 1, "changing a vote must not add a voter");
+    assert_eq!(body["totalVotes"], 1, "changing a vote must not add a vote");
+    assert_eq!(body["options"][0]["votes"], 0, "the old choice must be released");
+    assert_eq!(body["options"][1]["votes"], 1);
+    assert_eq!(body["selected"], serde_json::json!([modern]));
+
+    // An excluded account is refused at the vote itself, not only at /access.
+    assert_eq!(
+        test::call_service(&app, vote(excluded.clone(), modern))
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+
+    // Single-answer poll: two different options is a client bug, not something
+    // to resolve by keeping whichever came first.
+    let req = test::TestRequest::post()
+        .uri(&format!("/api/polls/{poll_id}/vote"))
+        .cookie(member.clone())
+        .set_json(serde_json::json!({ "optionIds": [medieval, modern] }))
+        .to_request();
+    assert_eq!(
+        test::call_service(&app, req).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+
+    // ------------------------------------------------------------- listings
+    let req = test::TestRequest::get()
+        .uri("/api/admin/polls?status=live")
+        .cookie(admin.clone())
+        .to_request();
+    let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+    assert!(
+        body["polls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["id"] == poll_id),
+        "the new poll should be live: {body}"
+    );
+    assert_eq!(body["page"], 1);
+
+    // ------------------------------------------------------------ end early
+    let req = test::TestRequest::post()
+        .uri(&format!("/api/admin/polls/{poll_id}/end"))
+        .cookie(admin.clone())
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    let status = resp.status();
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "ending a poll failed: {body}");
+    assert_eq!(body["live"], false);
+    assert_eq!(body["endedEarly"], true, "it had days left, so this was early");
+    assert_eq!(body["options"][1]["votes"], 1, "results survive the close");
+
+    // Ending twice is a conflict, not a silent no-op that overwrites the first
+    // admin's closing time.
+    let req = test::TestRequest::post()
+        .uri(&format!("/api/admin/polls/{poll_id}/end"))
+        .cookie(admin.clone())
+        .to_request();
+    assert_eq!(
+        test::call_service(&app, req).await.status(),
+        StatusCode::CONFLICT
+    );
+
+    // A closed poll takes no more votes.
+    assert_eq!(
+        test::call_service(&app, vote(member.clone(), medieval))
+            .await
+            .status(),
+        StatusCode::CONFLICT,
+        "a closed poll must not accept a vote"
+    );
+
+    // ...but stays readable to the people it was for, which is the point of
+    // keeping past results at all.
+    let req = test::TestRequest::get()
+        .uri(&format!("/api/polls/{poll_id}"))
+        .cookie(member.clone())
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body["options"][1]["votes"], 1);
+    assert_eq!(body["options"][1]["leading"], true);
+
+    // And it has moved to the past listing.
+    let req = test::TestRequest::get()
+        .uri("/api/admin/polls?status=past")
+        .cookie(admin.clone())
+        .to_request();
+    let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+    assert!(
+        body["polls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["id"] == poll_id),
+        "an ended poll belongs in the past listing: {body}"
+    );
+
+    clean(pool).await;
+}

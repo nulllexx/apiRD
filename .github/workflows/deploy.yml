@@ -38,6 +38,16 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # The admin panel's JavaScript tests run inside `cargo test`, via
+      # tests/panel.rs. Installed explicitly rather than relying on whatever
+      # the runner image happens to ship: tests/panel.rs skips when node is
+      # missing, but panics instead when CI is set, so a runner without node
+      # fails loudly rather than quietly covering nothing.
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
         with:

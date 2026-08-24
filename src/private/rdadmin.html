@@ -1348,6 +1348,210 @@
             .component-update { flex-direction: column; align-items: stretch; }
             .component-update select { width: 100%; }
         }
+
+        /* ------------------------------------------------------------ Polls */
+
+        .poll-optional { color: var(--text-faint); font-weight: 400; }
+
+        .poll-note {
+            margin: 6px 0 0;
+            font-size: 0.78rem;
+            color: var(--text-muted) !important;
+            line-height: 1.5;
+        }
+        .poll-note.warn { color: var(--warn) !important; }
+
+        /* Checkbox and its wording as one target, so the label is clickable
+           and the two never wrap apart from each other. */
+        .poll-check {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            font-size: 0.88rem;
+            color: var(--text) !important;
+            margin: 0;
+        }
+        .poll-check input { width: auto; margin: 0; cursor: pointer; }
+
+        .poll-audiences { display: flex; flex-wrap: wrap; gap: 10px 22px; }
+
+        .poll-option-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+        .poll-option-row .form-control { flex: 1; min-width: 0; }
+        .poll-option-row button { margin: 0; flex: none; }
+        .poll-add { margin-top: 2px; }
+
+        /* ------------------------------------------------ exclusion picker */
+
+        .poll-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+        .poll-chips:empty { display: none; }
+
+        .poll-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 6px 3px 10px;
+            border-radius: 999px;
+            font-size: 0.8rem;
+            background: var(--accent-soft) !important;
+            border: 1px solid var(--accent-dim) !important;
+            color: var(--text) !important;
+        }
+        .poll-chip button {
+            all: unset;
+            cursor: pointer;
+            line-height: 1;
+            padding: 2px 4px;
+            border-radius: 999px;
+            color: var(--text-muted) !important;
+        }
+        .poll-chip button:hover { color: var(--danger) !important; }
+
+        .poll-typeahead { position: relative; }
+
+        .poll-typeahead ul {
+            position: absolute;
+            z-index: 60;
+            top: calc(100% + 4px);
+            left: 0;
+            right: 0;
+            margin: 0;
+            padding: 4px;
+            list-style: none;
+            max-height: 220px;
+            overflow-y: auto;
+            background: var(--bg-panel) !important;
+            border: 1px solid var(--line) !important;
+            border-radius: var(--radius-sm);
+            box-shadow: var(--shadow);
+        }
+        .poll-typeahead ul[hidden] { display: none; }
+
+        .poll-typeahead li {
+            padding: 8px 10px;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            font-size: 0.87rem;
+            color: var(--text) !important;
+        }
+        .poll-typeahead li[aria-selected="true"],
+        .poll-typeahead li:hover { background: var(--accent-soft) !important; }
+        .poll-typeahead li.empty { cursor: default; color: var(--text-muted) !important; }
+        .poll-typeahead li.empty:hover { background: transparent !important; }
+
+        /* ------------------------------------------------------ poll cards */
+
+        .poll-list { display: flex; flex-direction: column; gap: 14px; }
+
+        .poll-empty { color: var(--text-muted) !important; font-size: 0.9rem; margin: 4px 0; }
+
+        .poll-card {
+            border: 1px solid var(--line-soft) !important;
+            border-radius: var(--radius);
+            padding: 16px 18px;
+            background: var(--bg-raised) !important;
+        }
+
+        .poll-card-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+            margin-bottom: 4px;
+        }
+        .poll-card-title { margin: 0; font-size: 1rem; font-weight: 600; color: var(--text) !important; }
+
+        .poll-state { flex: none; font-size: 0.75rem; white-space: nowrap; }
+        .poll-state.live { color: var(--ok) !important; }
+        .poll-state.done { color: var(--text-muted) !important; }
+
+        /* Clamped to three lines so a long description cannot push the results
+           off the screen; the toggle below restores it in full. */
+        .poll-desc {
+            margin: 6px 0 0;
+            font-size: 0.85rem;
+            line-height: 1.55;
+            color: var(--text-muted) !important;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+        .poll-desc.clamped {
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        .poll-more {
+            all: unset;
+            cursor: pointer;
+            font-size: 0.78rem;
+            margin-top: 4px;
+            color: var(--accent) !important;
+        }
+        .poll-more:hover { text-decoration: underline; }
+
+        .poll-bars { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+
+        .poll-bar-label {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            font-size: 0.84rem;
+            margin-bottom: 4px;
+            color: var(--text) !important;
+        }
+        .poll-bar-name { overflow-wrap: anywhere; }
+        .poll-bar-count { flex: none; color: var(--text-muted) !important; font-variant-numeric: tabular-nums; }
+        .poll-bar-row.leading .poll-bar-name { font-weight: 600; }
+
+        .poll-bar-track {
+            height: 8px;
+            border-radius: 999px;
+            background: var(--bg-input) !important;
+            border: 1px solid var(--line-soft) !important;
+            overflow: hidden;
+        }
+        .poll-bar-fill {
+            display: block;
+            height: 100%;
+            width: 0;
+            border-radius: 999px;
+            background: var(--accent-dim) !important;
+            transition: width 0.45s ease;
+        }
+        .poll-bar-row.leading .poll-bar-fill { background: var(--accent) !important; }
+
+        .poll-foot {
+            margin-top: 14px;
+            padding-top: 12px;
+            border-top: 1px solid var(--line-soft);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .poll-meta { font-size: 0.78rem; color: var(--text-muted) !important; line-height: 1.6; }
+        .poll-foot button { margin: 0; }
+
+        @media (max-width: 768px) {
+            .poll-card-head { flex-direction: column; align-items: flex-start; gap: 4px; }
+            .poll-foot { flex-direction: column; align-items: stretch; }
+            .poll-foot button { width: 100%; }
+            .poll-audiences { flex-direction: column; gap: 10px; }
+            .poll-pager { flex-wrap: wrap; }
+        }
+
+        .poll-pager {
+            margin-top: 14px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+        }
+        .poll-pager[hidden] { display: none; }
+        .poll-pager span { font-size: 0.82rem; color: var(--text-muted) !important; }
     </style>
 </head>
 <body>
@@ -1374,6 +1578,7 @@
         <div class="tab active" data-tab="status">Status & Incidents</div>
         <div class="tab" data-tab="console">Server Console</div>
         <div class="tab" data-tab="players">Players</div>
+        <div class="tab" data-tab="polls">Polls</div>
     </div>
 
     <!-- USERS TAB -->
@@ -1634,6 +1839,104 @@
             </table>
         </section>
     </div><!-- /console-tab -->
+
+    <!-- POLLS TAB -->
+    <div class="tab-content" id="polls-tab">
+        <h1>Polls</h1>
+        <p class="page-hint">Ask the community a question. Votes are anonymous &mdash; results are counts only, and nothing here ever shows who voted.</p>
+
+        <div id="poll-alert"></div>
+
+        <div class="card">
+            <h2 class="card-title">Create a poll</h2>
+            <form id="pollCreateForm" autocomplete="off">
+                <div class="form-group">
+                    <label for="pollTitle">Question</label>
+                    <input type="text" id="pollTitle" class="form-control" maxlength="255"
+                           placeholder="What should we build at spawn?" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="pollDescription">Description <span class="poll-optional">(optional)</span></label>
+                    <textarea id="pollDescription" class="form-control" maxlength="4000"
+                              placeholder="Any context voters need before they answer."></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label for="pollDuration">Runs for</label>
+                    <select id="pollDuration" class="form-control">
+                        <option value="1d">1 day</option>
+                        <option value="3d" selected>3 days</option>
+                        <option value="7d">7 days</option>
+                        <option value="permanent">Permanent &mdash; until ended by hand</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>Options</label>
+                    <div id="pollOptions"><!-- option rows inserted by JS --></div>
+                    <button type="button" id="pollAddOption" class="btn btn-outline poll-add">
+                        <i class="fas fa-plus"></i> Add option
+                    </button>
+                    <p class="poll-note" id="pollOptionCount"></p>
+                </div>
+
+                <div class="form-group">
+                    <label class="poll-check">
+                        <input type="checkbox" id="pollAllowMultiple">
+                        <span>Allow selecting multiple answers</span>
+                    </label>
+                    <p class="poll-note">With this on, percentages are the share of voters who picked each option, so they can add up to more than 100%.</p>
+                </div>
+
+                <div class="form-group">
+                    <label>Who can vote</label>
+                    <div class="poll-audiences">
+                        <label class="poll-check"><input type="checkbox" class="pollAudience" value="everyone"><span>Everyone</span></label>
+                        <label class="poll-check"><input type="checkbox" class="pollAudience" value="admins"><span>Admins</span></label>
+                        <label class="poll-check"><input type="checkbox" class="pollAudience" value="members" checked><span>Members</span></label>
+                        <label class="poll-check"><input type="checkbox" class="pollAudience" value="ogs"><span>OGs</span></label>
+                    </div>
+                    <p class="poll-note" id="pollAudienceNote"></p>
+                </div>
+
+                <div class="form-group">
+                    <label for="pollExclude">Exclude specific people <span class="poll-optional">(optional)</span></label>
+                    <div id="pollExcludeChips" class="poll-chips"></div>
+                    <div class="poll-typeahead">
+                        <input type="text" id="pollExclude" class="form-control" autocomplete="off"
+                               role="combobox" aria-autocomplete="list" aria-expanded="false"
+                               aria-controls="pollExcludeList"
+                               placeholder="Start typing a username...">
+                        <ul id="pollExcludeList" role="listbox" hidden></ul>
+                    </div>
+                    <p class="poll-note">Anyone listed here cannot vote, even if they are in a group above.</p>
+                </div>
+
+                <button type="submit" class="btn btn-primary" id="pollCreateBtn">Open poll</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h2 class="card-title">Live polls</h2>
+            <div id="pollsLive" class="poll-list"></div>
+            <div class="poll-pager" id="pollsLivePager" hidden>
+                <button type="button" class="btn btn-outline" data-poll-page="live" data-poll-step="-1">Previous</button>
+                <span data-poll-label="live">Page 1 of 1</span>
+                <button type="button" class="btn btn-outline" data-poll-page="live" data-poll-step="1">Next</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2 class="card-title">Past polls</h2>
+            <div id="pollsPast" class="poll-list"></div>
+            <div class="poll-pager" id="pollsPastPager" hidden>
+                <button type="button" class="btn btn-outline" data-poll-page="past" data-poll-step="-1">Previous</button>
+                <span data-poll-label="past">Page 1 of 1</span>
+                <button type="button" class="btn btn-outline" data-poll-page="past" data-poll-step="1">Next</button>
+            </div>
+        </div>
+    </div><!-- /polls-tab -->
 </div>
 
 <!-- Overlay for messages -->
@@ -1702,6 +2005,16 @@
     const ROSTER_RELOAD_FLOOR = 15000;
     const MAX_CONSOLE_LINES = 2000;
     const MAX_PLAYER_ROWS = 300;
+
+    let pollsInited = false;
+    let pollsTimer = null;
+    const pollPage = { live: 1, past: 1 };
+    /* Usernames chosen in the exclusion picker, before the poll is created. */
+    let pollExclusions = [];
+
+    const POLL_MIN_OPTIONS = 2;
+    const POLL_MAX_OPTIONS = 10;
+    const POLL_REFRESH_INTERVAL = 15000;
 
     /* --------------------------------------------------------- Theme */
 
@@ -4309,7 +4622,649 @@
     window.addEventListener('beforeunload', () => {
         consoleDisconnect();
         stopStatusPolling();
+        stopPollRefresh();
     });
+
+    /* --------------------------------------------------------- Polls */
+
+    /* The status tab's showAlert writes into #alert-box, which lives inside
+       #status-tab and is therefore invisible from here. Polls gets its own. */
+    function pollAlert(message, type = 'success') {
+        const box = document.getElementById('poll-alert');
+        if (!box) return;
+
+        box.innerHTML = '';
+        const alert = document.createElement('div');
+        alert.className = `alert alert-${type}`;
+
+        const icon = document.createElement('i');
+        icon.className = `fas ${type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'}`;
+        alert.appendChild(icon);
+
+        const text = document.createElement('span');
+        text.textContent = message;
+        alert.appendChild(text);
+
+        box.appendChild(alert);
+        box.style.display = 'block';
+        clearTimeout(pollAlert.timer);
+        pollAlert.timer = setTimeout(() => { box.style.display = 'none'; }, 5000);
+    }
+
+    /* ------------------------------------------------------ the option rows */
+
+    function pollOptionRow(value = '') {
+        const row = document.createElement('div');
+        row.className = 'poll-option-row';
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'form-control poll-option';
+        input.maxLength = 255;
+        input.value = value;
+        input.placeholder = 'An answer people can pick';
+        row.appendChild(input);
+
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'btn btn-danger poll-option-remove';
+        remove.title = 'Remove this option';
+        remove.setAttribute('aria-label', 'Remove this option');
+        remove.innerHTML = '<i class="fas fa-times"></i>';
+        remove.addEventListener('click', () => {
+            row.remove();
+            syncPollOptions();
+        });
+        row.appendChild(remove);
+
+        return row;
+    }
+
+    /* Keeps the add/remove controls honest about the 2..10 range, so the limit
+       is visible in the form rather than only discovered on submit. */
+    function syncPollOptions() {
+        const list = document.getElementById('pollOptions');
+        const addBtn = document.getElementById('pollAddOption');
+        const note = document.getElementById('pollOptionCount');
+        if (!list) return;
+
+        const rows = list.querySelectorAll('.poll-option-row');
+
+        // Below the minimum the remove buttons switch off rather than
+        // disappear, so the row layout does not shift as people edit.
+        rows.forEach(row => {
+            const btn = row.querySelector('.poll-option-remove');
+            if (btn) btn.disabled = rows.length <= POLL_MIN_OPTIONS;
+        });
+
+        if (addBtn) addBtn.disabled = rows.length >= POLL_MAX_OPTIONS;
+        if (note) {
+            note.textContent = rows.length >= POLL_MAX_OPTIONS
+                ? `${POLL_MAX_OPTIONS} options is the maximum.`
+                : `${rows.length} of ${POLL_MAX_OPTIONS} options.`;
+        }
+    }
+
+    function resetPollOptions() {
+        const list = document.getElementById('pollOptions');
+        if (!list) return;
+        list.innerHTML = '';
+        for (let i = 0; i < POLL_MIN_OPTIONS; i++) list.appendChild(pollOptionRow());
+        syncPollOptions();
+    }
+
+    /* ------------------------------------------------- the exclusion picker */
+
+    function renderPollChips() {
+        const box = document.getElementById('pollExcludeChips');
+        if (!box) return;
+        box.innerHTML = '';
+
+        pollExclusions.forEach(username => {
+            const chip = document.createElement('span');
+            chip.className = 'poll-chip';
+
+            const name = document.createElement('span');
+            name.textContent = username;
+            chip.appendChild(name);
+
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.setAttribute('aria-label', `Stop excluding ${username}`);
+            remove.textContent = '×';
+            remove.addEventListener('click', () => {
+                pollExclusions = pollExclusions.filter(name => name !== username);
+                renderPollChips();
+            });
+            chip.appendChild(remove);
+
+            box.appendChild(chip);
+        });
+    }
+
+    function closePollSuggestions() {
+        const list = document.getElementById('pollExcludeList');
+        const input = document.getElementById('pollExclude');
+        if (list) { list.hidden = true; list.innerHTML = ''; }
+        if (input) input.setAttribute('aria-expanded', 'false');
+    }
+
+    function pollSuggestionItems() {
+        const list = document.getElementById('pollExcludeList');
+        return list ? Array.from(list.querySelectorAll('li:not(.empty)')) : [];
+    }
+
+    function movePollSuggestion(step) {
+        const items = pollSuggestionItems();
+        if (!items.length) return;
+
+        const current = items.findIndex(li => li.getAttribute('aria-selected') === 'true');
+        const next = (current + step + items.length) % items.length;
+
+        items.forEach(li => li.setAttribute('aria-selected', 'false'));
+        items[next].setAttribute('aria-selected', 'true');
+        items[next].scrollIntoView({ block: 'nearest' });
+    }
+
+    function choosePollExclusion(username) {
+        if (!pollExclusions.includes(username)) pollExclusions.push(username);
+        renderPollChips();
+        closePollSuggestions();
+
+        const input = document.getElementById('pollExclude');
+        if (input) { input.value = ''; input.focus(); }
+    }
+
+    async function searchPollUsers(query) {
+        const list = document.getElementById('pollExcludeList');
+        const input = document.getElementById('pollExclude');
+        if (!list) return;
+
+        try {
+            const response = await fetch(
+                '/api/admin/list-users?search=' + encodeURIComponent(query) + '&page=1',
+                { credentials: 'include' }
+            );
+            if (!response.ok) throw new Error('lookup failed');
+            const users = await response.json();
+
+            // The query may have moved on while this was in flight.
+            if (!input || input.value.trim() !== query) return;
+
+            list.innerHTML = '';
+            const matches = (Array.isArray(users) ? users : [])
+                .filter(user => user && user.username)
+                .filter(user => !pollExclusions.includes(user.username));
+
+            if (!matches.length) {
+                const empty = document.createElement('li');
+                empty.className = 'empty';
+                empty.textContent = users.length ? 'Already excluded' : 'No matching accounts';
+                list.appendChild(empty);
+            } else {
+                matches.forEach((user, index) => {
+                    const item = document.createElement('li');
+                    item.setAttribute('role', 'option');
+                    item.setAttribute('aria-selected', index === 0 ? 'true' : 'false');
+                    item.textContent = user.username;
+                    // mousedown, not click: the input's blur would otherwise
+                    // close the list before the click landed.
+                    item.addEventListener('mousedown', event => {
+                        event.preventDefault();
+                        choosePollExclusion(user.username);
+                    });
+                    list.appendChild(item);
+                });
+            }
+
+            list.hidden = false;
+            input.setAttribute('aria-expanded', 'true');
+        } catch (err) {
+            console.error('Error searching accounts:', err);
+            closePollSuggestions();
+        }
+    }
+
+    /* --------------------------------------------------------- rendering */
+
+    /* "2d 4h", "3h 20m", "under a minute" -- enough to judge urgency without
+       making anyone read a timestamp. */
+    function pollRemaining(iso) {
+        const ms = new Date(iso).getTime() - Date.now();
+        if (!isFinite(ms) || ms <= 0) return 'closing';
+
+        const minutes = Math.floor(ms / 60000);
+        if (minutes < 1) return 'under a minute';
+
+        const days = Math.floor(minutes / 1440);
+        const hours = Math.floor((minutes % 1440) / 60);
+        const mins = minutes % 60;
+
+        if (days > 0) return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+        if (hours > 0) return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+        return `${mins}m`;
+    }
+
+    function pollDate(iso) {
+        const at = new Date(iso);
+        return isNaN(at.getTime()) ? 'an unknown time' : at.toLocaleString();
+    }
+
+    /* Previous bar widths, so a refresh slides the bars to their new value
+       instead of repainting them in place. Keyed by option id. */
+    const pollBarWidths = new Map();
+
+    function renderPoll(poll) {
+        const card = document.createElement('div');
+        card.className = 'poll-card';
+
+        const head = document.createElement('div');
+        head.className = 'poll-card-head';
+
+        const title = document.createElement('h3');
+        title.className = 'poll-card-title';
+        title.textContent = poll.title;
+        head.appendChild(title);
+
+        const state = document.createElement('span');
+        if (poll.live) {
+            state.className = 'poll-state live';
+            state.textContent = poll.closesAt
+                ? `● Live · closes in ${pollRemaining(poll.closesAt)}`
+                : '● Live · permanent';
+        } else {
+            state.className = 'poll-state done';
+            const at = poll.endedAt || poll.closesAt;
+            state.textContent = poll.endedEarly
+                ? `Ended early · ${pollDate(at)}`
+                : `Closed · ${pollDate(at)}`;
+        }
+        head.appendChild(state);
+        card.appendChild(head);
+
+        if (poll.description) {
+            const desc = document.createElement('p');
+            desc.className = 'poll-desc clamped';
+            desc.textContent = poll.description;
+            card.appendChild(desc);
+        }
+
+        const bars = document.createElement('div');
+        bars.className = 'poll-bars';
+
+        (poll.options || []).forEach(option => {
+            const row = document.createElement('div');
+            row.className = option.leading ? 'poll-bar-row leading' : 'poll-bar-row';
+
+            const label = document.createElement('div');
+            label.className = 'poll-bar-label';
+
+            const name = document.createElement('span');
+            name.className = 'poll-bar-name';
+            name.textContent = option.label;
+            label.appendChild(name);
+
+            const count = document.createElement('span');
+            count.className = 'poll-bar-count';
+            count.textContent = `${option.percent}%  (${option.votes})`;
+            label.appendChild(count);
+
+            row.appendChild(label);
+
+            const track = document.createElement('div');
+            track.className = 'poll-bar-track';
+
+            const fill = document.createElement('span');
+            fill.className = 'poll-bar-fill';
+            // Start from where this bar was, then move: the transition needs
+            // two different values in two different frames to run at all.
+            const previous = pollBarWidths.get(option.id) || 0;
+            fill.style.width = `${previous}%`;
+            requestAnimationFrame(() => { fill.style.width = `${option.percent}%`; });
+            pollBarWidths.set(option.id, option.percent);
+
+            track.appendChild(fill);
+            row.appendChild(track);
+            bars.appendChild(row);
+        });
+
+        card.appendChild(bars);
+
+        const foot = document.createElement('div');
+        foot.className = 'poll-foot';
+
+        const meta = document.createElement('div');
+        meta.className = 'poll-meta';
+
+        const parts = [
+            `${poll.voters} ${poll.voters === 1 ? 'voter' : 'voters'}`,
+            (poll.audienceLabels || []).join(', ') || 'nobody',
+        ];
+        if (poll.excludedCount > 0) {
+            parts.push(`${poll.excludedCount} excluded`);
+        }
+        meta.appendChild(document.createTextNode(parts.join(' · ')));
+
+        const notes = [];
+        if (poll.allowMultiple) {
+            notes.push('Multiple answers allowed, so percentages are of voters and can exceed 100%.');
+        }
+        // Anonymity is not a promise a result this small can keep, and saying
+        // so is better than implying otherwise.
+        if (poll.voters > 0 && poll.voters < 3) {
+            notes.push('With this few voters, the result identifies them.');
+        }
+        notes.forEach(text => {
+            const line = document.createElement('div');
+            line.textContent = text;
+            meta.appendChild(line);
+        });
+
+        foot.appendChild(meta);
+
+        if (poll.live) {
+            const end = document.createElement('button');
+            end.type = 'button';
+            end.className = 'btn btn-danger';
+            end.textContent = 'End early';
+            end.addEventListener('click', () => endPoll(poll, end));
+            foot.appendChild(end);
+        }
+
+        card.appendChild(foot);
+        return card;
+    }
+
+    /* The "Show more" toggle is added only when the text is genuinely cut off,
+       which can only be known once the card is laid out. */
+    function attachPollDescToggles(container) {
+        container.querySelectorAll('.poll-desc.clamped').forEach(desc => {
+            if (desc.scrollHeight <= desc.clientHeight + 1) return;
+
+            const toggle = document.createElement('button');
+            toggle.type = 'button';
+            toggle.className = 'poll-more';
+            toggle.textContent = 'Show more';
+            toggle.addEventListener('click', () => {
+                const clamped = desc.classList.toggle('clamped');
+                toggle.textContent = clamped ? 'Show more' : 'Show less';
+            });
+            desc.insertAdjacentElement('afterend', toggle);
+        });
+    }
+
+    async function loadPolls(kind) {
+        const container = document.getElementById(kind === 'live' ? 'pollsLive' : 'pollsPast');
+        const pager = document.getElementById(kind === 'live' ? 'pollsLivePager' : 'pollsPastPager');
+        if (!container) return;
+
+        try {
+            const response = await fetch(
+                `/api/admin/polls?status=${kind}&page=${pollPage[kind]}`,
+                { credentials: 'include' }
+            );
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({}));
+                throw new Error(error.error || `HTTP ${response.status}`);
+            }
+            const data = await response.json();
+
+            // The server clamps the page to what exists, so follow it rather
+            // than leaving the control pointing past the end.
+            pollPage[kind] = data.page || 1;
+
+            container.innerHTML = '';
+            const polls = data.polls || [];
+
+            if (!polls.length) {
+                const empty = document.createElement('p');
+                empty.className = 'poll-empty';
+                empty.textContent = kind === 'live' ? 'No live polls.' : 'No past polls yet.';
+                container.appendChild(empty);
+            } else {
+                polls.forEach(poll => container.appendChild(renderPoll(poll)));
+                attachPollDescToggles(container);
+            }
+
+            const pages = data.pages || 1;
+            if (pager) {
+                pager.hidden = pages <= 1;
+                const label = pager.querySelector(`[data-poll-label="${kind}"]`);
+                if (label) label.textContent = `Page ${pollPage[kind]} of ${pages}`;
+                pager.querySelectorAll('[data-poll-step]').forEach(btn => {
+                    const step = Number(btn.dataset.pollStep);
+                    btn.disabled = step < 0
+                        ? pollPage[kind] <= 1
+                        : pollPage[kind] >= pages;
+                });
+            }
+        } catch (err) {
+            console.error(`Error loading ${kind} polls:`, err);
+            container.innerHTML = '';
+            const failed = document.createElement('p');
+            failed.className = 'poll-empty';
+            failed.textContent = `Could not load ${kind} polls.`;
+            container.appendChild(failed);
+        }
+    }
+
+    function loadAllPolls() {
+        loadPolls('live');
+        loadPolls('past');
+    }
+
+    async function endPoll(poll, button) {
+        const ok = await askConfirm({
+            title: 'End this poll now?',
+            body: `"${poll.title}" will stop accepting votes immediately.\n\nIts results are kept and it moves to Past polls. This cannot be undone.`,
+            confirmLabel: 'End poll',
+            danger: true
+        });
+        if (!ok) return;
+
+        button.disabled = true;
+        try {
+            const response = await fetch(`/api/admin/polls/${poll.id}/end`, {
+                method: 'POST',
+                credentials: 'include'
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+
+            pollAlert('Poll ended.');
+            // Both lists are stale: the poll has moved from one to the other.
+            loadAllPolls();
+        } catch (err) {
+            button.disabled = false;
+            pollAlert(err.message || 'Could not end the poll', 'error');
+        }
+    }
+
+    /* ------------------------------------------------------------ creating */
+
+    async function submitPoll(event) {
+        event.preventDefault();
+
+        const button = document.getElementById('pollCreateBtn');
+        const title = document.getElementById('pollTitle').value.trim();
+        const description = document.getElementById('pollDescription').value.trim();
+        const duration = document.getElementById('pollDuration').value;
+        const allowMultiple = document.getElementById('pollAllowMultiple').checked;
+
+        const inputs = Array.from(document.querySelectorAll('#pollOptions .poll-option'));
+        const options = inputs.map(input => input.value.trim());
+        const audiences = Array.from(document.querySelectorAll('.pollAudience:checked'))
+            .map(box => box.value);
+
+        // Checked here as well as on the server so the ordinary mistake is
+        // caught without a round trip. The server stays the authority.
+        if (!title) return pollAlert('Give the poll a question.', 'error');
+        if (options.some(option => !option)) return pollAlert('Fill in every option, or remove the blank ones.', 'error');
+        if (options.length < POLL_MIN_OPTIONS) return pollAlert(`A poll needs at least ${POLL_MIN_OPTIONS} options.`, 'error');
+
+        const seen = new Set();
+        for (const option of options) {
+            const key = option.toLowerCase();
+            if (seen.has(key)) return pollAlert(`Two options both say "${option}".`, 'error');
+            seen.add(key);
+        }
+
+        if (!audiences.length) return pollAlert('Choose who can vote.', 'error');
+
+        button.disabled = true;
+        try {
+            const response = await fetch('/api/admin/polls', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    title,
+                    description: description || null,
+                    duration,
+                    allowMultiple,
+                    options,
+                    audiences,
+                    exclusions: pollExclusions
+                })
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+
+            pollAlert('Poll opened.');
+            document.getElementById('pollCreateForm').reset();
+            pollExclusions = [];
+            renderPollChips();
+            resetPollOptions();
+            syncPollAudienceNote();
+
+            pollPage.live = 1;
+            loadPolls('live');
+        } catch (err) {
+            pollAlert(err.message || 'Could not open the poll', 'error');
+        } finally {
+            button.disabled = false;
+        }
+    }
+
+    /* Ticking Everyone makes the other three do nothing; say so rather than
+       letting someone believe they narrowed the audience. */
+    function syncPollAudienceNote() {
+        const note = document.getElementById('pollAudienceNote');
+        if (!note) return;
+
+        const boxes = Array.from(document.querySelectorAll('.pollAudience'));
+        const everyone = boxes.find(box => box.value === 'everyone');
+        const others = boxes.filter(box => box.value !== 'everyone' && box.checked);
+
+        if (everyone && everyone.checked && others.length) {
+            note.className = 'poll-note warn';
+            note.textContent = 'Everyone is ticked, so the other groups make no difference.';
+        } else if (!boxes.some(box => box.checked)) {
+            note.className = 'poll-note warn';
+            note.textContent = 'Nobody can vote until you tick at least one group.';
+        } else {
+            note.className = 'poll-note';
+            note.textContent = '';
+        }
+    }
+
+    /* ---------------------------------------------------------- lifecycle */
+
+    function startPollRefresh() {
+        stopPollRefresh();
+        pollsTimer = setInterval(() => {
+            // Only the live list moves on its own, and only page one is worth
+            // reloading under someone who has paged away from it.
+            if (pollPage.live === 1) loadPolls('live');
+        }, POLL_REFRESH_INTERVAL);
+    }
+
+    function stopPollRefresh() {
+        if (pollsTimer) { clearInterval(pollsTimer); pollsTimer = null; }
+    }
+
+    function initPolls() {
+        if (pollsInited) return;
+        pollsInited = true;
+
+        resetPollOptions();
+        renderPollChips();
+        syncPollAudienceNote();
+
+        const addBtn = document.getElementById('pollAddOption');
+        if (addBtn) {
+            addBtn.addEventListener('click', () => {
+                const list = document.getElementById('pollOptions');
+                if (!list || list.querySelectorAll('.poll-option-row').length >= POLL_MAX_OPTIONS) return;
+                const row = pollOptionRow();
+                list.appendChild(row);
+                syncPollOptions();
+                const input = row.querySelector('.poll-option');
+                if (input) input.focus();
+            });
+        }
+
+        document.querySelectorAll('.pollAudience').forEach(box => {
+            box.addEventListener('change', syncPollAudienceNote);
+        });
+
+        const form = document.getElementById('pollCreateForm');
+        if (form) form.addEventListener('submit', submitPoll);
+
+        // The exclusion typeahead. Same 500ms debounce the user search uses,
+        // shortened a little because this one is typed mid-form.
+        const exclude = document.getElementById('pollExclude');
+        if (exclude) {
+            let excludeTimer;
+            exclude.addEventListener('input', () => {
+                clearTimeout(excludeTimer);
+                const query = exclude.value.trim();
+                if (!query) { closePollSuggestions(); return; }
+                excludeTimer = setTimeout(() => searchPollUsers(query), 300);
+            });
+
+            exclude.addEventListener('keydown', event => {
+                const list = document.getElementById('pollExcludeList');
+                const open = list && !list.hidden;
+
+                if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                    if (!open) return;
+                    event.preventDefault();
+                    movePollSuggestion(event.key === 'ArrowDown' ? 1 : -1);
+                } else if (event.key === 'Enter') {
+                    // Always swallowed: Enter in this field must never submit
+                    // the form and open a poll half-composed.
+                    event.preventDefault();
+                    const chosen = pollSuggestionItems()
+                        .find(li => li.getAttribute('aria-selected') === 'true');
+                    if (open && chosen) choosePollExclusion(chosen.textContent);
+                } else if (event.key === 'Escape') {
+                    if (!open) return;
+                    // Stops the page-level Escape handlers from also acting on
+                    // a key that was meant for this dropdown.
+                    event.preventDefault();
+                    event.stopPropagation();
+                    closePollSuggestions();
+                }
+            });
+
+            document.addEventListener('click', event => {
+                if (!event.target.closest('.poll-typeahead')) closePollSuggestions();
+            });
+        }
+
+        document.querySelectorAll('[data-poll-step]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const kind = btn.dataset.pollPage;
+                const next = pollPage[kind] + Number(btn.dataset.pollStep);
+                if (next < 1) return;
+                pollPage[kind] = next;
+                loadPolls(kind);
+            });
+        });
+
+        loadAllPolls();
+    }
 
     /* --------------------------------------------------------- Tab Routing Implementation */
 
@@ -4368,6 +5323,13 @@
 
         if (activeTabName === 'status') {
             initStatusDashboard();
+        }
+
+        if (activeTabName === 'polls') {
+            initPolls();
+            startPollRefresh();
+        } else {
+            stopPollRefresh();
         }
 
         if (updateUrl) {

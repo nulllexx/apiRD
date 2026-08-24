@@ -4,5 +4,6 @@ pub mod projects;
 pub mod api_keys;
 pub mod api;
 pub mod console;
+pub mod polls;
 pub mod util;
 pub mod oauth_google;

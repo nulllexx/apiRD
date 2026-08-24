@@ -153,6 +153,78 @@ async fn setup_database(pool: &MySqlPool) -> Result<(), sqlx::Error> {
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;"#,
+        // ------------------------------------------------------------- polls
+        //
+        // Five tables, and they must be created in this order: the vec runs in
+        // sequence and each foreign key needs its parent to exist already.
+        //
+        // Whether a poll is live is never stored, only computed:
+        //
+        //   live: ended_at IS NULL AND (closes_at IS NULL OR closes_at > NOW(3))
+        //
+        // so there is no background job to run and no flag to fall out of sync
+        // with the clock.
+        //
+        // `created_by` holds a username and has no foreign key, for the reason
+        // console_audit gives above: who opened a poll should outlive the
+        // account. Every other table here cascades, so deleting an account does
+        // take that person's votes and exclusions with it -- which is the right
+        // direction for those.
+        r#"CREATE TABLE IF NOT EXISTS polls (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            title VARCHAR(255) NOT NULL,
+            description TEXT NULL,
+            duration VARCHAR(16) NOT NULL,
+            allow_multiple BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at DATETIME(3) NOT NULL,
+            created_by VARCHAR(255) NOT NULL,
+            closes_at DATETIME(3) NULL,
+            ended_at DATETIME(3) NULL,
+            INDEX idx_polls_open (ended_at, closes_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"#,
+        r#"CREATE TABLE IF NOT EXISTS poll_options (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            poll_id BIGINT NOT NULL,
+            position INT NOT NULL,
+            label VARCHAR(255) NOT NULL,
+            FOREIGN KEY (poll_id) REFERENCES polls(id) ON DELETE CASCADE,
+            INDEX idx_poll_options_poll (poll_id, position)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"#,
+        // One row per ticked audience checkbox. `audience` holds a string a
+        // Rust enum produces (crate::polls::Audience) -- a unit test pins those
+        // spellings, because renaming one silently splits stored polls from new
+        // ones.
+        r#"CREATE TABLE IF NOT EXISTS poll_audience (
+            poll_id BIGINT NOT NULL,
+            audience VARCHAR(16) NOT NULL,
+            PRIMARY KEY (poll_id, audience),
+            FOREIGN KEY (poll_id) REFERENCES polls(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB"#,
+        r#"CREATE TABLE IF NOT EXISTS poll_exclusions (
+            poll_id BIGINT NOT NULL,
+            user_id VARCHAR(255) NOT NULL,
+            PRIMARY KEY (poll_id, user_id),
+            FOREIGN KEY (poll_id) REFERENCES polls(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB"#,
+        // One row per option a voter picked, so a vote can be changed: the row
+        // has to be findable to be replaced. Nothing reads user_id except to
+        // answer "what did *you* pick" for that same user, and to replace their
+        // own ballot -- no endpoint ever discloses it.
+        //
+        // There is deliberately no timestamp. A vote time correlates against
+        // login records and the console log, which would undo the anonymity the
+        // rest of this design is paying for, and nothing here needs one.
+        r#"CREATE TABLE IF NOT EXISTS poll_votes (
+            poll_id BIGINT NOT NULL,
+            user_id VARCHAR(255) NOT NULL,
+            option_id BIGINT NOT NULL,
+            PRIMARY KEY (poll_id, user_id, option_id),
+            FOREIGN KEY (poll_id) REFERENCES polls(id) ON DELETE CASCADE,
+            FOREIGN KEY (option_id) REFERENCES poll_options(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            INDEX idx_poll_votes_tally (poll_id, option_id)
+        ) ENGINE=InnoDB"#,
     ];
 
     for create_table in &tables {
