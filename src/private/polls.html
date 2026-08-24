@@ -107,14 +107,15 @@ body::before {
     text-decoration: none;
 }
 
-/* A lit block, drawn rather than shipped as an image. */
+/* The site logo, the same file the rest of BakoSMP uses. The drop-shadow is
+   the only liberty taken with it: a warm halo so it sits in the torchlight
+   rather than on top of it. */
 .mark {
-    width: 22px;
-    height: 22px;
+    width: 26px;
+    height: 26px;
     flex: none;
-    border-radius: 4px;
-    background: linear-gradient(150deg, var(--flame), var(--ember));
-    box-shadow: 0 0 14px rgba(243, 156, 18, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    object-fit: contain;
+    filter: drop-shadow(0 0 9px rgba(243, 156, 18, 0.4));
 }
 
 .bar nav { display: flex; gap: 2px; flex-wrap: wrap; }
@@ -622,7 +623,12 @@ footer.page a:hover { color: var(--flame); border-color: var(--flame-edge); }
 <canvas id="embers" aria-hidden="true"></canvas>
 
 <header class="bar">
-    <a class="brand" href="/index.html"><span class="mark"></span>BakoSMP</a>
+    <a class="brand" href="/index.html">
+        <!-- Removed rather than left as a broken-image icon if the file is
+             missing; the wordmark beside it still identifies the site. -->
+        <img class="mark" src="/main.png" alt="" onerror="this.remove()">
+        BakoSMP
+    </a>
     <nav>
         <a class="nav" href="/index.html">Home</a>
         <a class="nav" href="/uploads.html">Uploads</a>
