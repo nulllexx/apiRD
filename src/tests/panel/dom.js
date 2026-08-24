@@ -83,6 +83,16 @@ class ClassList {
     }
 }
 
+/* Plain property assignment (`style.width = '5%'`) works as it does on any
+   object; the methods exist because custom properties can only be set through
+   them. They live on the prototype so a property named `setProperty` could not
+   collide with one. */
+class Style {
+    setProperty(name, value) { this[name] = String(value); }
+    getPropertyValue(name) { return name in this ? this[name] : ''; }
+    removeProperty(name) { delete this[name]; }
+}
+
 class TextNode {
     constructor(text) { this.nodeType = 3; this.textContent = text; this.parentNode = null; }
 }
@@ -96,7 +106,7 @@ class Element {
         this._class = '';
         this._attrs = {};
         this._text = null;
-        this.style = {};
+        this.style = new Style();
         this.dataset = {};
         this.hidden = false;
         this.disabled = false;
@@ -153,6 +163,15 @@ class Element {
         if (!this.parentNode) return;
         const i = this.parentNode.childNodes.indexOf(this);
         if (i >= 0) this.parentNode.childNodes.splice(i, 1);
+        this.parentNode = null;
+    }
+
+    replaceWith(node) {
+        if (!this.parentNode) return;
+        const i = this.parentNode.childNodes.indexOf(this);
+        if (i < 0) return;
+        node.parentNode = this.parentNode;
+        this.parentNode.childNodes.splice(i, 1, node);
         this.parentNode = null;
     }
 
@@ -215,6 +234,9 @@ function createDocument() {
         activeElement: null,
         _listeners: {},
         createElement(tag) { const el = new Element(tag); el.ownerDocument = doc; return el; },
+        // Namespaces do not affect anything these tests assert on, so inline
+        // SVG is built as ordinary elements.
+        createElementNS(_ns, tag) { return doc.createElement(tag); },
         createTextNode(t) { return new TextNode(t); },
         getElementById(id) { return root._descendants().find(el => el.id === id) || null; },
         querySelectorAll(sel) { return root.querySelectorAll(sel); },

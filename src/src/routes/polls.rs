@@ -698,17 +698,27 @@ pub struct ListQuery {
     page: Option<i64>,
 }
 
+/// Reads the `status` filter shared by both listings.
+///
+/// `true` for the live half, `false` for the past half. Absent means live,
+/// which is the answer to "what can I do right now".
+fn wants_live(status: Option<&str>) -> Result<bool, AppError> {
+    match status {
+        None | Some("live") => Ok(true),
+        Some("past") => Ok(false),
+        Some(_) => Err(AppError::BadRequest(
+            "status must be live or past".to_string(),
+        )),
+    }
+}
+
 /// GET /api/admin/polls?status=live|past&page=N — browse polls (admin only)
 async fn list_polls_admin(
     state: web::Data<AppState>,
     _admin: AdminUser,
     query: web::Query<ListQuery>,
 ) -> Result<HttpResponse, AppError> {
-    let live = match query.status.as_deref() {
-        None | Some("live") => true,
-        Some("past") => false,
-        Some(_) => return Err(AppError::BadRequest("status must be live or past".to_string())),
-    };
+    let live = wants_live(query.status.as_deref())?;
 
     let page = query.page.unwrap_or(1).max(1);
     let at = now();
@@ -756,26 +766,56 @@ async fn list_polls_admin(
     })))
 }
 
-/// GET /api/polls — live polls this account may answer
+/// How many closed polls the player-facing listing hands back.
+///
+/// Not pagination: this is the "what did we decide" view, not an archive, and
+/// nobody scrolls past two dozen finished polls. The admin listing is the one
+/// that pages through everything.
+const PAST_LIMIT: i64 = 25;
+
+/// GET /api/polls?status=live|past — polls this account may answer, or the
+/// closed ones it was entitled to answer
+///
+/// Eligibility governs both halves: a poll you could never have voted on does
+/// not appear once it closes either.
 async fn list_my_polls(
     state: web::Data<AppState>,
     auth: AuthUser,
+    query: web::Query<ListQuery>,
 ) -> Result<HttpResponse, AppError> {
+    let live = wants_live(query.status.as_deref())?;
     let (user_id, flags) = viewer(&state.pool, &auth.username).await?;
 
     let codes = audiences_for(flags);
     let marks = placeholders(codes.len());
 
+    // The liveness test is parenthesised because it is ANDed with the audience
+    // and exclusion checks -- without the brackets the `OR` in the past branch
+    // would swallow them and show every closed poll to everyone.
+    let (when_sql, order_sql, limit_sql) = if live {
+        (
+            "(p.ended_at IS NULL AND (p.closes_at IS NULL OR p.closes_at > ?))",
+            "ORDER BY p.closes_at IS NULL, p.closes_at ASC, p.id DESC",
+            String::new(),
+        )
+    } else {
+        (
+            "(p.ended_at IS NOT NULL OR (p.closes_at IS NOT NULL AND p.closes_at <= ?))",
+            "ORDER BY COALESCE(p.ended_at, p.closes_at) DESC, p.id DESC",
+            format!("LIMIT {PAST_LIMIT}"),
+        )
+    };
+
     let sql = format!(
         "SELECT {POLL_COLUMNS} FROM polls p
-         WHERE p.ended_at IS NULL AND (p.closes_at IS NULL OR p.closes_at > ?)
+         WHERE {when_sql}
            AND NOT EXISTS (
                  SELECT 1 FROM poll_exclusions e
                  WHERE e.poll_id = p.id AND e.user_id = ?)
            AND EXISTS (
                  SELECT 1 FROM poll_audience a
                  WHERE a.poll_id = p.id AND a.audience IN ({marks}))
-         ORDER BY p.closes_at IS NULL, p.closes_at ASC, p.id DESC"
+         {order_sql} {limit_sql}"
     );
     let mut q = sqlx::query_as::<_, PollRow>(&sql).bind(now()).bind(&user_id);
     for code in &codes {
@@ -785,7 +825,12 @@ async fn list_my_polls(
     let rows = q.fetch_all(&state.pool).await?;
     let out = poll_response(&state.pool, rows, Some(&user_id)).await?;
 
-    Ok(HttpResponse::Ok().json(serde_json::json!({ "polls": out })))
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "polls": out,
+        // Saves the page a second request purely to learn whose session it is.
+        // The caller's own name is not a disclosure -- they typed it to log in.
+        "you": auth.username,
+    })))
 }
 
 /// GET /api/polls/{id} — one poll, with results and your own answer

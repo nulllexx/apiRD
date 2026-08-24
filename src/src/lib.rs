@@ -73,5 +73,7 @@ pub fn configure_api(cfg: &mut web::ServiceConfig) {
     .route("/dashboard.html", web::get().to(routes::auth::serve_dashboard))
     .route("/dashboard", web::get().to(routes::auth::serve_dashboard))
     .route("/rdadmin.html", web::get().to(routes::auth::serve_rdadmin))
-    .route("/rdadmin", web::get().to(routes::auth::serve_rdadmin));
+    .route("/rdadmin", web::get().to(routes::auth::serve_rdadmin))
+    .route("/polls.html", web::get().to(routes::auth::serve_polls))
+    .route("/polls", web::get().to(routes::auth::serve_polls));
 }

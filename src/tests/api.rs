@@ -240,6 +240,42 @@ async fn poll_routes_reject_anonymous_callers() {
     );
 }
 
+/// The player-facing polls page sends anonymous visitors to sign in.
+///
+/// A redirect rather than a 401 because this is a page a person opened, not a
+/// call some script made — and to the ordinary sign-in, not the staff login,
+/// since any account may vote.
+#[actix_web::test]
+async fn the_polls_page_sends_anonymous_visitors_to_sign_in() {
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(lazy_state()))
+            .configure(configure_api),
+    )
+    .await;
+
+    for uri in ["/polls", "/polls.html"] {
+        let req = test::TestRequest::get().uri(uri).to_request();
+        let resp = test::call_service(&app, req).await;
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::FOUND,
+            "GET {uri} must redirect a signed-out visitor"
+        );
+
+        let location = resp
+            .headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(
+            location.contains("/auth.html"),
+            "GET {uri} should point at the ordinary sign-in, not {location}"
+        );
+    }
+}
+
 /// Auth is checked before the body is parsed, so a malformed or hostile
 /// payload never reaches command validation on an unauthenticated request.
 #[actix_web::test]
@@ -876,6 +912,65 @@ async fn a_poll_can_be_opened_voted_on_changed_and_ended() {
             .iter()
             .any(|p| p["id"] == poll_id),
         "an ended poll belongs in the past listing: {body}"
+    );
+
+    // ------------------------------------------------- what a player is shown
+    //
+    // The polls page asks for each half separately. A closed poll must leave
+    // the live half and appear in the past one, and eligibility has to govern
+    // both -- a poll you could never have answered stays hidden once it ends.
+    let mine = |cookie: actix_web::cookie::Cookie<'static>, status: &str| {
+        test::TestRequest::get()
+            .uri(&format!("/api/polls?status={status}"))
+            .cookie(cookie)
+            .to_request()
+    };
+
+    let body: serde_json::Value =
+        test::call_and_read_body_json(&app, mine(member.clone(), "live")).await;
+    let live = body["polls"].as_array().unwrap();
+    assert!(
+        !live.iter().any(|p| p["id"] == poll_id),
+        "an ended poll must not still be offered for voting: {body}"
+    );
+    assert_eq!(body["you"], "polltest_member", "the page needs to name the session");
+
+    let body: serde_json::Value =
+        test::call_and_read_body_json(&app, mine(member.clone(), "past")).await;
+    let past = body["polls"].as_array().unwrap();
+    let seen = past
+        .iter()
+        .find(|p| p["id"] == poll_id)
+        .unwrap_or_else(|| panic!("a voter should see the result of a poll they answered: {body}"));
+    assert_eq!(seen["options"][1]["votes"], 1, "with the result intact");
+    assert_eq!(
+        seen["selected"],
+        serde_json::json!([modern]),
+        "and their own answer still marked"
+    );
+
+    // The outsider was never in the audience, so the closed poll is not theirs
+    // to read either.
+    let body: serde_json::Value =
+        test::call_and_read_body_json(&app, mine(outsider.clone(), "past")).await;
+    assert!(
+        !body["polls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["id"] == poll_id),
+        "closing a poll must not widen who can see it: {body}"
+    );
+
+    // A status nobody recognises is refused rather than quietly treated as one
+    // of the two, which would show the wrong half without saying so.
+    let req = test::TestRequest::get()
+        .uri("/api/polls?status=everything")
+        .cookie(member.clone())
+        .to_request();
+    assert_eq!(
+        test::call_service(&app, req).await.status(),
+        StatusCode::BAD_REQUEST
     );
 
     clean(pool).await;

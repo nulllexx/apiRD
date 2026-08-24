@@ -1,0 +1,1059 @@
+<title>BakoSMP Polls</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=JetBrains+Mono:wght@400;500;700&family=Public+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+
+<style>
+/* ---------------------------------------------------------------------------
+   BakoSMP — Polls
+   Committed to a single dark world on purpose: it is the server's identity and
+   the game's. Every colour is painted explicitly so the page holds on any host
+   ground rather than borrowing one.
+--------------------------------------------------------------------------- */
+
+:root {
+    /* Ground and stone. Neutrals carry a faint cool-green bias, so they read
+       as cave rock rather than as unconsidered grey. */
+    --ground:      #0C0E0F;
+    --stone:       #14181A;
+    --stone-lit:   #1B2023;
+    --seam:        rgba(255, 255, 255, 0.07);
+    --seam-strong: rgba(255, 255, 255, 0.13);
+
+    /* Text warms slightly, as though lit by the torch. */
+    --text:        #E8E6E1;
+    --text-dim:    #96A0A3;
+    --text-faint:  #6B7679;
+
+    /* The client's orange, kept exactly. */
+    --flame:       #F39C12;
+    --ember:       #E67E22;
+    --flame-soft:  rgba(243, 156, 18, 0.14);
+    --flame-edge:  rgba(243, 156, 18, 0.35);
+
+    /* Semantic only — never used as a second accent. */
+    --live:        #5FD08A;
+    --live-soft:   rgba(95, 208, 138, 0.13);
+
+    --r:           10px;
+    --r-sm:        7px;
+
+    --measure:     62ch;
+    --page:        900px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--text);
+    font-family: "Public Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+/* The torch: one warm pool of light near the top, falling off into the dark.
+   Fixed, so it stays put while the polls scroll past it. */
+body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background:
+        radial-gradient(120% 70% at 50% -10%, rgba(243, 156, 18, 0.10), transparent 60%),
+        radial-gradient(80% 50% at 85% 15%, rgba(230, 126, 34, 0.05), transparent 70%);
+}
+
+#embers {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 0;
+}
+
+/* --------------------------------------------------------------- topbar */
+
+.bar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 12px 24px;
+    background: rgba(12, 14, 15, 0.82);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--seam);
+}
+
+.brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin-right: 22px;
+    font-family: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+    font-weight: 800;
+    font-size: 1.05rem;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    text-decoration: none;
+}
+
+/* A lit block, drawn rather than shipped as an image. */
+.mark {
+    width: 22px;
+    height: 22px;
+    flex: none;
+    border-radius: 4px;
+    background: linear-gradient(150deg, var(--flame), var(--ember));
+    box-shadow: 0 0 14px rgba(243, 156, 18, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+.bar nav { display: flex; gap: 2px; flex-wrap: wrap; }
+
+.bar a.nav {
+    padding: 7px 12px;
+    border-radius: var(--r-sm);
+    color: var(--text-dim);
+    text-decoration: none;
+    font-size: 0.9rem;
+    font-weight: 500;
+    transition: color 0.16s ease, background 0.16s ease;
+}
+.bar a.nav:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); }
+.bar a.nav[aria-current="page"] { color: var(--flame); background: var(--flame-soft); }
+
+.bar .spacer { flex: 1; }
+
+.who {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 12px 5px 6px;
+    border: 1px solid var(--seam);
+    border-radius: 999px;
+    font-size: 0.82rem;
+    color: var(--text-dim);
+    background: var(--stone);
+}
+.who .head {
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    background: linear-gradient(140deg, #6E8C4B, #4E6B33);
+    flex: none;
+}
+.who strong { color: var(--text); font-weight: 600; }
+
+/* ----------------------------------------------------------------- page */
+
+main {
+    position: relative;
+    z-index: 1;
+    max-width: var(--page);
+    margin: 0 auto;
+    padding: 56px 24px 96px;
+    display: flex;
+    flex-direction: column;
+    gap: 56px;
+}
+
+.intro { display: flex; flex-direction: column; gap: 14px; }
+
+.eyebrow {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--flame);
+}
+
+h1 {
+    margin: 0;
+    font-family: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+    font-weight: 800;
+    font-size: clamp(2.1rem, 5.5vw, 3.1rem);
+    line-height: 1.04;
+    letter-spacing: -0.035em;
+    text-wrap: balance;
+}
+
+.lead {
+    margin: 0;
+    max-width: var(--measure);
+    font-size: 1.06rem;
+    color: var(--text-dim);
+}
+
+.assurance {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    align-self: flex-start;
+    margin-top: 6px;
+    padding: 8px 14px 8px 11px;
+    border: 1px solid var(--seam);
+    border-radius: 999px;
+    background: var(--stone);
+    font-size: 0.85rem;
+    color: var(--text-dim);
+}
+.assurance svg { flex: none; color: var(--flame); }
+.assurance strong { color: var(--text); font-weight: 600; }
+
+/* -------------------------------------------------------------- sections */
+
+.section { display: flex; flex-direction: column; gap: 18px; }
+
+.section-head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--seam);
+}
+
+.section-head h2 {
+    margin: 0;
+    font-family: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+    font-weight: 700;
+    font-size: 1.22rem;
+    letter-spacing: -0.02em;
+}
+
+.section-head .tally {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.78rem;
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+}
+
+.polls { display: flex; flex-direction: column; gap: 16px; }
+
+/* ----------------------------------------------------------- poll cards */
+
+/* State lives in the card's ground, not in a stripe down its edge: an open
+   poll is lit and slightly raised, a closed one is flat and recessed. */
+.poll {
+    position: relative;
+    padding: 22px 24px;
+    border: 1px solid var(--seam);
+    border-radius: var(--r);
+    background: var(--stone);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.poll[data-state="open"] {
+    background: linear-gradient(180deg, var(--stone-lit), var(--stone));
+    border-color: var(--seam-strong);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.055),
+        0 1px 2px rgba(0, 0, 0, 0.4),
+        0 18px 44px -28px rgba(243, 156, 18, 0.5);
+}
+
+.poll[data-state="closed"] {
+    background: #101314;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+}
+.poll[data-state="closed"] .poll-title { color: var(--text-dim); }
+
+.poll[data-state="locked"] { background: #101314; }
+
+.poll-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    flex-wrap: wrap;
+}
+
+.state {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 4px 10px;
+    border-radius: 999px;
+}
+.state.open   { color: var(--live); background: var(--live-soft); }
+.state.closed { color: var(--text-faint); background: rgba(255, 255, 255, 0.045); }
+.state.locked { color: var(--ember); background: var(--flame-soft); }
+
+.dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    flex: none;
+}
+.state.open .dot { box-shadow: 0 0 0 0 rgba(95, 208, 138, 0.6); animation: ping 2.6s ease-out infinite; }
+
+@keyframes ping {
+    0%   { box-shadow: 0 0 0 0 rgba(95, 208, 138, 0.55); }
+    70%  { box-shadow: 0 0 0 7px rgba(95, 208, 138, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(95, 208, 138, 0); }
+}
+
+.meta {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.76rem;
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+}
+
+.poll-title {
+    margin: 0;
+    font-family: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+    font-weight: 700;
+    font-size: 1.32rem;
+    line-height: 1.25;
+    letter-spacing: -0.022em;
+    text-wrap: balance;
+}
+
+.poll-desc {
+    margin: -4px 0 0;
+    max-width: var(--measure);
+    font-size: 0.94rem;
+    color: var(--text-dim);
+}
+
+.audience {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.76rem;
+    color: var(--text-faint);
+}
+.audience b { color: var(--text-dim); font-weight: 500; }
+
+/* --------------------------------------------------------------- choices */
+
+.choices {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.choice {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--seam);
+    border-radius: var(--r-sm);
+    background: rgba(255, 255, 255, 0.018);
+    cursor: pointer;
+    font-size: 0.96rem;
+    transition: border-color 0.16s ease, background 0.16s ease, transform 0.08s ease;
+}
+.choice:hover { border-color: var(--flame-edge); background: rgba(243, 156, 18, 0.05); }
+.choice:active { transform: translateY(1px); }
+.choice input { position: absolute; opacity: 0; pointer-events: none; }
+
+.choice:has(input:focus-visible) {
+    outline: 2px solid var(--flame);
+    outline-offset: 2px;
+}
+
+.pip {
+    width: 17px;
+    height: 17px;
+    flex: none;
+    border: 1.5px solid var(--text-faint);
+    background: transparent;
+    transition: border-color 0.16s ease, background 0.16s ease;
+    position: relative;
+}
+.pip.round { border-radius: 50%; }
+.pip.square { border-radius: 4px; }
+
+.choice:has(input:checked) { border-color: var(--flame-edge); background: var(--flame-soft); }
+.choice:has(input:checked) .pip { border-color: var(--flame); background: var(--flame); }
+.choice:has(input:checked) .pip::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--ground);
+    -webkit-mask: var(--tick) center / 11px 11px no-repeat;
+    mask: var(--tick) center / 11px 11px no-repeat;
+}
+.pip.round::after { border-radius: 50%; }
+
+.choice span.label { flex: 1; }
+
+/* --------------------------------------------------------------- results */
+
+.results {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 13px;
+}
+
+.result-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 14px;
+    margin-bottom: 7px;
+}
+
+.result-name { font-size: 0.94rem; color: var(--text-dim); }
+.result.leading .result-name { color: var(--text); font-weight: 600; }
+
+.yours {
+    display: inline-block;
+    margin-left: 9px;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: var(--flame-soft);
+    color: var(--flame);
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.66rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    vertical-align: 1px;
+}
+
+.result-num {
+    flex: none;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.84rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-faint);
+}
+.result-num b { color: var(--text); font-weight: 500; }
+.result.leading .result-num b { color: var(--flame); }
+
+.track {
+    position: relative;
+    height: 9px;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.45);
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.55);
+    overflow: hidden;
+}
+
+.fill {
+    display: block;
+    height: 100%;
+    width: var(--w, 0%);
+    border-radius: 3px;
+    background: linear-gradient(90deg, var(--ember), var(--flame));
+    transition: width 0.72s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.result:not(.leading) .fill { background: #3C464A; }
+
+/* Faint vertical seams, so the bar reads as made of blocks. */
+.fill::after {
+    content: '';
+    display: block;
+    height: 100%;
+    background-image: repeating-linear-gradient(
+        90deg, transparent 0 13px, rgba(0, 0, 0, 0.22) 13px 14px);
+}
+
+/* ---------------------------------------------------------------- footer */
+
+.poll-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-top: 2px;
+}
+
+.btn {
+    font: inherit;
+    font-weight: 600;
+    font-size: 0.92rem;
+    padding: 10px 20px;
+    border-radius: var(--r-sm);
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: filter 0.16s ease, background 0.16s ease, border-color 0.16s ease, transform 0.08s ease;
+}
+.btn:active { transform: translateY(1px); }
+.btn:focus-visible { outline: 2px solid var(--flame); outline-offset: 2px; }
+
+.btn-vote {
+    background: linear-gradient(160deg, var(--flame), var(--ember));
+    color: #201400;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.25) inset, 0 6px 18px -8px rgba(243, 156, 18, 0.8);
+}
+.btn-vote:hover:not(:disabled) { filter: brightness(1.08); }
+.btn-vote:disabled {
+    background: var(--stone-lit);
+    color: var(--text-faint);
+    box-shadow: none;
+    cursor: not-allowed;
+    border-color: var(--seam);
+}
+
+.btn-quiet {
+    background: transparent;
+    border-color: var(--seam-strong);
+    color: var(--text-dim);
+}
+.btn-quiet:hover { color: var(--text); border-color: var(--text-faint); }
+
+.foot-note {
+    font-size: 0.8rem;
+    color: var(--text-faint);
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.locked-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 11px;
+    padding: 14px 16px;
+    border: 1px dashed var(--seam-strong);
+    border-radius: var(--r-sm);
+    background: rgba(0, 0, 0, 0.22);
+    font-size: 0.9rem;
+    color: var(--text-dim);
+}
+.locked-note svg { flex: none; margin-top: 2px; color: var(--ember); }
+.locked-note b { color: var(--text); font-weight: 600; }
+
+.thin {
+    font-size: 0.8rem;
+    color: var(--text-faint);
+    margin: 0;
+}
+
+.empty {
+    padding: 34px 24px;
+    border: 1px dashed var(--seam);
+    border-radius: var(--r);
+    text-align: center;
+    color: var(--text-faint);
+    font-size: 0.92rem;
+}
+
+footer.page {
+    position: relative;
+    z-index: 1;
+    max-width: var(--page);
+    margin: 0 auto;
+    padding: 26px 24px 60px;
+    border-top: 1px solid var(--seam);
+    color: var(--text-faint);
+    font-size: 0.84rem;
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+footer.page a { color: var(--text-dim); text-decoration: none; border-bottom: 1px solid var(--seam-strong); }
+footer.page a:hover { color: var(--flame); border-color: var(--flame-edge); }
+
+/* ----------------------------------------------------------------- toast */
+
+#toast {
+    position: fixed;
+    left: 50%;
+    bottom: 28px;
+    z-index: 60;
+    transform: translate(-50%, 130%);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 18px;
+    border: 1px solid var(--seam-strong);
+    border-radius: 999px;
+    background: rgba(20, 24, 26, 0.96);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.6);
+    font-size: 0.9rem;
+    transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+#toast.up { transform: translate(-50%, 0); }
+#toast .tick { color: var(--live); flex: none; }
+
+/* ------------------------------------------------------------ responsive */
+
+@media (max-width: 720px) {
+    .bar { padding: 10px 16px; }
+    .bar nav { display: none; }
+    main { padding: 36px 16px 72px; gap: 44px; }
+    .poll { padding: 18px 16px; }
+    .poll-foot { flex-direction: column; align-items: stretch; }
+    .poll-foot .btn { width: 100%; }
+    .foot-note { justify-content: center; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+    }
+}
+</style>
+
+<canvas id="embers" aria-hidden="true"></canvas>
+
+<header class="bar">
+    <a class="brand" href="/index.html"><span class="mark"></span>BakoSMP</a>
+    <nav>
+        <a class="nav" href="/index.html">Home</a>
+        <a class="nav" href="/uploads.html">Uploads</a>
+        <a class="nav" href="/polls.html" aria-current="page">Polls</a>
+        <a class="nav" href="/storage/">Storage</a>
+        <a class="nav" href="/raindrippy/">RainDrippy</a>
+    </nav>
+    <span class="spacer"></span>
+    <span class="who" id="who" hidden><span class="head"></span>Signed in as <strong id="who-name"></strong></span>
+</header>
+
+<main>
+    <section class="intro">
+        <span class="eyebrow">Season 8 · Community</span>
+        <h1>Have your say</h1>
+        <p class="lead">
+            Decisions that shape the server get made here, not by whoever shouts
+            loudest in chat. Vote below — you can change your answer any time
+            before a poll closes.
+        </p>
+        <span class="assurance">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="11" width="18" height="11" rx="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+            <span><strong>Votes are anonymous.</strong> Nobody — staff included — can see how you voted.</span>
+        </span>
+    </section>
+
+    <section class="section" id="open-section">
+        <div class="section-head">
+            <h2>Open now</h2>
+            <span class="tally" id="open-tally"></span>
+        </div>
+        <div class="polls" id="open-polls"></div>
+    </section>
+
+    <section class="section" id="past-section">
+        <div class="section-head">
+            <h2>Closed</h2>
+            <span class="tally" id="past-tally"></span>
+        </div>
+        <div class="polls" id="past-polls"></div>
+    </section>
+</main>
+
+<footer class="page">
+    <span>BakoSMP · hosted by BakoPlayz</span>
+    <span><a href="https://discord.gg/DMx3m54waD" target="_blank" rel="noopener">Discord</a> · <a href="/status">Server status</a></span>
+</footer>
+
+<div id="toast" role="status" aria-live="polite">
+    <svg class="tick" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M20 6 9 17l-5-5"></path>
+    </svg>
+    <span id="toast-text">Vote counted</span>
+</div>
+
+<script>
+/* ===========================================================================
+   BakoSMP polls
+   ---------------------------------------------------------------------------
+   Served from /polls.html by the API, which requires a signed-in account and
+   redirects to /auth.html otherwise. Talks to:
+
+     GET  /api/polls?status=live   polls you may answer, with your own answer
+     GET  /api/polls?status=past   closed polls you were entitled to answer
+     POST /api/polls/{id}/vote     { optionIds: [1] } -- replaces your ballot
+
+   Two requests rather than one: each half has its own ordering (live by how
+   soon it closes, past by how recently it finished) and asking separately
+   keeps both correct.
+
+   Nothing here ever receives who voted for what. The API returns counts, plus
+   `selected` -- your own answer, which is yours to know.
+   ======================================================================== */
+
+let POLLS = [];
+
+const TICK = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E\")";
+
+/* ------------------------------------------------------------- formatting */
+
+function remaining(iso) {
+    const ms = new Date(iso).getTime() - Date.now();
+    if (!isFinite(ms) || ms <= 0) return "closing";
+
+    const mins = Math.floor(ms / 60000);
+    if (mins < 1) return "under a minute";
+
+    const days = Math.floor(mins / 1440);
+    const hours = Math.floor((mins % 1440) / 60);
+    if (days > 0) return hours > 0 ? days + "d " + hours + "h" : days + "d";
+    if (hours > 0) return hours + "h " + (mins % 60) + "m";
+    return mins + "m";
+}
+
+function when(iso) {
+    const at = new Date(iso);
+    if (isNaN(at.getTime())) return "an unknown date";
+    return at.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
+
+function el(tag, cls, text) {
+    const node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined) node.textContent = text;
+    return node;
+}
+
+function icon(paths, size) {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("width", size);
+    svg.setAttribute("height", size);
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "2");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    svg.setAttribute("aria-hidden", "true");
+    paths.forEach(d => {
+        const p = document.createElementNS(ns, "path");
+        p.setAttribute("d", d);
+        svg.appendChild(p);
+    });
+    return svg;
+}
+
+/* ---------------------------------------------------------------- render */
+
+function renderPoll(poll) {
+    const voted = poll.selected.length > 0;
+    const showResults = voted || !poll.live;
+
+    const card = el("article", "poll");
+    card.dataset.state = poll.live ? (poll.canVote ? "open" : "locked") : "closed";
+
+    /* --- status line --- */
+    const top = el("div", "poll-top");
+    const state = el("span", "state " + (poll.live ? (poll.canVote ? "open" : "locked") : "closed"));
+    state.appendChild(el("i", "dot"));
+    state.appendChild(document.createTextNode(
+        poll.live ? (poll.canVote ? "Open" : "Not open to you") : (poll.endedEarly ? "Ended early" : "Closed")
+    ));
+    top.appendChild(state);
+
+    const meta = el("span", "meta");
+    meta.textContent = poll.live
+        ? remaining(poll.closesAt) + " left"
+        : when(poll.endedAt || poll.closesAt);
+    top.appendChild(meta);
+    card.appendChild(top);
+
+    /* --- question --- */
+    card.appendChild(el("h3", "poll-title", poll.title));
+    if (poll.description) card.appendChild(el("p", "poll-desc", poll.description));
+
+    /* --- choices, or results --- */
+    if (showResults) {
+        const list = el("ul", "results");
+        const best = Math.max.apply(null, poll.options.map(o => o.votes));
+
+        poll.options.forEach(option => {
+            const row = el("li", "result" + (best > 0 && option.votes === best ? " leading" : ""));
+
+            const head = el("div", "result-head");
+            const name = el("span", "result-name");
+            name.appendChild(document.createTextNode(option.label));
+            if (poll.selected.includes(option.id)) name.appendChild(el("span", "yours", "Your pick"));
+            head.appendChild(name);
+
+            const num = el("span", "result-num");
+            const pct = el("b", null, option.percent + "%");
+            num.appendChild(pct);
+            num.appendChild(document.createTextNode(" · " + option.votes));
+            head.appendChild(num);
+            row.appendChild(head);
+
+            const track = el("div", "track");
+            const fill = el("span", "fill");
+            track.appendChild(fill);
+            row.appendChild(track);
+
+            // Grow from zero on the next frame, so the result reads as arriving.
+            requestAnimationFrame(() => { fill.style.setProperty("--w", option.percent + "%"); });
+
+            list.appendChild(row);
+        });
+        card.appendChild(list);
+    } else if (poll.canVote) {
+        const form = el("fieldset", "choices");
+        poll.options.forEach(option => {
+            const label = el("label", "choice");
+
+            const input = document.createElement("input");
+            input.type = poll.allowMultiple ? "checkbox" : "radio";
+            input.name = "poll-" + poll.id;
+            input.value = option.id;
+            input.addEventListener("change", () => {
+                const any = card.querySelectorAll("input:checked").length > 0;
+                card.querySelector(".btn-vote").disabled = !any;
+            });
+
+            const pip = el("span", "pip " + (poll.allowMultiple ? "square" : "round"));
+            pip.style.setProperty("--tick", TICK);
+
+            label.appendChild(input);
+            label.appendChild(pip);
+            label.appendChild(el("span", "label", option.label));
+            form.appendChild(label);
+        });
+        card.appendChild(form);
+
+        // Say why the bars are not there. Withholding them until you answer
+        // keeps the current leader from steering the vote.
+        card.appendChild(el("p", "thin", "Results appear once you have voted."));
+    } else {
+        const note = el("div", "locked-note");
+        note.appendChild(icon(["M12 9v4", "M12 17h.01", "M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"], 17));
+        const text = el("span");
+        text.appendChild(el("b", null, poll.audienceLabels.join(" and ") + " only. "));
+        text.appendChild(document.createTextNode(
+            poll.reason === "excluded"
+                ? "You have been excluded from this one. Ask a staff member if you think that's a mistake."
+                : "Results stay hidden until it closes."
+        ));
+        note.appendChild(text);
+        card.appendChild(note);
+    }
+
+    /* --- footer --- */
+    const foot = el("div", "poll-foot");
+
+    if (poll.live && poll.canVote && !voted) {
+        const vote = el("button", "btn btn-vote", poll.allowMultiple ? "Submit answers" : "Vote");
+        vote.type = "button";
+        vote.disabled = true;
+        vote.addEventListener("click", () => castVote(poll, card));
+        foot.appendChild(vote);
+    } else if (poll.live && poll.canVote && voted) {
+        const change = el("button", "btn btn-quiet", "Change my vote");
+        change.type = "button";
+        change.addEventListener("click", () => {
+            poll.selected = [];
+            replace(card, poll);
+        });
+        foot.appendChild(change);
+    } else {
+        foot.appendChild(el("span"));
+    }
+
+    const note = el("span", "foot-note");
+    const bits = [poll.voters + (poll.voters === 1 ? " vote" : " votes")];
+    if (poll.allowMultiple) bits.push("multiple answers — percentages are of voters");
+    if (poll.audienceLabels.length && poll.canVote) bits.unshift(poll.audienceLabels.join(" · "));
+    note.textContent = bits.join("  ·  ");
+    foot.appendChild(note);
+
+    card.appendChild(foot);
+    return card;
+}
+
+function replace(card, poll) {
+    const fresh = renderPoll(poll);
+    card.replaceWith(fresh);
+    return fresh;
+}
+
+/* ------------------------------------------------------------------ vote */
+
+async function castVote(poll, card) {
+    const chosen = Array.from(card.querySelectorAll("input:checked")).map(i => Number(i.value));
+    if (!chosen.length) return;
+
+    const button = card.querySelector(".btn-vote");
+    button.disabled = true;
+    button.textContent = "Sending…";
+
+    try {
+        const response = await fetch("/api/polls/" + poll.id + "/vote", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ optionIds: chosen })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Could not save your vote");
+
+        // The API answers with the recounted poll, so render what it says
+        // rather than adjusting a tally here and hoping the two agree.
+        Object.assign(poll, data, { canVote: data.live });
+    } catch (err) {
+        button.disabled = false;
+        button.textContent = poll.allowMultiple ? "Submit answers" : "Vote";
+        toast(err.message || "Could not reach the server", false);
+        return;
+    }
+
+    replace(card, poll);
+    toast("Vote counted — you can change it until this closes");
+}
+
+/* ----------------------------------------------------------------- toast */
+
+let toastTimer;
+function toast(message, good = true) {
+    const box = document.getElementById("toast");
+    document.getElementById("toast-text").textContent = message;
+    box.querySelector(".tick").style.display = good ? "" : "none";
+    box.classList.add("up");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => box.classList.remove("up"), 4200);
+}
+
+/* ------------------------------------------------------------------ boot */
+
+async function fetchPolls(status) {
+    const response = await fetch("/api/polls?status=" + status, { credentials: "include" });
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    return response.json();
+}
+
+async function load() {
+    const openBox = document.getElementById("open-polls");
+    const pastBox = document.getElementById("past-polls");
+    openBox.innerHTML = "";
+    pastBox.innerHTML = "";
+
+    let open = [], past = [];
+    try {
+        const [liveData, pastData] = await Promise.all([fetchPolls("live"), fetchPolls("past")]);
+
+        open = liveData.polls || [];
+        past = pastData.polls || [];
+        POLLS = open.concat(past);
+
+        // The API only returns polls you are entitled to, so anything still
+        // open is something you can answer.
+        open.forEach(p => { p.canVote = true; });
+        past.forEach(p => { p.canVote = false; });
+
+        const name = liveData.you;
+        if (name) {
+            document.getElementById("who-name").textContent = name;
+            document.getElementById("who").hidden = false;
+        }
+    } catch (err) {
+        // Say so rather than showing two empty sections, which would read as
+        // "there are no polls" when the truth is "we could not ask".
+        openBox.appendChild(el("div", "empty", "Could not load polls. Refresh to try again."));
+        return;
+    }
+
+    document.getElementById("open-tally").textContent =
+        open.length ? open.length + (open.length === 1 ? " poll" : " polls") : "";
+    document.getElementById("past-tally").textContent =
+        past.length ? past.length + (past.length === 1 ? " poll" : " polls") : "";
+
+    if (!open.length) openBox.appendChild(el("div", "empty", "Nothing open right now. New polls get announced in Discord."));
+    if (!past.length) pastBox.appendChild(el("div", "empty", "No polls have closed yet."));
+
+    open.forEach(p => openBox.appendChild(renderPoll(p)));
+    past.forEach(p => pastBox.appendChild(renderPoll(p)));
+}
+
+load();
+
+// Countdowns drift if the page is left open, so refresh the wording.
+setInterval(() => {
+    document.querySelectorAll(".poll[data-state='open'] .meta, .poll[data-state='locked'] .meta")
+        .forEach((node, i) => {
+            const poll = POLLS.filter(p => p.live)[i];
+            if (poll) node.textContent = remaining(poll.closesAt) + " left";
+        });
+}, 30000);
+
+/* ---------------------------------------------------------------- embers */
+/* Replaces the linked-dot particle field: warm motes drifting up out of the
+   dark, which is what a torch-lit page should be doing. Canvas rather than a
+   library — it is thirty lines and nothing external has to load. */
+(function embers() {
+    const canvas = document.getElementById("embers");
+    if (!canvas || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+    const ctx = canvas.getContext("2d");
+    let w, h, motes;
+
+    function size() {
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        w = canvas.width = window.innerWidth * dpr;
+        h = canvas.height = window.innerHeight * dpr;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        w /= dpr; h /= dpr;
+
+        const count = Math.min(46, Math.round(window.innerWidth / 26));
+        motes = Array.from({ length: count }, () => spawn(Math.random() * h));
+    }
+
+    function spawn(y) {
+        return {
+            x: Math.random() * w,
+            y: y,
+            r: 0.6 + Math.random() * 1.7,
+            rise: 0.16 + Math.random() * 0.5,
+            drift: (Math.random() - 0.5) * 0.28,
+            phase: Math.random() * Math.PI * 2,
+            alpha: 0.16 + Math.random() * 0.4
+        };
+    }
+
+    function frame(t) {
+        ctx.clearRect(0, 0, w, h);
+        for (const m of motes) {
+            m.y -= m.rise;
+            m.x += m.drift + Math.sin((t / 1400) + m.phase) * 0.18;
+            if (m.y < -12) Object.assign(m, spawn(h + 12));
+
+            // Fade out as they climb away from the torch.
+            const fade = Math.min(1, m.y / (h * 0.75));
+            ctx.beginPath();
+            ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
+            ctx.fillStyle = "rgba(243, 156, 18, " + (m.alpha * fade).toFixed(3) + ")";
+            ctx.fill();
+        }
+        requestAnimationFrame(frame);
+    }
+
+    size();
+    window.addEventListener("resize", size);
+    requestAnimationFrame(frame);
+})();
+</script>
