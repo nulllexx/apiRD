@@ -732,6 +732,38 @@ function when(iso) {
     return at.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 }
 
+/* Whether a poll is still taking votes, by the same rule the API applies:
+   nothing has ended it, and either it has no closing time or that time is
+   still ahead.
+
+   `live` is what the API decided at the moment it replied, not a standing
+   fact. Leave this page open past a poll's closing time -- or come back to a
+   tab that has been sitting there since yesterday -- and that flag is simply
+   out of date, which is how a poll whose day was up kept its ballot, kept its
+   "Open" badge, and counted down to "closing left". The clock is therefore
+   re-read on every render rather than trusted from the response.
+
+   An unreadable closing time leaves the API's answer standing: it is not
+   evidence the poll has finished, and hiding a live ballot over it would be
+   the worse mistake. */
+function stillOpen(poll) {
+    if (!poll.live) return false;
+    if (!poll.closesAt) return true;
+
+    const at = new Date(poll.closesAt).getTime();
+    return !isFinite(at) || at > Date.now();
+}
+
+/* The wording beside an open poll. A permanent poll has no closing time at
+   all -- a different thing from one that has run out -- and neither may read
+   as "closing left". */
+function countdown(poll) {
+    if (!poll.closesAt) return "no closing time";
+
+    const left = remaining(poll.closesAt);
+    return left === "closing" ? "closing now" : left + " left";
+}
+
 function el(tag, cls, text) {
     const node = document.createElement(tag);
     if (cls) node.className = cls;
@@ -762,24 +794,28 @@ function icon(paths, size) {
 /* ---------------------------------------------------------------- render */
 
 function renderPoll(poll) {
+    const open = stillOpen(poll);
     const voted = poll.selected.length > 0;
-    const showResults = voted || !poll.live;
+    const showResults = voted || !open;
 
     const card = el("article", "poll");
-    card.dataset.state = poll.live ? (poll.canVote ? "open" : "locked") : "closed";
+    // The id is on the card so the countdown can find its own poll again
+    // without counting nodes and hoping the order still matches.
+    card.dataset.poll = poll.id;
+    card.dataset.state = open ? (poll.canVote ? "open" : "locked") : "closed";
 
     /* --- status line --- */
     const top = el("div", "poll-top");
-    const state = el("span", "state " + (poll.live ? (poll.canVote ? "open" : "locked") : "closed"));
+    const state = el("span", "state " + (open ? (poll.canVote ? "open" : "locked") : "closed"));
     state.appendChild(el("i", "dot"));
     state.appendChild(document.createTextNode(
-        poll.live ? (poll.canVote ? "Open" : "Not open to you") : (poll.endedEarly ? "Ended early" : "Closed")
+        open ? (poll.canVote ? "Open" : "Not open to you") : (poll.endedEarly ? "Ended early" : "Closed")
     ));
     top.appendChild(state);
 
     const meta = el("span", "meta");
-    meta.textContent = poll.live
-        ? remaining(poll.closesAt) + " left"
+    meta.textContent = open
+        ? countdown(poll)
         : when(poll.endedAt || poll.closesAt);
     top.appendChild(meta);
     card.appendChild(top);
@@ -864,13 +900,13 @@ function renderPoll(poll) {
     /* --- footer --- */
     const foot = el("div", "poll-foot");
 
-    if (poll.live && poll.canVote && !voted) {
+    if (open && poll.canVote && !voted) {
         const vote = el("button", "btn btn-vote", poll.allowMultiple ? "Submit answers" : "Vote");
         vote.type = "button";
         vote.disabled = true;
         vote.addEventListener("click", () => castVote(poll, card));
         foot.appendChild(vote);
-    } else if (poll.live && poll.canVote && voted) {
+    } else if (open && poll.canVote && voted) {
         const change = el("button", "btn btn-quiet", "Change my vote");
         change.type = "button";
         change.addEventListener("click", () => {
@@ -953,24 +989,28 @@ async function fetchPolls(status) {
     return response.json();
 }
 
-async function load() {
+/* Fetches both halves and draws them.
+ *
+ * `refresh` marks a reload nobody asked for -- the one the countdown fires
+ * when a poll runs out. Those must not replace a perfectly readable page with
+ * an error because one background request timed out; what is already drawn is
+ * at worst slightly stale, and the next tick tries again. */
+async function load(refresh) {
     const openBox = document.getElementById("open-polls");
     const pastBox = document.getElementById("past-polls");
-    openBox.innerHTML = "";
-    pastBox.innerHTML = "";
 
-    let open = [], past = [];
+    let live = [], past = [];
     try {
         const [liveData, pastData] = await Promise.all([fetchPolls("live"), fetchPolls("past")]);
 
-        open = liveData.polls || [];
+        live = liveData.polls || [];
         past = pastData.polls || [];
-        POLLS = open.concat(past);
 
-        // The API only returns polls you are entitled to, so anything still
-        // open is something you can answer.
-        open.forEach(p => { p.canVote = true; });
+        // The API only returns polls you are entitled to, so anything it
+        // hands back as open is something you can answer.
+        live.forEach(p => { p.canVote = true; });
         past.forEach(p => { p.canVote = false; });
+        POLLS = live.concat(past);
 
         const name = liveData.you;
         if (name) {
@@ -978,11 +1018,43 @@ async function load() {
             document.getElementById("who").hidden = false;
         }
     } catch (err) {
+        if (refresh) return;
+
         // Say so rather than showing two empty sections, which would read as
         // "there are no polls" when the truth is "we could not ask".
+        openBox.innerHTML = "";
+        pastBox.innerHTML = "";
         openBox.appendChild(el("div", "empty", "Could not load polls. Refresh to try again."));
         return;
     }
+
+    paint();
+}
+
+/* Which polls the open section holds, as of right now.
+ *
+ * Kept so the countdown can tell "the wording has drifted" from "a poll has
+ * run out of time since this was drawn", and only redraw for the second.
+ */
+let painted = "";
+
+/* Draws both sections from POLLS.
+ *
+ * Which half a poll belongs to is decided here, by the clock, rather than by
+ * which of the two requests returned it: a poll fetched as open an hour ago
+ * can have closed since, and it then belongs under Closed with its result --
+ * not in the ballot list. Newly closed polls sort to the front of the past
+ * section, which is where the most recently finished one goes anyway.
+ */
+function paint() {
+    const openBox = document.getElementById("open-polls");
+    const pastBox = document.getElementById("past-polls");
+    openBox.innerHTML = "";
+    pastBox.innerHTML = "";
+
+    const open = POLLS.filter(stillOpen);
+    const past = POLLS.filter(p => !stillOpen(p));
+    painted = open.map(p => p.id).join(",");
 
     document.getElementById("open-tally").textContent =
         open.length ? open.length + (open.length === 1 ? " poll" : " polls") : "";
@@ -998,13 +1070,22 @@ async function load() {
 
 load();
 
-// Countdowns drift if the page is left open, so refresh the wording.
+/* Countdowns drift if the page is left open -- and a poll can pass its closing
+   time while somebody is sitting in front of it. Re-wording the countdown is
+   not enough on its own: a poll whose time is up has to lose its ballot and
+   move to Closed, so the card is redrawn at once and the API is asked again
+   for the final tallies, which may have moved since this page loaded. */
 setInterval(() => {
-    document.querySelectorAll(".poll[data-state='open'] .meta, .poll[data-state='locked'] .meta")
-        .forEach((node, i) => {
-            const poll = POLLS.filter(p => p.live)[i];
-            if (poll) node.textContent = remaining(poll.closesAt) + " left";
-        });
+    if (POLLS.filter(stillOpen).map(p => p.id).join(",") !== painted) {
+        paint();
+        load(true);
+        return;
+    }
+
+    POLLS.filter(stillOpen).forEach(poll => {
+        const card = document.querySelector(".poll[data-poll='" + poll.id + "']");
+        if (card) card.querySelector(".meta").textContent = countdown(poll);
+    });
 }, 30000);
 
 /* ---------------------------------------------------------------- embers */

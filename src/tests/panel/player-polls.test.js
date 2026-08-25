@@ -63,7 +63,10 @@ function setup() {
         requestAnimationFrame: fn => fn(),
         setTimeout: () => 0,
         clearTimeout: () => {},
-        setInterval: () => 1,
+        // Held rather than dropped: the page's only interval is the countdown,
+        // and what it does when a poll runs out is worth driving from a test
+        // instead of waiting half a minute for.
+        setInterval: fn => { ctx._tick = fn; return 1; },
         clearInterval: () => {},
         Promise, Date, Math, JSON, Number, String, Boolean, Array, Object, isFinite,
         _fetch: () => new Promise(() => {}),
@@ -156,6 +159,129 @@ test('a poll about to close never reads as a negative time', () => {
     assert.equal(ctx.remaining(new Date(Date.now() + 20000).toISOString()), 'under a minute');
     assert.equal(ctx.remaining(new Date(Date.now() - 60000).toISOString()), 'closing');
     assert.equal(ctx.remaining('not a date'), 'closing', 'an unparseable date must not print NaN');
+});
+
+// ---------------------------------------------------------------------------
+// Running out of time
+//
+// `live` is the API's answer from the moment it replied. This page can be left
+// open for hours -- or overnight -- past a poll's closing time, and none of
+// what follows may depend on a fresh response to notice.
+// ---------------------------------------------------------------------------
+
+test('a poll past its closing time is not open, whatever the response said', () => {
+    const { ctx } = setup();
+
+    const gone = new Date(Date.now() - 2 * DAY).toISOString();
+    assert.ok(!ctx.stillOpen(poll({ live: true, closesAt: gone })), 'its day is up');
+    assert.ok(ctx.stillOpen(poll()), 'two days left');
+
+    // Ended by hand, or ended by the clock: either way the API says so, and a
+    // closing time still ahead does not reopen it.
+    assert.ok(!ctx.stillOpen(poll({ live: false })));
+
+    // No closing time at all is a permanent poll, which only a person ends.
+    assert.ok(ctx.stillOpen(poll({ closesAt: null })));
+});
+
+test('a poll that ran out while the page sat open loses its ballot', () => {
+    const { ctx } = setup();
+    const card = ctx.renderPoll(poll({ live: true, canVote: true, closesAt: new Date(Date.now() - DAY).toISOString() }));
+
+    assert.equal(card.dataset.state, 'closed', 'not "open" an hour after it closed');
+    assert.match(card.querySelector('.state').textContent, /Closed/);
+    assert.ok(!card.querySelector('.btn-vote'), 'a vote here would be refused by the API');
+    assert.equal(card.querySelectorAll('.choice').length, 0);
+    assert.equal(card.querySelectorAll('.result').length, 2, 'the result is what is left to show');
+});
+
+/// The reported symptom: the countdown ran past zero and printed the word it
+/// falls back to with " left" glued on, while the badge still read Open.
+test('no poll ever reads "closing left"', () => {
+    const { ctx } = setup();
+
+    const ran_out = ctx.renderPoll(poll({ closesAt: new Date(Date.now() - DAY).toISOString() }));
+    assert.doesNotMatch(ran_out.querySelector('.meta').textContent, /closing left/);
+
+    const permanent = ctx.renderPoll(poll({ closesAt: null }));
+    assert.doesNotMatch(permanent.querySelector('.meta').textContent, /closing left/);
+    assert.equal(permanent.querySelector('.meta').textContent, 'no closing time',
+        'a poll with no closing time is not a poll about to close');
+    assert.ok(permanent.querySelector('.btn-vote'), 'and it is still answerable');
+
+    // The display floors, so a poll two days out reads "2d" or "1d 23h"
+    // depending on how much of this millisecond has gone; what is pinned is
+    // that it counts down and says what the time is left of.
+    assert.match(ctx.renderPoll(poll()).querySelector('.meta').textContent, /^(2d|1d \d+h) left$/);
+});
+
+test('a poll that has closed since it was fetched is filed under Closed', async () => {
+    const { doc, ctx } = setup();
+    // What the live listing returns to a page whose tab has been open since
+    // yesterday: the API called it open when it answered, and it is not now.
+    ctx._fetch = listing(
+        [poll({ id: 1, closesAt: new Date(Date.now() - 3600000).toISOString() }), poll({ id: 2 })],
+        []
+    );
+
+    await ctx.load();
+
+    const open = doc.getElementById('open-polls');
+    const past = doc.getElementById('past-polls');
+
+    assert.equal(open.querySelectorAll('.poll').length, 1, 'only the one still running');
+    assert.equal(open.querySelector('.poll').dataset.poll, '2');
+    assert.equal(past.querySelectorAll('.poll').length, 1, 'the finished one moved across');
+    assert.equal(past.querySelector('.poll').dataset.poll, '1');
+
+    assert.equal(doc.getElementById('open-tally').textContent, '1 poll');
+    assert.equal(doc.getElementById('past-tally').textContent, '1 poll');
+});
+
+test('a poll running out under the reader closes itself and re-asks the API', async () => {
+    const { doc, ctx } = setup();
+    const running = poll({ id: 1, closesAt: new Date(Date.now() + 20000).toISOString() });
+
+    let asked = 0;
+    ctx._fetch = async url => {
+        asked++;
+        return {
+            ok: true,
+            json: async () => ({ polls: String(url).includes('past') ? [] : [running], you: 'Joe' }),
+        };
+    };
+
+    await ctx.load();
+    assert.ok(doc.getElementById('open-polls').querySelector('.btn-vote'), 'open, with a ballot');
+
+    // Twenty seconds later, without anything having been fetched since.
+    running.closesAt = new Date(Date.now() - 1000).toISOString();
+    asked = 0;
+    ctx._tick();
+
+    assert.equal(doc.getElementById('open-polls').querySelectorAll('.poll').length, 0);
+    assert.equal(doc.getElementById('past-polls').querySelectorAll('.poll').length, 1,
+        'the ballot goes at once, without waiting on the network');
+    assert.equal(asked, 2, 'and the final tallies are asked for, both halves');
+});
+
+test('a countdown that fails to refresh leaves the page it drew alone', async () => {
+    const { doc, ctx } = setup();
+    const running = poll({ id: 1, closesAt: new Date(Date.now() + 20000).toISOString() });
+    ctx._fetch = listing([running], []);
+
+    await ctx.load();
+
+    running.closesAt = new Date(Date.now() - 1000).toISOString();
+    ctx._fetch = async () => { throw new Error('offline'); };
+    ctx._tick();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    assert.equal(doc.getElementById('past-polls').querySelectorAll('.poll').length, 1,
+        'a background refresh that fails must not wipe the poll off the page');
+    assert.equal(doc.getElementById('open-polls').querySelectorAll('.empty').length, 1);
+    assert.doesNotMatch(doc.getElementById('open-polls').textContent, /Could not load/);
 });
 
 // ---------------------------------------------------------------------------
