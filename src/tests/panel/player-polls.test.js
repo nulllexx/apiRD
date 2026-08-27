@@ -109,6 +109,9 @@ function buildPage() {
 
 const DAY = 86400000;
 
+/** Lets a load() the page started on its own finish before anything is read. */
+const settled = () => new Promise(resolve => setImmediate(resolve));
+
 /** A poll shaped the way /api/polls returns one. */
 const poll = (over = {}) => Object.assign({
     id: 1,
@@ -265,6 +268,63 @@ test('a poll running out under the reader closes itself and re-asks the API', as
     assert.equal(asked, 2, 'and the final tallies are asked for, both halves');
 });
 
+/// The list is a snapshot of the moment it was fetched. A page somebody left
+/// open has to go and ask again, or a poll opened since simply never arrives
+/// and the reader has no way to know they are looking at an old answer.
+test('a poll opened after the page loaded arrives without a manual reload', async () => {
+    const { doc, ctx } = setup();
+
+    let offered = [poll({ id: 1 })];
+    let asked = 0;
+    ctx._fetch = async url => {
+        asked++;
+        return {
+            ok: true,
+            json: async () => ({ polls: String(url).includes('past') ? [] : offered, you: 'Joe' }),
+        };
+    };
+
+    await ctx.load();
+    assert.equal(doc.getElementById('open-polls').querySelectorAll('.poll').length, 1);
+
+    // An admin opens a second poll. Nothing about this page changed.
+    offered = [poll({ id: 1 }), poll({ id: 2, title: 'Opened while you were reading' })];
+
+    asked = 0;
+    for (let i = 0; i < 4; i++) ctx._tick();
+    await settled();
+
+    assert.equal(asked, 2, 'the page asks again on its own');
+    assert.equal(doc.getElementById('open-polls').querySelectorAll('.poll').length, 2,
+        'and the new poll is there without anyone pressing reload');
+});
+
+/// A refresh redraws every card, which would take a ticked-but-unsent option
+/// with it. Two minutes of staleness is the cheaper loss.
+test('a refresh is held back while somebody is part-way through voting', async () => {
+    const { doc, ctx } = setup();
+    let asked = 0;
+    ctx._fetch = async url => {
+        asked++;
+        return {
+            ok: true,
+            json: async () => ({ polls: String(url).includes('past') ? [] : [poll({ id: 1 })], you: 'Joe' }),
+        };
+    };
+
+    await ctx.load();
+
+    const input = doc.getElementById('open-polls').querySelectorAll('.choice input')[0];
+    input.checked = true;
+    input.dispatch('change');
+
+    asked = 0;
+    for (let i = 0; i < 4; i++) ctx._tick();
+
+    assert.equal(asked, 0, 'their answer survives the refresh that was due');
+    assert.ok(doc.getElementById('open-polls').querySelectorAll('.choice input')[0].checked);
+});
+
 test('a countdown that fails to refresh leaves the page it drew alone', async () => {
     const { doc, ctx } = setup();
     const running = poll({ id: 1, closesAt: new Date(Date.now() + 20000).toISOString() });
@@ -275,8 +335,7 @@ test('a countdown that fails to refresh leaves the page it drew alone', async ()
     running.closesAt = new Date(Date.now() - 1000).toISOString();
     ctx._fetch = async () => { throw new Error('offline'); };
     ctx._tick();
-    await Promise.resolve();
-    await Promise.resolve();
+    await settled();
 
     assert.equal(doc.getElementById('past-polls').querySelectorAll('.poll').length, 1,
         'a background refresh that fails must not wipe the poll off the page');

@@ -1070,6 +1070,30 @@ function paint() {
 
 load();
 
+/* How many ticks between asking the API again -- four of them, so two minutes.
+ *
+ * This list is a snapshot of the moment it was fetched, and it was fetched
+ * once. A poll opened since, one ended by hand, an audience someone has just
+ * been added to: none of it reaches a page that never asks again, and this
+ * page is one people leave open. The admin panel already refreshes its own
+ * live list every fifteen seconds for exactly that reason; this side had
+ * nothing, so a player with the tab still open was reading yesterday's answer
+ * and had no way to know it. Two minutes is unnoticeable next to how long a
+ * poll runs, and it is one request.
+ */
+const REFRESH_EVERY = 4;
+let sinceRefresh = 0;
+
+/* Ask the API again -- unless somebody is part-way through answering, because
+   redrawing the list would throw away an option they have ticked and not yet
+   sent. Their vote matters more than two minutes of freshness; the next tick
+   tries again. */
+function refresh() {
+    sinceRefresh = 0;
+    if (document.querySelector(".choices input:checked")) return;
+    load(true);
+}
+
 /* Countdowns drift if the page is left open -- and a poll can pass its closing
    time while somebody is sitting in front of it. Re-wording the countdown is
    not enough on its own: a poll whose time is up has to lose its ballot and
@@ -1078,7 +1102,7 @@ load();
 setInterval(() => {
     if (POLLS.filter(stillOpen).map(p => p.id).join(",") !== painted) {
         paint();
-        load(true);
+        refresh();
         return;
     }
 
@@ -1086,6 +1110,8 @@ setInterval(() => {
         const card = document.querySelector(".poll[data-poll='" + poll.id + "']");
         if (card) card.querySelector(".meta").textContent = countdown(poll);
     });
+
+    if (++sinceRefresh >= REFRESH_EVERY) refresh();
 }, 30000);
 
 /* ---------------------------------------------------------------- embers */

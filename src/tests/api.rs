@@ -975,3 +975,169 @@ async fn a_poll_can_be_opened_voted_on_changed_and_ended() {
 
     clean(pool).await;
 }
+
+/// One exclusion hides one poll — not every poll that account could answer.
+///
+/// The exclusion list names a person on a single poll, so it has to be read
+/// per poll. A check that forgot to correlate on the poll id would still look
+/// right in every place an admin looks: the poll they meant to bar someone
+/// from *is* barred, and the panel's own listing does not filter by account at
+/// all. The only place it would show is here, in what the barred player is
+/// handed — which is why this asks for their listing rather than trusting
+/// `/access` on one poll.
+#[actix_web::test]
+async fn an_exclusion_hides_one_poll_not_every_poll() {
+    let Some(pool) = shared_pool().await else {
+        eprintln!("skipping an_exclusion_hides_one_poll_not_every_poll: TEST_DATABASE_URL not set");
+        return;
+    };
+
+    let _serialized = DB_TEST_LOCK.lock().await;
+
+    let clean = |pool: MySqlPool| async move {
+        sqlx::query("DELETE FROM polls WHERE created_by = 'excltest_admin'")
+            .execute(&pool)
+            .await
+            .expect("clear test polls");
+        sqlx::query(r"DELETE FROM users WHERE username LIKE 'excltest\_%'")
+            .execute(&pool)
+            .await
+            .expect("clear test accounts");
+    };
+    clean(pool.clone()).await;
+
+    for (id, username, is_admin, is_member) in [
+        ("excltest-admin-id", "excltest_admin", 1, 0),
+        ("excltest-member-id", "excltest_member", 0, 1),
+        ("excltest-barred-id", "excltest_barred", 0, 1),
+    ] {
+        sqlx::query(
+            "INSERT INTO users (id, username, password_hash, is_admin, is_member, is_og)
+             VALUES (?, ?, 'x', ?, ?, 0)",
+        )
+        .bind(id)
+        .bind(username)
+        .bind(is_admin)
+        .bind(is_member)
+        .execute(&pool)
+        .await
+        .expect("create test account");
+    }
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(test_state(pool.clone())))
+            .configure(configure_api),
+    )
+    .await;
+
+    let session = |username: &str, id: &str, is_admin: bool| {
+        let token = api_rd::middleware::auth::create_jwt(
+            username, id, is_admin, false, "test-secret", 3600,
+        )
+        .expect("sign a test session");
+        actix_web::cookie::Cookie::new("userToken", token)
+    };
+    let admin = session("excltest_admin", "excltest-admin-id", true);
+    let member = session("excltest_member", "excltest-member-id", false);
+    let barred = session("excltest_barred", "excltest-barred-id", false);
+
+    // Three polls the barred account is in the audience of, and it is named on
+    // the exclusion list of exactly one.
+    let open_poll = |title: &str, audience: &str, exclusions: Vec<&str>| {
+        test::TestRequest::post()
+            .uri("/api/admin/polls")
+            .cookie(admin.clone())
+            .set_json(serde_json::json!({
+                "title": title,
+                "duration": "7d",
+                "options": ["Yes", "No"],
+                "audiences": [audience],
+                "exclusions": exclusions,
+            }))
+            .to_request()
+    };
+
+    let mut ids = Vec::new();
+    for (title, audience, exclusions) in [
+        ("Barred from this one", "members", vec!["excltest_barred"]),
+        ("Members only", "members", vec![]),
+        ("Open to everyone", "everyone", vec![]),
+    ] {
+        let resp = test::call_service(&app, open_poll(title, audience, exclusions)).await;
+        let status = resp.status();
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(status, StatusCode::CREATED, "opening \"{title}\" failed: {body}");
+        ids.push(body["id"].as_i64().expect("new poll id"));
+    }
+    let (barred_poll, members_poll, everyone_poll) = (ids[0], ids[1], ids[2]);
+
+    let listing = |cookie: actix_web::cookie::Cookie<'static>| {
+        test::TestRequest::get()
+            .uri("/api/polls?status=live")
+            .cookie(cookie)
+            .to_request()
+    };
+
+    let body: serde_json::Value =
+        test::call_and_read_body_json(&app, listing(barred.clone())).await;
+    let seen: Vec<i64> = body["polls"]
+        .as_array()
+        .expect("polls array")
+        .iter()
+        .filter_map(|p| p["id"].as_i64())
+        .collect();
+
+    assert!(
+        !seen.contains(&barred_poll),
+        "the poll they were barred from must be hidden: {body}"
+    );
+    assert!(
+        seen.contains(&members_poll),
+        "being barred from one poll must not hide the others they can answer: {body}"
+    );
+    assert!(
+        seen.contains(&everyone_poll),
+        "an everyone poll stays visible to a barred account: {body}"
+    );
+
+    // The same three, from an account nobody barred: the exclusion is the only
+    // difference between these two listings.
+    let body: serde_json::Value =
+        test::call_and_read_body_json(&app, listing(member.clone())).await;
+    let seen: Vec<i64> = body["polls"]
+        .as_array()
+        .expect("polls array")
+        .iter()
+        .filter_map(|p| p["id"].as_i64())
+        .collect();
+    for id in [barred_poll, members_poll, everyone_poll] {
+        assert!(seen.contains(&id), "poll {id} should be offered to a member: {body}");
+    }
+
+    // And the refusal is still per poll where voting is decided, not account-wide.
+    let access = |cookie: actix_web::cookie::Cookie<'static>, id: i64| {
+        test::TestRequest::get()
+            .uri(&format!("/api/polls/{id}/access"))
+            .cookie(cookie)
+            .to_request()
+    };
+
+    let resp = test::call_service(&app, access(barred.clone(), barred_poll)).await;
+    let status = resp.status();
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["reason"], "excluded");
+
+    let resp = test::call_service(&app, access(barred.clone(), members_poll)).await;
+    let status = resp.status();
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "barred from one poll, still able to answer another: {body}"
+    );
+    assert_eq!(body["allowed"], true);
+
+    clean(pool).await;
+}
