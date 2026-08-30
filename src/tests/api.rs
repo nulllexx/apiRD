@@ -1139,5 +1139,74 @@ async fn an_exclusion_hides_one_poll_not_every_poll() {
     );
     assert_eq!(body["allowed"], true);
 
+    // A session must resolve to the account it was issued for even when its
+    // username no longer matches a row -- a rename, or a second row created by
+    // the Google sign-in path under a different name.
+    //
+    // This is what actually emptied a member's poll list: the flags were read
+    // with `WHERE username = ?` while every poll table keys on `users.id`, so
+    // a name that landed on no row came back unauthorised, and a name that
+    // landed on the *wrong* row came back with `is_member` false -- the
+    // audience filter fell back to "everyone" alone and every members-only
+    // poll disappeared at once. That is indistinguishable from being excluded
+    // from all of them, which is why it was reported as an exclusion bug. The
+    // id in the token is the fix and the thing under test; a username that
+    // differs only in case would not catch it, because MySQL's default
+    // collation matches those anyway.
+    let renamed = session("excltest_member_renamed", "excltest-member-id", false);
+    let body: serde_json::Value =
+        test::call_and_read_body_json(&app, listing(renamed)).await;
+    let seen: Vec<i64> = body["polls"]
+        .as_array()
+        .expect("polls array")
+        .iter()
+        .filter_map(|p| p["id"].as_i64())
+        .collect();
+    assert!(
+        seen.contains(&members_poll),
+        "a member must keep their member polls when the token's username no \
+         longer matches the stored row: {body}"
+    );
+
+    // An account in no audience is told that polls exist rather than that
+    // nothing is happening -- the empty list that hid this for so long.
+    sqlx::query("UPDATE users SET is_member = 0 WHERE id = 'excltest-barred-id'")
+        .execute(&pool)
+        .await
+        .expect("drop the barred account's membership");
+
+    let body: serde_json::Value =
+        test::call_and_read_body_json(&app, listing(barred.clone())).await;
+    let seen: Vec<i64> = body["polls"]
+        .as_array()
+        .expect("polls array")
+        .iter()
+        .filter_map(|p| p["id"].as_i64())
+        .collect();
+    assert!(
+        seen.contains(&everyone_poll) && !seen.contains(&members_poll),
+        "dropping their membership leaves only the everyone poll: {body}"
+    );
+
+    sqlx::query("INSERT INTO poll_exclusions (poll_id, user_id) VALUES (?, 'excltest-barred-id')")
+        .bind(everyone_poll)
+        .execute(&pool)
+        .await
+        .expect("bar them from the everyone poll too");
+
+    let body: serde_json::Value =
+        test::call_and_read_body_json(&app, listing(barred.clone())).await;
+    assert_eq!(
+        body["polls"].as_array().map(|a| a.len()),
+        Some(0),
+        "nothing left to show: {body}"
+    );
+    // At least the three opened here. Not an equality: this counts every live
+    // poll in the database, and the test database is shared.
+    assert!(
+        body["hiddenCount"].as_i64().unwrap_or(0) >= 3,
+        "an empty list must say how many polls it was filtered out of: {body}"
+    );
+
     clean(pool).await;
 }

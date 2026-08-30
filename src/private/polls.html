@@ -708,6 +708,8 @@ footer.page a:hover { color: var(--flame); border-color: var(--flame-edge); }
 
 let POLLS = [];
 
+let HIDDEN = { live: 0, past: 0 };
+
 const TICK = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E\")";
 
 /* ------------------------------------------------------------- formatting */
@@ -1012,6 +1014,11 @@ async function load(refresh) {
         past.forEach(p => { p.canVote = false; });
         POLLS = live.concat(past);
 
+        HIDDEN = {
+            live: liveData.hiddenCount || 0,
+            past: pastData.hiddenCount || 0
+        };
+
         const name = liveData.you;
         if (name) {
             document.getElementById("who-name").textContent = name;
@@ -1046,6 +1053,17 @@ let painted = "";
  * not in the ballot list. Newly closed polls sort to the front of the past
  * section, which is where the most recently finished one goes anyway.
  */
+
+function emptyText(half, quiet) {
+    const hidden = HIDDEN[half] || 0;
+    if (!hidden) return quiet;
+
+    const many = hidden === 1 ? "1 poll" : hidden + " polls";
+    return half === "live"
+        ? `There ${hidden === 1 ? "is" : "are"} ${many} open, but none of them are open to your account. If that looks wrong, ask an admin.`
+        : `${many} ${hidden === 1 ? "has" : "have"} closed, but none of them were open to your account. If that looks wrong, ask an admin.`;
+}
+
 function paint() {
     const openBox = document.getElementById("open-polls");
     const pastBox = document.getElementById("past-polls");
@@ -1061,8 +1079,10 @@ function paint() {
     document.getElementById("past-tally").textContent =
         past.length ? past.length + (past.length === 1 ? " poll" : " polls") : "";
 
-    if (!open.length) openBox.appendChild(el("div", "empty", "Nothing open right now. New polls get announced in Discord."));
-    if (!past.length) pastBox.appendChild(el("div", "empty", "No polls have closed yet."));
+    if (!open.length) openBox.appendChild(el("div", "empty", emptyText("live",
+        "Nothing open right now. New polls get announced in Discord.")));
+    if (!past.length) pastBox.appendChild(el("div", "empty", emptyText("past",
+        "No polls have closed yet.")));
 
     open.forEach(p => openBox.appendChild(renderPoll(p)));
     past.forEach(p => pastBox.appendChild(renderPoll(p)));

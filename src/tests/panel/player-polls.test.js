@@ -658,6 +658,52 @@ test('empty sections say which one is empty', async () => {
         /No polls have closed yet/);
 });
 
+/// The third way a page can be empty, and the one that hid a real fault.
+///
+/// A member stopped matching any audience -- their `is_member` was read off
+/// the wrong row -- and every poll vanished from their list at once. The page
+/// called that "Nothing open right now", which is what it says on a quiet
+/// week, so it read as normal for as long as nobody compared two accounts. If
+/// polls exist and none of them are yours, the page has to say so.
+test('an empty section says so when polls exist that this account cannot see', async () => {
+    const { doc, ctx } = setup();
+    ctx._fetch = async url => ({
+        ok: true,
+        json: async () => ({
+            polls: [],
+            you: 'Joe',
+            hiddenCount: String(url).includes('past') ? 1 : 3,
+        }),
+    });
+
+    await ctx.load();
+
+    const open = doc.getElementById('open-polls').querySelector('.empty').textContent;
+    assert.match(open, /3 polls open/);
+    assert.match(open, /none of them are open to your account/);
+    assert.doesNotMatch(open, /Nothing open right now/,
+        'three polls they cannot see is not a quiet week');
+
+    // Singular reads as English, not "1 polls".
+    const past = doc.getElementById('past-polls').querySelector('.empty').textContent;
+    assert.match(past, /1 poll has closed/);
+    assert.doesNotMatch(past, /1 polls/);
+});
+
+test('a genuinely empty page keeps its plain wording', async () => {
+    const { doc, ctx } = setup();
+    // hiddenCount 0 -- there is nothing to see, not something withheld.
+    ctx._fetch = async () => ({
+        ok: true,
+        json: async () => ({ polls: [], you: 'Joe', hiddenCount: 0 }),
+    });
+
+    await ctx.load();
+
+    assert.match(doc.getElementById('open-polls').querySelector('.empty').textContent,
+        /Nothing open right now/);
+});
+
 /// "We could not ask" and "there is nothing to show" look identical if a
 /// failure is allowed to render as an empty list.
 test('a failed load is reported, not shown as an empty page', async () => {

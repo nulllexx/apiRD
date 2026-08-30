@@ -339,12 +339,39 @@ async fn load_one(pool: &sqlx::MySqlPool, id: i64) -> Result<PollRow, AppError> 
 /// JWT claim at all, and `middleware::auth` disables expiry validation, so the
 /// token's `is_admin` can be arbitrarily out of date. `routes::auth::access`
 /// re-reads for the same reason.
-async fn viewer(pool: &sqlx::MySqlPool, username: &str) -> Result<(String, Flags), AppError> {
-    let row: Option<(String, bool, bool, bool)> =
-        sqlx::query_as("SELECT id, is_admin, is_member, is_og FROM users WHERE username = ?")
-            .bind(username)
+///
+/// Matched on `users.id` first and only then on the username. The id is what
+/// every other poll table keys on -- `poll_exclusions`, `poll_votes` -- so
+/// resolving the caller by name opened a gap between the row the *poll* tables
+/// mean and the row the flags are read from. Two accounts that differ only in
+/// the case of their username, or a second row created by the Google sign-in
+/// path, are enough: the name lands on the wrong row, `is_member` reads back
+/// false, and every members-only poll silently vanishes from that person's
+/// list. The username fallback is kept for sessions issued before the id claim
+/// could be relied on.
+///
+/// The three flags are read as `Option<bool>` because their columns are
+/// `BOOLEAN DEFAULT FALSE` and nullable: a NULL decoded straight into `bool`
+/// is a sqlx error, which would turn one odd row into a 500 on a page that
+/// should simply have told them they are not a member.
+async fn viewer(pool: &sqlx::MySqlPool, auth: &AuthUser) -> Result<(String, Flags), AppError> {
+    const FLAGS: &str = "SELECT id, is_admin, is_member, is_og FROM users";
+
+    let mut row: Option<(String, Option<bool>, Option<bool>, Option<bool>)> = None;
+
+    if !auth.id.is_empty() {
+        row = sqlx::query_as(&format!("{FLAGS} WHERE id = ?"))
+            .bind(&auth.id)
             .fetch_optional(pool)
             .await?;
+    }
+
+    if row.is_none() {
+        row = sqlx::query_as(&format!("{FLAGS} WHERE username = ?"))
+            .bind(&auth.username)
+            .fetch_optional(pool)
+            .await?;
+    }
 
     let (id, is_admin, is_member, is_og) =
         row.ok_or_else(|| AppError::Unauthorized("Unknown account".to_string()))?;
@@ -352,9 +379,9 @@ async fn viewer(pool: &sqlx::MySqlPool, username: &str) -> Result<(String, Flags
     Ok((
         id,
         Flags {
-            is_admin,
-            is_member,
-            is_og,
+            is_admin: is_admin.unwrap_or(false),
+            is_member: is_member.unwrap_or(false),
+            is_og: is_og.unwrap_or(false),
         },
     ))
 }
@@ -784,7 +811,7 @@ async fn list_my_polls(
     query: web::Query<ListQuery>,
 ) -> Result<HttpResponse, AppError> {
     let live = wants_live(query.status.as_deref())?;
-    let (user_id, flags) = viewer(&state.pool, &auth.username).await?;
+    let (user_id, flags) = viewer(&state.pool, &auth).await?;
 
     let codes = audiences_for(flags);
     let marks = placeholders(codes.len());
@@ -825,11 +852,38 @@ async fn list_my_polls(
     let rows = q.fetch_all(&state.pool).await?;
     let out = poll_response(&state.pool, rows, Some(&user_id)).await?;
 
+    // How many polls of this half exist that this account was filtered out of.
+    //
+    // An empty list is otherwise three different situations wearing the same
+    // face: nobody has opened a poll, none of the open ones are for you, and
+    // you were excluded from every one of them. The page said "Nothing open
+    // right now" to all three, so an account that had silently stopped
+    // matching any audience looked exactly like a quiet week -- which is how
+    // one went unnoticed until somebody complained. Only counted when the
+    // visible list is empty, because that is the only time it changes what the
+    // page says.
+    //
+    // A bare number, never the titles: which polls exist and who else was kept
+    // out is not this caller's business, for the same reason `excludedCount`
+    // is a count.
+    let hidden = if out.is_empty() {
+        let total: (i64,) = sqlx::query_as(&format!(
+            "SELECT COUNT(*) FROM polls p WHERE {when_sql}"
+        ))
+        .bind(now())
+        .fetch_one(&state.pool)
+        .await?;
+        total.0
+    } else {
+        0
+    };
+
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "polls": out,
         // Saves the page a second request purely to learn whose session it is.
         // The caller's own name is not a disclosure -- they typed it to log in.
         "you": auth.username,
+        "hiddenCount": hidden,
     })))
 }
 
@@ -840,7 +894,7 @@ async fn get_poll(
     path: web::Path<i64>,
 ) -> Result<HttpResponse, AppError> {
     let poll_id = path.into_inner();
-    let (user_id, flags) = viewer(&state.pool, &auth.username).await?;
+    let (user_id, flags) = viewer(&state.pool, &auth).await?;
     let row = load_one(&state.pool, poll_id).await?;
 
     // Eligibility gates reading; being open gates voting. Nothing here checks
@@ -871,7 +925,7 @@ async fn poll_access(
     path: web::Path<i64>,
 ) -> Result<HttpResponse, AppError> {
     let poll_id = path.into_inner();
-    let (user_id, flags) = viewer(&state.pool, &auth.username).await?;
+    let (user_id, flags) = viewer(&state.pool, &auth).await?;
     let row = load_one(&state.pool, poll_id).await?;
 
     let open = polls::is_live(row.ended_at, row.closes_at, now());
@@ -949,7 +1003,7 @@ async fn cast_vote(
     body: web::Json<VoteBody>,
 ) -> Result<HttpResponse, AppError> {
     let poll_id = path.into_inner();
-    let (user_id, flags) = viewer(&state.pool, &auth.username).await?;
+    let (user_id, flags) = viewer(&state.pool, &auth).await?;
     let row = load_one(&state.pool, poll_id).await?;
 
     if let Some(refusal) = eligibility(&state.pool, poll_id, &user_id, flags).await? {
