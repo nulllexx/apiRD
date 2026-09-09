@@ -2,7 +2,7 @@ use actix_web::{web, HttpRequest};
 use chrono::Utc;
 use rand::Rng;
 use sha2::{Digest, Sha256};
-use std::io::{Read as _, Write as _};
+use std::io::{Read as _, Seek as _, Write as _};
 
 use crate::error::AppError;
 use crate::middleware::rate_limit::RateLimiter;
@@ -55,31 +55,63 @@ where
         return;
     }
 
-    let mut players: Vec<serde_json::Value> = match serde_json::from_str(&contents) {
-        Ok(v) => v,
-        Err(_) => {
-            log::error!("Error parsing authedPlayers file, treating as empty array");
-            let _ = fs2::FileExt::unlock(&file);
-            return;
+    let trimmed = contents.trim_matches(|c: char| c == '\0' || c.is_whitespace());
+
+    let mut players: Vec<serde_json::Value> = if trimmed.is_empty() {
+        // The open above creates the file when it is missing, and an empty file
+        // is an empty roster rather than a failure.
+        Vec::new()
+    } else {
+        match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(e) => {
+                // Left alone rather than replaced with an empty array: the file
+                // still holds a roster the plugin wrote, and overwriting it
+                // would turn a parse failure into data loss.
+                log::error!("Error parsing authedPlayers file, leaving it unchanged: {}", e);
+                let _ = fs2::FileExt::unlock(&file);
+                return;
+            }
         }
     };
 
     update_fn(&mut players);
 
-    // Truncate and write back
+    // Serialized before the file is touched, so a failure here cannot leave a
+    // truncated file behind.
+    let encoded = match serde_json::to_string_pretty(&players) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("Error serializing authedPlayers: {}", e);
+            let _ = fs2::FileExt::unlock(&file);
+            return;
+        }
+    };
+
     if let Err(e) = file.set_len(0) {
         log::error!("Error truncating authedPlayers file: {}", e);
         let _ = fs2::FileExt::unlock(&file);
         return;
     }
-    let mut writer = std::io::BufWriter::new(&file);
-    if let Err(e) = writer.write_all(
-        serde_json::to_string_pretty(&players)
-            .unwrap_or_default()
-            .as_bytes(),
-    ) {
-        log::error!("Error writing authedPlayers file: {}", e);
+
+    // `set_len` does not move the cursor, which is sitting at the old end of
+    // file after the read above. Without this the write lands past the end and
+    // pads the front of the file with NULs.
+    if let Err(e) = (&file).seek(std::io::SeekFrom::Start(0)) {
+        log::error!("Error rewinding authedPlayers file: {}", e);
+        let _ = fs2::FileExt::unlock(&file);
+        return;
     }
+
+    let mut writer = std::io::BufWriter::new(&file);
+    if let Err(e) = writer.write_all(encoded.as_bytes()) {
+        log::error!("Error writing authedPlayers file: {}", e);
+    } else if let Err(e) = writer.flush() {
+        // A BufWriter dropped without flushing discards the error, which would
+        // report a half-written file as a success.
+        log::error!("Error flushing authedPlayers file: {}", e);
+    }
+    drop(writer);
 
     let _ = fs2::FileExt::unlock(&file);
 }
@@ -135,3 +167,148 @@ fn num_cpus_hint() -> usize {
         .unwrap_or(1)
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// A scratch file that cleans itself up, named per-test to avoid collisions.
+    struct TempFile(std::path::PathBuf);
+
+    impl TempFile {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!("apird-authed-test-{name}.json"));
+            let _ = std::fs::remove_file(&path);
+            Self(path)
+        }
+        fn path(&self) -> String {
+            self.0.to_string_lossy().into_owned()
+        }
+        fn write_bytes(&self, bytes: &[u8]) {
+            std::fs::write(&self.0, bytes).unwrap();
+        }
+        fn read_bytes(&self) -> Vec<u8> {
+            std::fs::read(&self.0).unwrap()
+        }
+    }
+
+    impl Drop for TempFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    fn roster(names: &[&str]) -> String {
+        let players: Vec<_> = names.iter().map(|n| json!({ "username": n })).collect();
+        serde_json::to_string_pretty(&players).unwrap()
+    }
+
+    fn mark(path: &str, name: &str, status: &str) {
+        let name = name.to_string();
+        let status = status.to_string();
+        update_authed_players_file(path, |players| {
+            if let Some(p) = players
+                .iter_mut()
+                .find(|p| p.get("username").and_then(|v| v.as_str()) == Some(&name))
+            {
+                p["moderation"] = json!({ "accountStatus": status });
+            }
+        });
+    }
+
+    /// The regression this function was written wrong for: `set_len(0)` leaves
+    /// the cursor at the old end of file, so a write that does not rewind first
+    /// lands past the end and pads the front of the file with NULs — after
+    /// which every later read fails to parse, permanently.
+    #[test]
+    fn a_rewritten_file_is_still_valid_json() {
+        let file = TempFile::new("rewrite");
+        file.write_bytes(roster(&["Joe", "Steve"]).as_bytes());
+
+        mark(&file.path(), "Joe", "moderated");
+
+        let bytes = file.read_bytes();
+        assert!(!bytes.contains(&0), "the file was written past its own end");
+
+        let players: Vec<serde_json::Value> = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(players.len(), 2);
+        assert_eq!(players[0]["moderation"]["accountStatus"], "moderated");
+    }
+
+    /// Two updates in a row is the case a truncation-only fix still passes and
+    /// a cursor bug does not: the second read has to see the first write.
+    #[test]
+    fn consecutive_updates_accumulate() {
+        let file = TempFile::new("consecutive");
+        file.write_bytes(roster(&["Joe", "Steve"]).as_bytes());
+
+        mark(&file.path(), "Joe", "moderated");
+        mark(&file.path(), "Steve", "ok");
+
+        let players: Vec<serde_json::Value> =
+            serde_json::from_slice(&file.read_bytes()).unwrap();
+        assert_eq!(players[0]["moderation"]["accountStatus"], "moderated");
+        assert_eq!(players[1]["moderation"]["accountStatus"], "ok");
+    }
+
+    /// A shrinking write must not leave the tail of the longer previous
+    /// contents behind it.
+    #[test]
+    fn a_shorter_write_leaves_no_tail_behind() {
+        let file = TempFile::new("shrink");
+        file.write_bytes(roster(&["Joe", "Steve", "Alex", "Herobrine"]).as_bytes());
+
+        update_authed_players_file(&file.path(), |players| {
+            players.truncate(1);
+        });
+
+        let players: Vec<serde_json::Value> =
+            serde_json::from_slice(&file.read_bytes()).unwrap();
+        assert_eq!(players.len(), 1);
+    }
+
+    /// Files already damaged in production carry the NUL padding described
+    /// above. They have to recover on the next update rather than stay broken.
+    #[test]
+    fn nul_padding_from_the_old_bug_is_recovered() {
+        let file = TempFile::new("nul-padded");
+        let mut damaged = vec![0u8; 128];
+        damaged.extend_from_slice(roster(&["Joe"]).as_bytes());
+        file.write_bytes(&damaged);
+
+        mark(&file.path(), "Joe", "ok");
+
+        let bytes = file.read_bytes();
+        assert!(!bytes.contains(&0));
+        let players: Vec<serde_json::Value> = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(players[0]["moderation"]["accountStatus"], "ok");
+    }
+
+    /// The open creates the file when it is missing, and the empty file that
+    /// leaves behind is an empty roster, not a parse failure.
+    #[test]
+    fn a_missing_file_starts_as_an_empty_roster() {
+        let file = TempFile::new("missing");
+
+        update_authed_players_file(&file.path(), |players| {
+            players.push(json!({ "username": "Joe" }));
+        });
+
+        let players: Vec<serde_json::Value> =
+            serde_json::from_slice(&file.read_bytes()).unwrap();
+        assert_eq!(players[0]["username"], "Joe");
+    }
+
+    /// Genuinely corrupt contents are left alone. Replacing them with an empty
+    /// array would turn a parse failure into the loss of every entry.
+    #[test]
+    fn unparseable_contents_are_left_untouched() {
+        let file = TempFile::new("corrupt");
+        file.write_bytes(b"{ this is not a roster");
+
+        mark(&file.path(), "Joe", "ok");
+
+        assert_eq!(file.read_bytes(), b"{ this is not a roster");
+    }
+}

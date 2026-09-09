@@ -698,7 +698,18 @@
             font-size: 0.72rem;
             color: var(--text-faint) !important;
         }
-        .inv-head .closeBtn { margin-left: auto; padding: 6px 14px; cursor: pointer; border-radius: var(--radius-sm); }
+        /* Pushed right by the clock's auto margin rather than its own, so the
+           clock and the two buttons stay together as one right-hand group. */
+        .inv-head .closeBtn { padding: 6px 14px; cursor: pointer; border-radius: var(--radius-sm); }
+
+        /* Deliberately as quiet as the uuid beside it: this redraws every
+           second, and anything louder would pull the eye off the panel. */
+        .inv-clock {
+            margin-left: auto;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.72rem;
+            color: var(--text-muted) !important;
+        }
 
         .inv-meta { font-size: 0.82rem; color: var(--text-muted) !important; margin: 10px 0 0; line-height: 1.5; }
         .inv-stale { color: var(--warn) !important; }
@@ -1972,6 +1983,7 @@
             <h3 id="invTitle">Overview</h3>
             <span class="inv-uuid" id="invUuid"></span>
             <span class="inv-source" id="invSource" style="display: none;"></span>
+            <span class="inv-clock" id="invClock"></span>
             <button type="button" id="invRefresh">Refresh</button>
             <button type="button" class="closeBtn" id="invClose">Close</button>
         </div>
@@ -3723,6 +3735,7 @@
     const invMeta = document.getElementById('invMeta');
     const invBody = document.getElementById('invBody');
     const invSource = document.getElementById('invSource');
+    const invClock = document.getElementById('invClock');
 
     /* Slot layout, mirrored from console/inventory.rs so the two agree on how
        many holes each grid has. */
@@ -4435,8 +4448,38 @@
         }
     }
 
+    /* Wall clock in the Overview header, ticking once a second like the one on
+       the incident dashboard. It reads as decoration but is not: every other
+       time in this panel is a savedAt or a relative age, and an operator
+       comparing those against now needs a "now" that is not their own guess.
+
+       Tied to the modal rather than started once at load, because a timer
+       redrawing a hidden node every second for the whole session buys nothing.
+       Every way out of the modal - the Close button, the overlay click and
+       Escape - funnels through closeOverview(), so this is the only place the
+       interval has to be cleared. */
+    let invClockTimer = null;
+
+    function updateInvClock() {
+        if (invClock) invClock.textContent = new Date().toLocaleString();
+    }
+
+    function startInvClock() {
+        updateInvClock();
+        // Guards against a second openOverview() while the modal is already up
+        // leaking the first interval.
+        if (invClockTimer) clearInterval(invClockTimer);
+        invClockTimer = setInterval(updateInvClock, 1000);
+    }
+
+    function stopInvClock() {
+        if (invClockTimer) clearInterval(invClockTimer);
+        invClockTimer = null;
+    }
+
     function closeOverview() {
         hideItemTip();
+        stopInvClock();
         if (invOverlay) invOverlay.style.display = 'none';
     }
 
@@ -4453,6 +4496,7 @@
         invUuid.textContent = player.uuid;
         invBody.innerHTML = '';
         invOverlay.style.display = 'flex';
+        startInvClock();
         await loadOverview();
     }
 

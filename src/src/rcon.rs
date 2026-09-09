@@ -29,7 +29,7 @@ const TYPE_RESPONSE: i32 = 0;
 const AUTH_FAILED: i32 = -1;
 
 /// Guards against a malicious or malfunctioning peer announcing a huge frame.
-const MAX_PACKET: i32 = 4096;
+const MAX_PACKET: i32 = 8192;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
