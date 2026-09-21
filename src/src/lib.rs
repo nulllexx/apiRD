@@ -45,6 +45,8 @@ pub struct AppState {
     pub presence: Arc<Presence>,
     /// Item artwork for the inventory viewer, fetched once and then local.
     pub textures: Arc<TextureCache>,
+
+    pub power_jobs: Arc<console::control::PowerJobs>,
 }
 
 /// Registers every HTTP route the server exposes (the `/api` scope plus the

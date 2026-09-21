@@ -7,7 +7,7 @@ use serde::Deserialize;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
 
-use crate::console::control::{self, PowerAction};
+use crate::console::control::{self, Phase, PowerAction};
 use crate::console::inventory::{self, InventoryError};
 use crate::console::textures::TextureError;
 use crate::console::players::{self, PlayerAction};
@@ -232,6 +232,7 @@ pub fn validate_command(raw: &str) -> Result<String, AppError> {
 }
 
 /// POST /api/admin/console/power/{action} — start, stop or restart.
+
 async fn power(
     state: web::Data<AppState>,
     admin: AdminUser,
@@ -242,36 +243,72 @@ async fn power(
     })?;
 
     log::info!("console power action by {}: {}", admin.username, action.as_str());
+
     let record = audit_or_refuse(&state, &admin, Kind::Power, action.as_str(), None).await?;
 
-    // Force a save before handing the container over to be stopped.
-    //
-    // Without this, a stop or restart costs players up to one autosave
-    // interval of inventory — five minutes by default — while the world comes
-    // back nearly intact. The asymmetry is not a coincidence: chunks are
-    // written continuously as they unload, whereas a player's file is only
-    // written at an autosave, when they log out, or during a clean shutdown.
-    // Lose the clean shutdown and the world barely notices while every player
-    // is rolled back to the last autosave, which is exactly what an operator
-    // gets reported to them.
-    //
-    // Best effort, and deliberately not fatal: an operator who asked to stop a
-    // server gets a stop. A save that failed is worth saying so in the audit
-    // record, not worth refusing to act on.
+    let phase = if action.saves_first() {
+        Phase::Saving
+    } else {
+        Phase::Queued
+    };
+    let job = state.power_jobs.open(action, phase);
+
+    let worker = state.clone();
+    let worker_job = job.clone();
+    tokio::spawn(async move {
+        run_power_action(worker, record, action, worker_job).await;
+    });
+
+    Ok(HttpResponse::Accepted().json(serde_json::json!({
+        "job": job,
+        "action": action.as_str(),
+
+        "phase": phase.as_str(),
+    })))
+}
+
+async fn run_power_action(
+    state: web::Data<AppState>,
+    record: audit::Record,
+    action: PowerAction,
+    job: String,
+) {
+
     let mut saved = None;
     if action.saves_first() {
-        saved = Some(flush_saves(&state).await);
+        let outcome = flush_saves(&state).await;
+        if let Err(why) = &outcome {
+            let why = why.clone();
+            state.power_jobs.update(&job, |tracked| {
+                tracked.save_error = Some(why);
+            });
+        }
+        saved = Some(outcome);
     }
 
-    // Recorded as queued rather than done, which is all this route can honestly
-    // claim: the sidecar acts on it afterwards, and a stop that succeeds here
-    // takes the server down before anything could report back.
-    let queued = control::request(&state.config.control_dir, action)
+    let queued = control::request(&state.config.control_dir, action, &job)
         .await
         .map_err(|e| {
-            log::error!("console: cannot queue {} for the sidecar: {}", action.as_str(), e);
-            AppError::Internal("Server control is unavailable".to_string())
+            log::error!(
+                "console: cannot queue {} for the sidecar: {}",
+                action.as_str(),
+                e
+            );
+            "Server control is unavailable".to_string()
         });
+
+    match &queued {
+        Ok(()) => state.power_jobs.update(&job, |tracked| {
+            tracked.phase = Phase::Queued;
+        }),
+        Err(why) => {
+            let why = why.clone();
+            state.power_jobs.update(&job, |tracked| {
+                tracked.phase = Phase::Failed;
+                tracked.error = Some(why);
+            });
+        }
+    }
 
     // The save is part of the record: "restarted, and the save before it did
     // not go through" is the line that explains a rollback afterwards.
@@ -287,20 +324,65 @@ async fn power(
             .await;
         }
         _ => {
-            audit::settle(&state.pool, &state.console.audit, record, queued.as_ref()).await.ok();
+            audit::settle(&state.pool, &state.console.audit, record, queued.as_ref())
+                .await
+                .ok();
         }
     }
-    queued?;
+}
 
-    // The sidecar polls the spool directory, so this is an acknowledgement that
-    // the request was queued, not that the container has finished acting on it.
-    Ok(HttpResponse::Accepted().json(serde_json::json!({
-        "queued": action.as_str(),
-        // Null when the action does not save first; otherwise whether it worked,
-        // so the panel can warn before the server goes down rather than leaving
-        // players to discover it.
-        "saved": saved.as_ref().map(|result| result.is_ok()),
-        "saveError": saved.as_ref().and_then(|result| result.as_ref().err().cloned()),
+/// GET /api/admin/console/power/result/{job} — how a power action went
+async fn power_result(
+    state: web::Data<AppState>,
+    _admin: AdminUser,
+    path: web::Path<String>,
+) -> Result<HttpResponse, AppError> {
+    let job = path.into_inner();
+    if !control::is_job_id(&job) {
+        return Err(AppError::BadRequest(
+            "That is not a power action id".to_string(),
+        ));
+    }
+
+    let mut tracked = state.power_jobs.get(&job).ok_or_else(|| {
+        AppError::NotFound("That power action is no longer being tracked".to_string())
+    })?;
+
+    // Once it is with the sidecar, the sidecar owns the outcome.
+    if tracked.phase == Phase::Queued {
+        if let Some(result) = control::result(&state.config.control_dir, &job).await {
+            tracked.phase = if result.ok() {
+                Phase::Done
+            } else {
+                Phase::Failed
+            };
+            if !result.ok() {
+                tracked.error = Some(if result.output.is_empty() {
+                    format!("the server control exited with status {}", result.code)
+                } else {
+                    result.output.clone()
+                });
+            }
+            tracked.output = Some(result.output);
+
+            let settled = tracked.clone();
+            state.power_jobs.update(&job, |stored| {
+                stored.phase = settled.phase;
+                stored.error = settled.error.clone();
+                stored.output = settled.output.clone();
+            });
+        }
+    }
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "job": job,
+        "action": tracked.action,
+        "phase": tracked.phase.as_str(),
+        "done": tracked.phase.is_final(),
+        // Separate from `error`, because a restart that happened after a failed
+        // save is a success with a warning attached, not a failure.
+        "saveError": tracked.save_error,
+        "error": tracked.error,
     })))
 }
 
@@ -872,6 +954,9 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             // Registered before the `{action}` catch-all so "status" is not
             // swallowed by it.
             .route("/power/status", web::get().to(power_status))
+            // Three segments, so it cannot collide with `/power/{action}` --
+            // but kept next to "status" because both are exceptions to it.
+            .route("/power/result/{job}", web::get().to(power_result))
             .route("/power/{action}", web::post().to(power)),
     );
 }

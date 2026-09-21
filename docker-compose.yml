@@ -107,7 +107,10 @@ services:
       - |
         set -eu
         TARGET=minecraft
-        mkdir -p /control/queue
+        # queue/ is what the API writes into; result/ is how anything gets
+        # said back to it. Without the second one a failed `docker start` is
+        # invisible to everyone except whoever runs `docker logs mc-control`.
+        mkdir -p /control/queue /control/result
 
         # Host CPU count, published alongside the stats so the API can turn
         # docker's core-summed percentage into a figure a human can judge:
@@ -137,6 +140,9 @@ services:
             rm -f /control/stats.tmp /control/stats
           fi
 
+          # Clean up old results so the spool does not grow without bound
+          find /control/result -type f -mmin +60 -delete 2>/dev/null || true
+
           sleep 5
         done &
 
@@ -144,8 +150,17 @@ services:
         while :; do
           for f in /control/queue/*.cmd; do
             [ -e "$$f" ] || continue
+            # The filename is the API's job id, so the verdict below can be
+            # named after the request that caused it.
+            id=$$(basename "$$f" .cmd)
             cmd=$$(cat "$$f" 2>/dev/null || echo "")
             rm -f "$$f"
+
+            # Exit status and output are captured rather than thrown away.
+            # These three used to end in `|| true`, which meant a `docker start`
+            # failing with "No such container: minecraft" reached nobody
+            rc=0
+            out=""
             case "$$cmd" in
               # -t is explicit rather than inherited. `docker stop` falls back
               # to ten seconds unless the container was created with a longer
@@ -155,11 +170,21 @@ services:
               # world -- whose chunks are written continuously -- looks fine.
               # The API also forces a save before queueing either of these, so
               # this is the second of two defences rather than the only one.
-              start)   echo "mc-control: start";   docker start "$$TARGET"          || true ;;
-              stop)    echo "mc-control: stop";    docker stop -t 180 "$$TARGET"    || true ;;
-              restart) echo "mc-control: restart"; docker restart -t 180 "$$TARGET" || true ;;
-              *)       echo "mc-control: rejected unknown command" ;;
+              start)   echo "mc-control: start";   out=$$(docker start "$$TARGET" 2>&1)          || rc=$$? ;;
+              stop)    echo "mc-control: stop";    out=$$(docker stop -t 180 "$$TARGET" 2>&1)    || rc=$$? ;;
+              restart) echo "mc-control: restart"; out=$$(docker restart -t 180 "$$TARGET" 2>&1) || rc=$$? ;;
+              *)       echo "mc-control: rejected unknown command"; rc=127; out="unrecognised command" ;;
             esac
+
+            # Still logged, because `docker logs mc-control` stays the record
+            # of what this sidecar did regardless of who reads the spool.
+            echo "$$out"
+
+            # Status on the first line, output on the rest. Staged as .tmp and
+            # renamed for the same reason the command file is: the API must
+            # never read half a verdict.
+            printf '%s\n%s\n' "$$rc" "$$out" > /control/result/$$id.tmp
+            mv /control/result/$$id.tmp /control/result/$$id
           done
           sleep 1
         done

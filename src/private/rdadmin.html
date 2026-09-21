@@ -1771,7 +1771,7 @@
 
         <div id="statsStrip">
             <div class="stat">
-                <span class="stat-label">TPS (1m / 5m / 15m)</span>
+                <span class="stat-label" id="statTpsLabel">TPS (1m / 5m / 15m)</span>
                 <span class="stat-value unknown" id="statTps">&mdash;</span>
             </div>
             <div class="stat">
@@ -3415,6 +3415,64 @@
         statusTimer = statsTimer = onlineTimer = null;
     }
 
+    const POWER_POLL_INTERVAL = 2000;
+    const POWER_POLL_CEILING = 8 * 60 * 1000;
+
+    function setPowerBusy(busy) {
+        document.querySelectorAll('.powerBtn').forEach(b => b.disabled = busy);
+    }
+
+    async function followPowerJob(job, action) {
+        const until = Date.now() + POWER_POLL_CEILING;
+        let announced = null;
+
+        while (Date.now() < until) {
+            await new Promise(resolve => setTimeout(resolve, POWER_POLL_INTERVAL));
+
+            let data;
+            try {
+                const response = await fetch('/api/admin/console/power/result/' + job, {
+                    credentials: 'include'
+                });
+                if (response.status === 404) {
+                    appendLine(`── ${action}: no longer tracked, watch the server state ──`, 'lvl-meta');
+                    return;
+                }
+                if (!response.ok) throw new Error('status ' + response.status);
+                data = await response.json();
+            } catch (err) {
+                continue;
+            }
+
+            if (data.phase !== announced) {
+                announced = data.phase;
+                if (data.phase === 'saving') {
+                    appendLine(`── ${action}: saving the world first, this can take a few minutes ──`, 'lvl-meta');
+                } else if (data.phase === 'queued') {
+                    appendLine(`── ${action}: handed to the server control ──`, 'lvl-meta');
+                }
+            }
+
+            if (data.saveError) {
+                appendLine(`Warning: the world was not saved first (${data.saveError})`, 'lvl-WARN');
+            }
+
+            if (data.done) {
+                if (data.phase === 'failed') {
+                    appendLine(`${action} failed: ${data.error || 'the server control gave no reason'}`, 'lvl-ERROR');
+                } else {
+                    appendLine(`── ${action} complete ──`, 'lvl-meta');
+                }
+                refreshStatus();
+                return;
+            }
+
+            refreshStatus();
+        }
+
+        appendLine(`── ${action}: still running after 8 minutes, check the server state ──`, 'lvl-WARN');
+    }
+
     document.querySelectorAll('.powerBtn').forEach(btn => {
         btn.addEventListener('click', async () => {
             const action = btn.dataset.action;
@@ -3430,7 +3488,8 @@
                 if (!ok) return;
             }
 
-            document.querySelectorAll('.powerBtn').forEach(b => b.disabled = true);
+            setPowerBusy(true);
+            let job = null;
             try {
                 const response = await fetch('/api/admin/console/power/' + action, {
                     method: 'POST',
@@ -3439,16 +3498,28 @@
                 const data = await response.json();
 
                 if (response.ok) {
-                    appendLine(`── ${action} queued ──`, 'lvl-meta');
+                    appendLine(`── ${action} accepted ──`, 'lvl-meta');
+                    job = data.job;
                 } else {
                     appendLine(data.error || `Failed to ${action}`, 'lvl-ERROR');
                 }
             } catch (err) {
                 console.error(err);
                 appendLine(`Failed to reach the server to ${action}`, 'lvl-ERROR');
+            }
+
+            if (!job) {
+                setPowerBusy(false);
+                return;
+            }
+
+            // The buttons stay disabled for as long as the action is actually
+            // running, not just for as long as the request took.
+            try {
+                await followPowerJob(job, action);
             } finally {
-                document.querySelectorAll('.powerBtn').forEach(b => b.disabled = false);
-                setTimeout(refreshStatus, 1500);
+                setPowerBusy(false);
+                refreshStatus();
             }
         });
     });
@@ -3508,6 +3579,7 @@
     });
 
     const statTps = document.getElementById('statTps');
+    const statTpsLabel = document.getElementById('statTpsLabel');
     const statCpu = document.getElementById('statCpu');
     const statCpuSub = document.getElementById('statCpuSub');
     const statMem = document.getElementById('statMem');
@@ -3543,9 +3615,15 @@
     function renderStats(data) {
         if (data.tps && data.tps.length) {
             const worst = data.tps[0];
+            if (statTpsLabel) {
+                statTpsLabel.textContent = data.tps.length >= 3
+                    ? 'TPS (1m / 5m / 15m)'
+                    : 'TPS (current)';
+            }
             setStat(statTps, data.tps.map(v => v.toFixed(2)).join(' / '),
                 worst >= 19.5 ? 'good' : worst >= 15 ? 'warn' : 'bad');
         } else {
+            if (statTpsLabel) statTpsLabel.textContent = 'TPS (1m / 5m / 15m)';
             setStat(statTps, 'unavailable', 'unknown');
         }
 

@@ -31,7 +31,11 @@ pub(super) async fn start_server(
 
     // Queued for the `mc-control` sidecar. This container holds no Docker
     // socket, so it cannot (and must not) drive the daemon itself.
-    control::request(&state.config.control_dir, control::PowerAction::Start)
+    control::request(
+        &state.config.control_dir,
+        control::PowerAction::Start,
+        &control::new_job_id(),
+    )
         .await
         .map_err(|e| {
             log::error!("Error queueing start for the sidecar: {}", e);

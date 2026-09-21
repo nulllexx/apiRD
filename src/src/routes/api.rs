@@ -151,7 +151,11 @@ async fn restart_server(
 
     // Queued for the `mc-control` sidecar rather than run here: the API holds
     // no Docker socket, so an RCE in this process cannot reach the daemon.
-    control::request(&state.config.control_dir, control::PowerAction::Restart)
+    control::request(
+        &state.config.control_dir,
+        control::PowerAction::Restart,
+        &control::new_job_id(),
+    )
         .await
         .map_err(|e| {
             log::error!("Error queueing restart for the sidecar: {}", e);
@@ -172,7 +176,11 @@ async fn start_server(
 ) -> Result<HttpResponse, AppError> {
     require_api_key(&req, &state).await?;
 
-    control::request(&state.config.control_dir, control::PowerAction::Start)
+    control::request(
+        &state.config.control_dir,
+        control::PowerAction::Start,
+        &control::new_job_id(),
+    )
         .await
         .map_err(|e| {
             log::error!("Error queueing start for the sidecar: {}", e);

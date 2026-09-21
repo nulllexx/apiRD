@@ -39,7 +39,7 @@ fn build_user_token_cookie(token: &str) -> Cookie<'static> {
     Cookie::build("userToken", token.to_string())
         .http_only(true)
         .secure(true)
-        .same_site(SameSite::Strict)
+        .same_site(SameSite::Lax)
         .max_age(CookieDuration::days(7))
         .path("/")
         .finish()
@@ -49,7 +49,7 @@ fn clear_cookie(name: &str) -> Cookie<'static> {
     Cookie::build(name.to_string(), "")
         .http_only(true)
         .secure(true)
-        .same_site(SameSite::Strict)
+        .same_site(SameSite::Lax)
         .max_age(CookieDuration::seconds(0))
         .path("/")
         .finish()
@@ -367,3 +367,41 @@ pub(super) async fn logged_in(
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The regression this guards: with `SameSite=Strict` the browser sends no
+    /// cookie at all on a navigation that started somewhere else, so following
+    /// a link into the panel bounced a valid session to the login page.
+    #[test]
+    fn the_session_cookie_survives_a_link_from_another_site() {
+        let cookie = build_user_token_cookie("token");
+        assert_eq!(cookie.same_site(), Some(SameSite::Lax));
+    }
+
+    /// Lax is as far as this goes. `None` would attach the session to every
+    /// cross-site request there is, including the forged POSTs Lax exists to
+    /// stop.
+    #[test]
+    fn the_session_cookie_is_not_sent_cross_site_wholesale() {
+        let cookie = build_user_token_cookie("token");
+        assert_ne!(cookie.same_site(), Some(SameSite::None));
+        assert!(cookie.http_only().unwrap_or(false));
+        assert!(cookie.secure().unwrap_or(false));
+    }
+
+    /// A cookie is only replaced by one carrying the same attributes, so the
+    /// clearing cookie has to track whatever the issued one does.
+    #[test]
+    fn logging_out_clears_the_cookie_it_actually_set() {
+        let issued = build_user_token_cookie("token");
+        let cleared = clear_cookie("userToken");
+
+        assert_eq!(cleared.same_site(), issued.same_site());
+        assert_eq!(cleared.path(), issued.path());
+        assert_eq!(cleared.http_only(), issued.http_only());
+        assert_eq!(cleared.secure(), issued.secure());
+    }
+}

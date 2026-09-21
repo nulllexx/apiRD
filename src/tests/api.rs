@@ -86,6 +86,7 @@ fn lazy_state() -> AppState {
             String::new(),
             String::from("target/test-mods"),
         ),
+        power_jobs: api_rd::console::control::PowerJobs::new(),
     }
 }
 
@@ -106,6 +107,7 @@ async fn console_routes_reject_anonymous_callers() {
         "/api/admin/console/stream?source=stdout",
         "/api/admin/console/download",
         "/api/admin/console/power/status",
+        "/api/admin/console/power/result/069a79f4-44e9-4726-a5be-fca90e38aaf5",
         "/api/admin/console/stats",
         "/api/admin/console/online",
         "/api/admin/console/players",
@@ -529,6 +531,7 @@ fn test_state(pool: MySqlPool) -> AppState {
             String::new(),
             String::from("target/test-mods"),
         ),
+        power_jobs: api_rd::console::control::PowerJobs::new(),
     }
 }
 

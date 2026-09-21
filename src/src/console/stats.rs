@@ -5,7 +5,9 @@
 //!
 //! * **TPS** comes from the game server over RCON. It only exists on the
 //!   Spigot family — vanilla has no `tps` command — so a reply that does not
-//!   parse is reported as unavailable rather than guessed at.
+//!   parse is reported as unavailable rather than guessed at. Which plugin
+//!   answers `/tps`, and in what shape, is not fixed: see [`parse_tps`] and
+//!   [`HEALTH_COMMANDS`].
 //! * **CPU and memory** come from `docker stats`, which needs the Docker
 //!   socket. The API deliberately has none (see `console::control`), so the
 //!   `mc-control` sidecar publishes a stats line onto the shared control volume
@@ -167,26 +169,12 @@ pub async fn read_container_stats(control_dir: &str, max_age: Duration) -> Optio
     parse_container_stats(&tokio::fs::read_to_string(&path).await.ok()?)
 }
 
-/// Read the tick rates out of a `tps` reply.
-///
-/// Returns the values in the order the server gave them, which is 1m / 5m / 15m
-/// on every implementation that has the command. Anything that does not look
-/// like tick rates — `Unknown or incomplete command`, most often, on a server
-/// without it — is `None`, which the UI shows as unavailable.
-///
-/// The reply is searched line by line because EssentialsX answers `tps` with
-/// several: tick rates, then memory, then disk. Requiring the word "TPS" on the
-/// line is what stops the others being mined for numbers that merely happen to
-/// parse — `Free disk space: 20` would otherwise pass for a perfect tick rate.
-pub fn parse_tps(raw: &str) -> Option<Vec<f32>> {
-    let plain = super::strip_formatting(raw);
+/// The tick-rate windows the panel labels, in the order it shows them.
+const REPORTED_WINDOWS: [&str; 3] = ["1m", "5m", "15m"];
 
-    let line = plain
-        .lines()
-        .find(|line| line.to_ascii_lowercase().contains("tps"))?;
-    let colon = line.rfind(':')?;
-
-    let values: Option<Vec<f32>> = line[colon + 1..]
+/// Read a comma-separated run of tick rates, or `None` if it is not one.
+fn tps_values(text: &str) -> Option<Vec<f32>> {
+    let values: Option<Vec<f32>> = text
         .split(',')
         // Spigot marks a reading it considers degraded with a leading asterisk.
         .map(|value| value.trim().trim_start_matches('*').trim())
@@ -195,16 +183,75 @@ pub fn parse_tps(raw: &str) -> Option<Vec<f32>> {
         .collect();
 
     let values = values?;
-    if values.is_empty()
-        || values.len() > 3
-        || values
+    (!values.is_empty()
+        && values
             .iter()
-            .any(|v| !(0.0..=MAX_PLAUSIBLE_TPS).contains(v))
-    {
-        return None;
+            .all(|v| (0.0..=MAX_PLAUSIBLE_TPS).contains(v)))
+    .then_some(values)
+}
+
+fn tps_windows(line: &str) -> Vec<String> {
+    let lower = line.to_ascii_lowercase();
+    let Some((_, tail)) = lower.split_once("from last ") else {
+        return Vec::new();
+    };
+
+    tail.split(':')
+        .next()
+        .unwrap_or("")
+        .split(',')
+        .map(|window| window.trim().to_string())
+        .filter(|window| !window.is_empty())
+        .collect()
+}
+
+/// Narrow a reply's readings to the three windows the panel names
+fn select_reported_windows(windows: &[String], values: Vec<f32>) -> Option<Vec<f32>> {
+    if windows.len() == values.len() {
+        let picked: Vec<f32> = REPORTED_WINDOWS
+            .iter()
+            .filter_map(|want| {
+                windows
+                    .iter()
+                    .position(|have| have == want)
+                    .map(|at| values[at])
+            })
+            .collect();
+
+        if picked.len() == REPORTED_WINDOWS.len() {
+            return Some(picked);
+        }
     }
 
-    Some(values)
+    (values.len() <= REPORTED_WINDOWS.len()).then_some(values)
+}
+
+pub fn parse_tps(raw: &str) -> Option<Vec<f32>> {
+    let plain = super::strip_formatting(raw);
+    let lines: Vec<&str> = plain.lines().collect();
+
+    for (index, line) in lines.iter().enumerate() {
+        if !line.to_ascii_lowercase().contains("tps") {
+            continue;
+        }
+        if let Some((_, value)) = line.split_once('=') {
+            if let Some(values) = tps_values(value) {
+                if values.len() == 1 {
+                    return Some(values);
+                }
+            }
+        }
+
+        let windows = tps_windows(line);
+        let values = match line.rfind(':').and_then(|at| tps_values(&line[at + 1..])) {
+            Some(values) => values,
+            None => lines.get(index + 1).and_then(|next| tps_values(next))?,
+        };
+
+        return select_reported_windows(&windows, values);
+    }
+
+    None
 }
 
 /// JVM heap usage, as EssentialsX reports it alongside the tick rates.
@@ -275,9 +322,14 @@ fn heap_scale(unit: &str) -> u64 {
 pub fn parse_heap(raw: &str) -> Option<HeapUsage> {
     let plain = super::strip_formatting(raw);
 
-    let line = plain
+    let line = match plain
         .lines()
-        .find(|line| line.to_ascii_lowercase().contains("memory usage"))?;
+        .find(|line| line.to_ascii_lowercase().contains("memory usage"))
+    {
+        Some(line) => line,
+        // EssentialsX's `gc` spreads the same numbers over three lines instead.
+        None => return parse_gc_heap(&plain),
+    };
 
     // Split off the parenthesised maximum before touching the used/committed
     // pair, so the `Max:` colon cannot be mistaken for the field separator.
@@ -303,6 +355,56 @@ pub fn parse_heap(raw: &str) -> Option<HeapUsage> {
         // against what the JVM has committed.
         .unwrap_or(allocated);
 
+    if max == 0 {
+        return None;
+    }
+
+    Some(HeapUsage {
+        used,
+        allocated,
+        max,
+        percent: used as f32 / max as f32 * 100.0,
+    })
+}
+
+fn parse_gc_heap(plain: &str) -> Option<HeapUsage> {
+    let mut max = None;
+    let mut allocated = None;
+    let mut free = None;
+
+    for line in plain.lines() {
+        let lower = line.to_ascii_lowercase();
+        let Some((label, value)) = lower.split_once(':') else {
+            continue;
+        };
+        if !label.contains("memory") {
+            continue;
+        }
+
+        // `leading_number` stops at the first character that is not a digit or
+        // a dot, so a thousands separator would turn 4,096 into 4.
+        let value = value.replace(',', "");
+        let scale = heap_scale(unit_of(&value)) as f64;
+        let Some(bytes) = leading_number(&value).map(|n| (n * scale) as u64) else {
+            continue;
+        };
+
+        if label.contains("maximum") {
+            max = Some(bytes);
+        } else if label.contains("allocated") {
+            allocated = Some(bytes);
+        } else if label.contains("free") {
+            free = Some(bytes);
+        }
+    }
+
+    let allocated = allocated?;
+    let free = free?;
+    // Free is measured against what the JVM has committed, not against -Xmx, so
+    // used is what is left of the committed heap.
+    let used = allocated.saturating_sub(free);
+
+    let max = max.filter(|max| *max > 0).unwrap_or(allocated);
     if max == 0 {
         return None;
     }
@@ -454,6 +556,8 @@ fn unconfigured(rcon: &RconClient) -> Option<String> {
     (!rcon.is_configured()).then(|| "RCON is not configured on this server".to_string())
 }
 
+const HEALTH_COMMANDS: [&str; 2] = ["essentials:tps", "tps"];
+
 async fn probe_health(rcon: &RconClient) -> Health {
     let mut health = Health::default();
 
@@ -462,16 +566,27 @@ async fn probe_health(rcon: &RconClient) -> Health {
         return health;
     }
 
-    match rcon.execute("tps").await {
-        Ok(output) => {
-            health.tps = parse_tps(&output);
-            // EssentialsX answers `tps` with heap usage on a following line, so
-            // this costs nothing beyond the command already being run.
-            health.heap = parse_heap(&output);
+    for (attempt, command) in HEALTH_COMMANDS.iter().enumerate() {
+        if health.tps.is_some() && health.heap.is_some() {
+            break;
         }
-        Err(e) => {
-            log::debug!("console: health probe failed: {e}");
-            health.rcon_error = Some(e.user_message());
+
+        match rcon.execute(command).await {
+            Ok(output) => {
+                if health.tps.is_none() {
+                    health.tps = parse_tps(&output);
+                }
+                if health.heap.is_none() {
+                    health.heap = parse_heap(&output);
+                }
+            }
+            Err(e) => {
+                log::debug!("console: `{command}` failed: {e}");
+                if attempt == 0 {
+                    health.rcon_error = Some(e.user_message());
+                    break;
+                }
+            }
         }
     }
 
@@ -989,7 +1104,7 @@ mod tests {
         // Not `["tps", "list"]`. A metrics poll that also asked who was online
         // would double the log lines it costs, for a number plrCount.json
         // already has.
-        assert_eq!(server.await.unwrap(), vec!["tps"]);
+        assert_eq!(server.await.unwrap(), vec!["essentials:tps"]);
         assert_eq!(health.tps, Some(vec![20.0, 20.0, 20.0]));
         // Both readings come out of the one reply, so heap is free.
         assert_eq!(health.heap.unwrap().used, 1485 * 1024 * 1024);
@@ -1028,7 +1143,10 @@ mod tests {
         cache.health(&rcon).await;
         cache.health(&rcon).await;
 
-        assert_eq!(server.await.unwrap(), vec!["list", "tps", "tps"]);
+        assert_eq!(
+            server.await.unwrap(),
+            vec!["list", "essentials:tps", "essentials:tps"]
+        );
     }
 
     #[tokio::test]
@@ -1074,5 +1192,132 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(40)).await;
 
         assert!(!Arc::ptr_eq(&first, &cache.health(&rcon).await));
+    }
+
+    const ESSENTIALS_GC: &str = "Uptime: 4 minutes 25 seconds\n\
+        Current TPS = 20\n\
+        Maximum memory: 4,096 MB.\n\
+        Allocated memory: 4,096 MB.\n\
+        Free memory: 3,067 MB.\n\
+        World \"world\": 49 chunks, 10 entities, 107 tiles.\n\
+        World \"world/creatingspace/mars\": 49 chunks, 0 entities, 0 tiles.\n\
+        The End \"world/DIM1\": 49 chunks, 0 entities, 0 tiles.\n\
+        Nether \"world/DIM-1\": 49 chunks, 1 entities, 0 tiles.\n\
+        World \"authhub\": 49 chunks, 17 entities, 8 tiles.";
+
+    #[test]
+    fn reads_the_single_reading_essentials_reports() {
+        // One window, not three: it is the only figure the command gives, and
+        // inventing the other two would be worse than showing one.
+        assert_eq!(parse_tps(ESSENTIALS_GC), Some(vec![20.0]));
+    }
+
+    #[test]
+    fn reads_the_heap_out_of_the_essentials_gc_reply() {
+        let heap = parse_heap(ESSENTIALS_GC).expect("gc reports memory");
+
+        // Essentials reports free, not used, and separates its thousands.
+        assert_eq!(heap.allocated, 4096 * 1024 * 1024);
+        assert_eq!(heap.max, 4096 * 1024 * 1024);
+        assert_eq!(heap.used, (4096 - 3067) * 1024 * 1024);
+        assert!((heap.percent - 25.12).abs() < 0.1, "got {}", heap.percent);
+    }
+
+    /// The world lines carry a colon and plenty of numbers. None of them is a
+    /// tick rate or a heap figure, and neither parser may touch them.
+    #[test]
+    fn the_world_lines_are_not_mined_for_numbers() {
+        assert_eq!(
+            parse_tps("World \"world\": 49 chunks, 10 entities, 107 tiles."),
+            None
+        );
+        assert_eq!(
+            parse_heap("World \"world\": 49 chunks, 10 entities, 107 tiles."),
+            None
+        );
+    }
+
+    #[test]
+    fn reads_a_reply_whose_readings_are_on_the_next_line() {
+        let reply = "TPS from last 5s, 10s, 1m, 5m, 15m:\n 20.0, 20.0, 20.0, 20.0, 20.0";
+        assert_eq!(parse_tps(reply), Some(vec![20.0, 20.0, 20.0]));
+    }
+
+    #[test]
+    fn five_windows_are_narrowed_to_the_three_the_panel_labels() {
+        let reply = "TPS from last 5s, 10s, 1m, 5m, 15m:\n 19.0, 19.5, 18.0, 17.0, 16.0";
+        assert_eq!(parse_tps(reply), Some(vec![18.0, 17.0, 16.0]));
+    }
+
+    #[test]
+    fn readings_follow_their_labels_rather_than_their_position() {
+        let reply = "TPS from last 15m, 5m, 1m:\n 16.0, 17.0, 18.0";
+        assert_eq!(parse_tps(reply), Some(vec![18.0, 17.0, 16.0]));
+    }
+
+    #[test]
+    fn a_heading_with_no_readings_is_unavailable() {
+        assert_eq!(parse_tps("TPS from last 5s, 10s, 1m, 5m, 15m:"), None);
+    }
+
+    /// More readings than the panel names, with no labels to pick them apart,
+    /// is not something to guess at.
+    #[test]
+    fn unlabelled_readings_beyond_three_are_not_guessed_at() {
+        assert_eq!(parse_tps("TPS: 20.0, 20.0, 20.0, 20.0, 20.0"), None);
+    }
+
+    #[test]
+    fn the_namespaced_essentials_command_is_asked_first() {
+        assert_eq!(HEALTH_COMMANDS[0], "essentials:tps");
+        assert_eq!(HEALTH_COMMANDS[1], "tps");
+    }
+
+    #[test]
+    fn an_empty_reply_teaches_nothing_and_is_not_a_zero() {
+        assert_eq!(parse_tps(""), None);
+        assert_eq!(parse_heap(""), None);
+    }
+
+    #[tokio::test]
+    async fn a_server_without_essentials_falls_through_to_plain_tps() {
+        let (address, server) = scripted_server(vec![
+            "Unknown or incomplete command, see below for error",
+            ESSENTIALS_TPS,
+        ]);
+
+        let cache = SnapshotCache::new(SNAPSHOT_TTL);
+        let rcon = RconClient::new(address, "s3cret".to_string());
+        let health = cache.health(&rcon).await;
+
+        assert_eq!(server.await.unwrap(), vec!["essentials:tps", "tps"]);
+        assert_eq!(health.tps, Some(vec![20.0, 20.0, 20.0]));
+        assert!(health.heap.is_some());
+        // An unrecognised command is not an unreachable server.
+        assert!(health.rcon_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_reply_without_heap_is_topped_up_by_the_fallback() {
+        let (address, server) = scripted_server(vec![
+            // No heap in this one, so the probe has to go on to the next.
+            "TPS from last 5s, 10s, 1m, 5m, 15m:\n 20.0, 20.0, 19.5, 19.0, 18.5",
+            ESSENTIALS_GC,
+        ]);
+
+        let cache = SnapshotCache::new(SNAPSHOT_TTL);
+        let rcon = RconClient::new(address, "s3cret".to_string());
+        let health = cache.health(&rcon).await;
+
+        assert_eq!(server.await.unwrap(), vec!["essentials:tps", "tps"]);
+        // Tick rates from the first reply, narrowed by their labels.
+        assert_eq!(health.tps, Some(vec![19.5, 19.0, 18.5]));
+        // Heap from the second, which is the only one that carries any.
+        assert_eq!(
+            health.heap.map(|h| h.max),
+            Some(4096 * 1024 * 1024),
+            "the fallback has to supply the heap Spark does not report"
+        );
+        assert!(health.rcon_error.is_none());
     }
 }

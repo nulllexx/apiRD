@@ -172,11 +172,14 @@ fn read_pending_cookie(secret: &str, token: &str) -> Result<PendingClaims, AppEr
     Ok(data.claims)
 }
 
+/// Must match `session::build_user_token_cookie` attribute for attribute: this
+/// is the same session cookie, just issued down the Google path. See there for
+/// why it is Lax and not Strict.
 fn build_user_token_cookie(token: &str) -> Cookie<'static> {
     Cookie::build("userToken", token.to_string())
         .http_only(true)
         .secure(true)
-        .same_site(SameSite::Strict)
+        .same_site(SameSite::Lax)
         .max_age(CookieDuration::days(7))
         .path("/")
         .finish()
@@ -514,4 +517,18 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.route("/auth/oauth/google", web::get().to(initiate))
         .route("/auth/oauth/google/callback", web::get().to(callback))
         .route("/auth/oauth/google/complete", web::post().to(complete));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_google_path_issues_the_same_session_cookie() {
+        let cookie = build_user_token_cookie("token");
+        assert_eq!(cookie.same_site(), Some(SameSite::Lax));
+        assert_eq!(cookie.path(), Some("/"));
+        assert!(cookie.http_only().unwrap_or(false));
+        assert!(cookie.secure().unwrap_or(false));
+    }
 }
