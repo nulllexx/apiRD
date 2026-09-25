@@ -631,6 +631,92 @@ test('a server refusal is shown rather than swallowed', async () => {
 });
 
 // ---------------------------------------------------------------------------
+// Extending a poll
+// ---------------------------------------------------------------------------
+
+test('a timed live poll offers Add time, a permanent or closed one does not', () => {
+    const { ctx } = setup();
+
+    assert.ok(ctx.renderPoll(poll()).querySelector('.poll-extend-btn'));
+    assert.ok(!ctx.renderPoll(poll({ closesAt: null })).querySelector('.poll-extend-btn'),
+        'a permanent poll has no closing time to move');
+    assert.ok(!ctx.renderPoll(poll({ live: false })).querySelector('.poll-extend-btn'),
+        'a closed poll is not reopened from here');
+    assert.ok(ctx.renderPoll(poll()).querySelector('.btn-danger'), 'End early is still there');
+});
+
+test('an extended poll says so, live or closed', () => {
+    const { ctx } = setup();
+
+    assert.match(ctx.renderPoll(poll({ extended: true })).querySelector('.poll-state').textContent,
+        /· extended$/);
+    assert.match(ctx.renderPoll(poll({ live: false, extended: true })).querySelector('.poll-state').textContent,
+        /^Closed .* · extended$/);
+    assert.doesNotMatch(ctx.renderPoll(poll()).querySelector('.poll-state').textContent, /extended/);
+});
+
+test('the amount picked survives the live list redrawing', () => {
+    const { ctx } = setup();
+
+    const select = ctx.renderPoll(poll()).querySelector('.poll-extend-by');
+    assert.equal(select.value, '1d', 'one day by default');
+
+    select.value = '7d';
+    select.dispatch('change');
+
+    assert.equal(ctx.renderPoll(poll()).querySelector('.poll-extend-by').value, '7d');
+});
+
+test('extending posts the amount and the closing time it was based on', async () => {
+    let sent = null;
+    let listed = 0;
+    const subject = poll();
+
+    const { ctx } = setup(async (url, init) => {
+        if (init && init.method === 'POST') {
+            sent = { url, body: JSON.parse(init.body) };
+            return { ok: true, json: async () => poll({ extended: true }) };
+        }
+        listed++;
+        return { ok: true, json: async () => ({ polls: [], page: 1, pages: 1, total: 0 }) };
+    });
+
+    await ctx.extendPoll(subject, '3d', { disabled: false });
+
+    assert.equal(sent.url, '/api/admin/polls/1/extend');
+    assert.deepEqual(sent.body, { by: '3d', closesAt: subject.closesAt });
+    assert.equal(listed, 1, 'the live list is redrawn');
+});
+
+test('declining the confirmation extends nothing', async () => {
+    let called = false;
+    const { ctx } = setup(async () => { called = true; return { ok: true, json: async () => ({}) }; });
+    ctx.askConfirm = async () => false;
+
+    await ctx.extendPoll(poll(), '1d', { disabled: false });
+    assert.ok(!called);
+});
+
+test('a refused extension says why and frees the button', async () => {
+    const { ctx, alertText } = setup(async (url, init) => {
+        if (init && init.method === 'POST') {
+            return {
+                ok: false,
+                status: 409,
+                json: async () => ({ error: "This poll's closing time changed since you loaded it. Refresh and try again." }),
+            };
+        }
+        return { ok: true, json: async () => ({ polls: [], page: 1, pages: 1, total: 0 }) };
+    });
+
+    const button = { disabled: false };
+    await ctx.extendPoll(poll(), '1d', button);
+
+    assert.match(alertText(), /closing time changed/);
+    assert.ok(!button.disabled, 'the button must not stay stuck');
+});
+
+// ---------------------------------------------------------------------------
 // Ending a poll
 // ---------------------------------------------------------------------------
 

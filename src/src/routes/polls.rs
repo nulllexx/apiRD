@@ -105,6 +105,7 @@ struct PollOut {
     /// True when a person ended it before its time was up.
     #[serde(rename = "endedEarly")]
     ended_early: bool,
+    extended: bool,
     audiences: Vec<String>,
     #[serde(rename = "audienceLabels")]
     audience_labels: Vec<String>,
@@ -280,6 +281,7 @@ async fn poll_response(
             .collect();
 
         let duration = Duration::parse(&row.duration);
+        let extended = was_extended(duration.as_ref(), row.created_at, row.closes_at);
         let live = polls::is_live(row.ended_at, row.closes_at, at);
 
         // "Ended early" means a person stopped it while it still had time. A
@@ -305,6 +307,7 @@ async fn poll_response(
             ended_at: row.ended_at.map(rfc3339),
             live,
             ended_early,
+            extended,
             audiences: audience_codes,
             audience_labels,
             excluded_count: excluded.get(&row.id).copied().unwrap_or(0),
@@ -739,6 +742,80 @@ fn wants_live(status: Option<&str>) -> Result<bool, AppError> {
     }
 }
 
+/// POST /api/admin/polls/{id}/extend — give a live poll more time (admin only)
+async fn extend_poll(
+    state: web::Data<AppState>,
+    admin: AdminUser,
+    path: web::Path<i64>,
+    body: web::Json<ExtendBody>,
+) -> Result<HttpResponse, AppError> {
+    let poll_id = path.into_inner();
+
+    let by = match body.by.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some(raw) => Extension::parse(raw),
+    }
+    .ok_or_else(|| {
+        AppError::BadRequest(format!("by must be one of: {}", Extension::allowed()))
+    })?;
+
+    // Required, not optional: an extension is relative, and the server has to
+    // know what the admin believed it was relative to
+    let seen = body
+        .closes_at
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            AppError::BadRequest(
+                "closesAt is required: the closing time the extension is added to".to_string(),
+            )
+        })?;
+
+    let row = load_one(&state.pool, poll_id).await?;
+    let at = now();
+
+    let target = extension_target(row.ended_at, row.closes_at, seen, by, at)
+        .map_err(|refusal| AppError::Conflict(refusal.message().to_string()))?;
+
+    // Every condition checked above is repeated in the WHERE clause, so this
+    // is one atomic compare-and-set. The poll cannot be ended, run out, or be
+    // extended by someone else between the read and this write and still have
+    // the write land on top of the old value.
+    let result = sqlx::query(
+        "UPDATE polls SET closes_at = ?
+         WHERE id = ? AND ended_at IS NULL AND closes_at = ? AND closes_at > ?",
+    )
+    .bind(target)
+    .bind(poll_id)
+    .bind(row.closes_at)
+    .bind(at)
+    .execute(&state.pool)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::Conflict(
+            "This poll changed while you were extending it. Refresh and try again.".to_string(),
+        ));
+    }
+
+    log::info!(
+        "poll {} extended by {} by {} (now closes {})",
+        poll_id,
+        by.as_str(),
+        admin.username,
+        rfc3339(target)
+    );
+
+    let row = load_one(&state.pool, poll_id).await?;
+    let out = poll_response(&state.pool, vec![row], None).await?;
+
+    out.into_iter()
+        .next()
+        .map(|poll| HttpResponse::Ok().json(poll))
+        .ok_or_else(|| AppError::NotFound("Poll not found".to_string()))
+}
+
 /// GET /api/admin/polls?status=live|past&page=N — browse polls (admin only)
 async fn list_polls_admin(
     state: web::Data<AppState>,
@@ -1106,12 +1183,93 @@ async fn end_poll(
         .ok_or_else(|| AppError::NotFound("Poll not found".to_string()))
 }
 
+// Helpers for extending
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Extension {
+    OneHour,
+    TwelveHours,
+    OneDay,
+    ThreeDays,
+    SevenDays,
+}
+
+impl Extension {
+    const ALL: [Extension; 5] = [
+        Extension::OneHour,
+        Extension::TwelveHours,
+        Extension::OneDay,
+        Extension::ThreeDays,
+        Extension::SevenDays,
+    ];
+
+    fn parse(code: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|e| e.as_str() == code)
+    }
+
+    fn as_str(&self) -> &'static str {
+        match self {
+            Extension::OneHour => "1h",
+            Extension::TwelveHours => "12h",
+            Extension::OneDay => "1d",
+            Extension::ThreeDays => "3d",
+            Extension::SevenDays => "7d",
+        }
+    }
+
+    fn span(&self) -> chrono::Duration {
+        match self {
+            Extension::OneHour => chrono::Duration::hours(1),
+            Extension::TwelveHours => chrono::Duration::hours(12),
+            Extension::OneDay => chrono::Duration::days(1),
+            Extension::ThreeDays => chrono::Duration::days(3),
+            Extension::SevenDays => chrono::Duration::days(7),
+        }
+    }
+
+    fn allowed() -> String {
+        Self::ALL.iter().map(|e| e.as_str()).collect::<Vec<_>>().join(", ")
+    }
+}
+
+fn was_extended(
+    duration: Option<&Duration>,
+    created_at: NaiveDateTime,
+    closes_at: Option<NaiveDateTime>,
+) -> bool {
+    let natural = duration.and_then(|d| d.closes_at(created_at));
+    match (closes_at, natural) {
+        (Some(actual), Some(natural)) => actual - natural > chrono::Duration::seconds(1),
+        _ => false,
+    }
+}
+
+/// Why a poll cannot be extended
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExtendRefusal {
+    Closed,
+    Permanent,
+    Stale,
+}
+
+impl ExtendRefusal {
+    fn message(&self) -> &'static str {
+        match self {
+            ExtendRefusal::Closed => "This poll has already closed",
+            ExtendRefusal::Permanent => "This poll is permanent, so it has no closing time to move",
+            ExtendRefusal::Stale => {
+                "This poll's closing time changed since you loaded it. Refresh and try again."
+            }
+        }
+    }
+}
+
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/admin/polls")
             .route("", web::post().to(create_poll))
             .route("", web::get().to(list_polls_admin))
-            .route("/{id}/end", web::post().to(end_poll)),
+            .route("/{id}/end", web::post().to(end_poll))
+            .route("/{id}/extend", web::post().to(extend_poll)),
     )
     .service(
         web::scope("/polls")
@@ -1121,6 +1279,36 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .route("/{id}/vote", web::post().to(cast_vote)),
     );
 }
+
+/// The new closing time or why none
+fn extension_target(
+    ended_at: Option<NaiveDateTime>,
+    closes_at: Option<NaiveDateTime>,
+    seen: &str,
+    by: Extension,
+    at: NaiveDateTime,
+) -> Result<NaiveDateTime, ExtendRefusal> {
+    if !polls::is_live(ended_at, closes_at, at) {
+        return Err(ExtendRefusal::Closed);
+    }
+    let Some(closes) = closes_at else {
+        return Err(ExtendRefusal::Permanent);
+    };
+    if rfc3339(closes) != seen.trim() {
+        return Err(ExtendRefusal::Stale);
+    }
+    // Added to the closing time, not now
+    Ok(closes + by.span())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ExtendBody {
+    by: Option<String>,
+    #[serde(rename = "closesAt")]
+    closes_at: Option<String>,
+}
+
+
 
 #[cfg(test)]
 mod tests {
@@ -1370,5 +1558,94 @@ mod tests {
         assert_eq!(Refusal::Excluded.as_str(), "excluded");
         assert_eq!(Refusal::NotEligible.as_str(), "not_eligible");
         assert_eq!(Refusal::Closed.as_str(), "closed");
+    }
+
+    /// ------------------------------------------------------------ extending
+    fn sep25(hour: u32) -> NaiveDateTime {
+        chrono::NaiveDate::from_ymd_opt(2026, 9, 25)
+            .unwrap()
+            .and_hms_opt(hour, 0, 0)
+            .unwrap()
+    }
+
+    #[test]
+    fn extensions_parse_their_own_names_and_nothing_else() {
+        for e in Extension::ALL {
+            assert_eq!(Extension::parse(e.as_str()), Some(e));
+        }
+        assert_eq!(Extension::parse("14d"), None);
+        assert_eq!(Extension::parse(""), None);
+        assert_eq!(Extension::parse("permanent"), None, "that is ending, not extending");
+    }
+
+    /// One more day means one more than it had, not one day from now.
+    #[test]
+    fn an_extension_is_added_to_the_closing_time_not_to_now() {
+        let closes = sep25(20);
+        let target =
+            extension_target(None, Some(closes), &rfc3339(closes), Extension::OneDay, sep25(12))
+                .unwrap();
+
+        assert_eq!(target, closes + chrono::Duration::days(1));
+    }
+
+    #[test]
+    fn a_closed_poll_cannot_be_extended() {
+        let closes = sep25(10);
+        assert_eq!(
+            extension_target(None, Some(closes), &rfc3339(closes), Extension::OneDay, sep25(12)),
+            Err(ExtendRefusal::Closed),
+            "ran out by the clock"
+        );
+
+        let closes = sep25(20);
+        assert_eq!(
+            extension_target(
+                Some(sep25(11)),
+                Some(closes),
+                &rfc3339(closes),
+                Extension::OneDay,
+                sep25(12)
+            ),
+            Err(ExtendRefusal::Closed),
+            "ended by hand, with time still on the clock"
+        );
+    }
+
+    #[test]
+    fn a_permanent_poll_has_nothing_to_extend() {
+        assert_eq!(
+            extension_target(None, None, "", Extension::OneDay, sep25(12)),
+            Err(ExtendRefusal::Permanent)
+        );
+    }
+
+    /// Two admins each pressing "+1 day" on the same page must not add two.
+    #[test]
+    fn an_extension_from_an_out_of_date_page_is_refused() {
+        let seen = sep25(20);
+        let actual = seen + chrono::Duration::days(1);
+
+        assert_eq!(
+            extension_target(None, Some(actual), &rfc3339(seen), Extension::OneDay, sep25(12)),
+            Err(ExtendRefusal::Stale)
+        );
+    }
+
+    #[test]
+    fn extended_means_later_than_the_poll_was_opened_with() {
+        let created = sep25(12);
+        let three_days = Duration::parse("3d").unwrap();
+        let natural = created + chrono::Duration::days(3);
+
+        assert!(!was_extended(Some(&three_days), created, Some(natural)));
+        assert!(was_extended(
+            Some(&three_days),
+            created,
+            Some(natural + chrono::Duration::hours(1))
+        ));
+
+        let permanent = Duration::parse("permanent").unwrap();
+        assert!(!was_extended(Some(&permanent), created, None));
     }
 }

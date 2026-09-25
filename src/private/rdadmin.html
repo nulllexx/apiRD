@@ -1072,6 +1072,19 @@
             white-space: pre;
         }
 
+        #consoleOutput {
+            --text: #e7ebf3;
+            --text-muted: #8891a3;
+            --text-faint: #5b6478;
+            --line: #262c3a;
+            --accent: #4fd1ff;
+            --accent-dim: #2f7fa8;
+            --accent-soft: rgba(79, 209, 255, 0.12);
+            --warn: #f0c674;
+            --danger: #ff6b6b;
+            --danger-soft: rgba(255, 107, 107, 0.14);
+        }
+
         #consoleOutput::-webkit-scrollbar { width: 10px; height: 10px; }
         #consoleOutput::-webkit-scrollbar-track { background: transparent !important; }
         #consoleOutput::-webkit-scrollbar-thumb { background: var(--line) !important; border-radius: 6px; }
@@ -1545,6 +1558,10 @@
         }
         .poll-meta { font-size: 0.78rem; color: var(--text-muted) !important; line-height: 1.6; }
         .poll-foot button { margin: 0; }
+        .poll-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .poll-extend { display: inline-flex; align-items: center; gap: 6px; }
+        
+        .poll-extend select.form-control { width: auto; padding: 7px 10px; font-size: 0.85rem; }
 
         @media (max-width: 768px) {
             .poll-card-head { flex-direction: column; align-items: flex-start; gap: 4px; }
@@ -1552,6 +1569,8 @@
             .poll-foot button { width: 100%; }
             .poll-audiences { flex-direction: column; gap: 10px; }
             .poll-pager { flex-wrap: wrap; }
+            .poll-actions, .poll-extend { flex-direction: column; align-items: stretch; }
+            .poll-extend select.form-control { width: 100%; }
         }
 
         .poll-pager {
@@ -4749,6 +4768,18 @@
 
     /* --------------------------------------------------------- Polls */
 
+    const POLL_EXTENSIONS = [
+        { code: '1h', label: '1 hour', ms: 3600000 },
+        { code: '12h', label: '12 hours', ms: 12 * 3600000 },
+        { code: '1d', label: '1 day', ms: 86400000 },
+        { code: '3d', label: '3 days', ms: 3 * 86400000 },
+        { code: '7d', label: '7 days', ms: 7 * 86400000 },
+    ];
+    const POLL_EXTENSION_DEFAULT = '1d';
+
+    /* The amount picked per poll The live list redraws every 15 seconds so the choice is remembered in case the operator changes it before the next refresh */
+    const pollExtendChoice = new Map();
+
     /* The status tab's showAlert writes into #alert-box, which lives inside
        #status-tab and is therefore invisible from here. Polls gets its own. */
     function pollAlert(message, type = 'success') {
@@ -5001,6 +5032,7 @@
                 ? `Ended early · ${pollDate(at)}`
                 : `Closed · ${pollDate(at)}`;
         }
+        if (poll.extended) state.textContent += ' · extended';
         head.appendChild(state);
         card.appendChild(head);
 
@@ -5085,12 +5117,19 @@
         foot.appendChild(meta);
 
         if (poll.live) {
+            const actions = document.createElement('div');
+            actions.className = 'poll-actions';
+
+            if (poll.closesAt) actions.appendChild(pollExtendControl(poll));
+
             const end = document.createElement('button');
             end.type = 'button';
             end.className = 'btn btn-danger';
             end.textContent = 'End early';
             end.addEventListener('click', () => endPoll(poll, end));
-            foot.appendChild(end);
+            actions.appendChild(end);
+
+            foot.appendChild(actions);
         }
 
         card.appendChild(foot);
@@ -5200,6 +5239,73 @@
             button.disabled = false;
             pollAlert(err.message || 'Could not end the poll', 'error');
         }
+    }
+
+     function pollExtendControl(poll) {
+        const wrap = document.createElement('div');
+        wrap.className = 'poll-extend';
+
+        const select = document.createElement('select');
+        select.className = 'form-control poll-extend-by';
+        select.setAttribute('aria-label', `How much time to add to "${poll.title}"`);
+        POLL_EXTENSIONS.forEach(ext => {
+            const option = document.createElement('option');
+            option.value = ext.code;
+            option.textContent = `+${ext.label}`;
+            select.appendChild(option);
+        });
+        select.value = pollExtendChoice.get(poll.id) || POLL_EXTENSION_DEFAULT;
+        select.addEventListener('change', () => pollExtendChoice.set(poll.id, select.value));
+        wrap.appendChild(select);
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-outline poll-extend-btn';
+        button.textContent = 'Add time';
+        button.addEventListener('click', () => extendPoll(poll, select.value, button));
+        wrap.appendChild(button);
+
+        return wrap;
+    }
+
+    async function extendPoll(poll, code, button) {
+        const ext = POLL_EXTENSIONS.find(e => e.code === code);
+        if (!ext || !poll.closesAt) return;
+
+        const to = new Date(new Date(poll.closesAt).getTime() + ext.ms);
+
+        // Asked first because it cannot be undone
+        const ok = await askConfirm({
+            title: `Add ${ext.label}?`,
+            body: `"${poll.title}" will close at ${pollDate(to.toISOString())} ` +
+                  `instead of ${pollDate(poll.closesAt)}.\n\n` +
+                  'Time can be added but not taken back off.',
+            confirmLabel: `Add ${ext.label}`
+        });
+        if (!ok) return;
+
+        button.disabled = true;
+        try {
+            const response = await fetch(`/api/admin/polls/${poll.id}/extend`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                // The closing time this page showed, so the server can refuse if outdated
+                body: JSON.stringify({ by: ext.code, closesAt: poll.closesAt })
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+
+            pollAlert(data.closesAt
+                ? `Added ${ext.label}. Closes in ${pollRemaining(data.closesAt)}.`
+                : `Added ${ext.label}.`);
+        } catch (err) {
+            button.disabled = false;
+            pollAlert(err.message || 'Could not extend the poll', 'error');
+        }
+
+        // Either way: on success the card is out of date, and a refusal is usually because the list was, so redraw from what the server holds
+        loadPolls('live');
     }
 
     /* ------------------------------------------------------------ creating */
