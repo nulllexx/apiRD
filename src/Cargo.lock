@@ -384,6 +384,7 @@ dependencies = [
  "actix-multipart",
  "actix-rt",
  "actix-web",
+ "base64 0.22.1",
  "bcrypt",
  "chrono",
  "dashmap",

@@ -806,6 +806,20 @@
         .inv-source.live { background: var(--ok-soft) !important; color: var(--ok) !important; }
         .inv-source.saved { background: var(--warn-soft) !important; color: var(--warn) !important; }
 
+        /* World and profile pickers for Multiverse-Inventories, styled to sit
+           beside the Refresh button they share the header with. */
+        .inv-pick {
+            padding: 5px 8px;
+            border-radius: var(--radius-sm);
+            background: var(--bg-raised) !important;
+            color: var(--text) !important;
+            border: 1px solid var(--line) !important;
+            font: inherit;
+            font-size: 0.85rem;
+            max-width: 220px;
+        }
+        .inv-source.stored { background: var(--bg-raised) !important; color: var(--text) !important; border: 1px solid var(--line); }
+
         #invRefresh {
             padding: 6px 14px;
             cursor: pointer;
@@ -2003,6 +2017,8 @@
             <span class="inv-uuid" id="invUuid"></span>
             <span class="inv-source" id="invSource" style="display: none;"></span>
             <span class="inv-clock" id="invClock"></span>
+            <select id="invWorld" class="inv-pick" aria-label="Inventory world" style="display: none;"></select>
+            <select id="invProfile" class="inv-pick" aria-label="Game-mode profile" style="display: none;"></select>
             <button type="button" id="invRefresh">Refresh</button>
             <button type="button" class="closeBtn" id="invClose">Close</button>
         </div>
@@ -3833,6 +3849,8 @@
     const invBody = document.getElementById('invBody');
     const invSource = document.getElementById('invSource');
     const invClock = document.getElementById('invClock');
+    const invWorld = document.getElementById('invWorld');
+    const invProfile = document.getElementById('invProfile');
 
     /* Slot layout, mirrored from console/inventory.rs so the two agree on how
        many holes each grid has. */
@@ -4469,6 +4487,7 @@
     function renderOverview(data, player) {
         const snapshot = data.inventory || {};
         const vitals = snapshot.vitals || {};
+        const stored = data.source === 'multiverse';
         invBody.innerHTML = '';
 
         const bars = vitalBars(vitals);
@@ -4477,7 +4496,9 @@
         const chips = vitalChips(vitals);
         if (chips) invBody.appendChild(chips);
 
-        invBody.appendChild(vitalActions(player));
+        // The buttons act on the player as they are now, so they belong to the
+        // current view and not to an inventory left behind in another world.
+        if (!stored) invBody.appendChild(vitalActions(player));
 
         const worn = document.createElement('div');
         worn.className = 'inv-worn';
@@ -4512,7 +4533,15 @@
         const saved = data.savedAt ? relativeTime(data.savedAt) : 'an unknown time ago';
         const parts = [`${data.items} stack${data.items === 1 ? '' : 's'}`];
 
-        if (live) {
+        if (stored) {
+            const where = data.worldKind === 'group' ? `group ${data.world}` : data.world;
+            parts.push(`stored by Multiverse-Inventories for ${where}`);
+            if (data.profiles && data.profiles.length > 1) parts.push(`${data.profile.toLowerCase()} profile`);
+            parts.push(`written ${saved}`);
+            // The plugin writes these when a player leaves a world, so the one
+            // they are standing in is only accurate under Current.
+            parts.push('if they are in this world now, Current shows what they carry');
+        } else if (live) {
             // Read out of the running server, so the grids are exact. The
             // header numbers are not on any of the live paths and still come
             // off disk, which is worth saying rather than implying.
@@ -4536,13 +4565,15 @@
 
         invMeta.textContent = parts.join(' · ');
         invMeta.title = data.savedAt || '';
-        invMeta.classList.toggle('inv-stale', !live && !!(player && player.online));
+        invMeta.classList.toggle('inv-stale', !stored && !live && !!(player && player.online));
 
         if (invSource) {
             invSource.style.display = '';
-            invSource.className = 'inv-source ' + (live ? 'live' : 'saved');
-            invSource.textContent = live ? 'Live' : 'Saved';
+            invSource.className = 'inv-source ' + (stored ? 'stored' : live ? 'live' : 'saved');
+            invSource.textContent = stored ? 'World' : live ? 'Live' : 'Saved';
         }
+
+        renderProfilePicker(stored ? data : null);
     }
 
     /* Wall clock in the Overview header, ticking once a second like the one on
@@ -4585,10 +4616,104 @@
        back through. */
     let invPlayer = null;
 
+    /* Multiverse-Inventories keeps one inventory per world (or group of
+       worlds), and the player file only holds the one for wherever the player
+       is now. The picker lists every world the plugin has something stored
+       for; "Current" is the ordinary view. Hidden entirely when the plugin
+       has nothing for this player, which includes it not being installed. */
+    const invView = { world: '', kind: 'world', profile: '' };
+
+    function resetInvView() {
+        invView.world = '';
+        invView.kind = 'world';
+        invView.profile = '';
+        if (invWorld) {
+            invWorld.innerHTML = '';
+            invWorld.style.display = 'none';
+        }
+        renderProfilePicker(null);
+    }
+
+    async function loadWorldPicker(player) {
+        if (!invWorld) return;
+
+        let url = '/api/admin/console/players/' + encodeURIComponent(player.uuid) + '/worlds';
+        if (player.name) url += '?name=' + encodeURIComponent(player.name);
+
+        let worlds = [];
+        try {
+            const response = await fetch(url, { credentials: 'include' });
+            if (!response.ok) return;
+            worlds = (await response.json()).worlds || [];
+        } catch (err) {
+            console.error(err);
+            return;
+        }
+
+        // The modal may have moved on to someone else while this was in flight.
+        if (invPlayer !== player || !worlds.length) return;
+
+        invWorld.innerHTML = '';
+        invWorld.appendChild(new Option('Current inventory', ''));
+
+        [['world', 'Worlds'], ['group', 'Groups']].forEach(([kind, label]) => {
+            const entries = worlds.filter(world => world.kind === kind);
+            if (!entries.length) return;
+            const group = document.createElement('optgroup');
+            group.label = label;
+            entries.forEach(world => {
+                const option = new Option(world.name, kind + ':' + world.name);
+                if (world.savedAt) option.title = 'Written ' + relativeTime(world.savedAt);
+                group.appendChild(option);
+            });
+            invWorld.appendChild(group);
+        });
+
+        invWorld.value = invView.world ? invView.kind + ':' + invView.world : '';
+        invWorld.style.display = '';
+    }
+
+    /* Only shown when the stored file separates inventories by game mode,
+       which is a per-server setting of the plugin. */
+    function renderProfilePicker(data) {
+        if (!invProfile) return;
+        const profiles = (data && data.profiles) || [];
+        invProfile.innerHTML = '';
+        if (profiles.length < 2) {
+            invProfile.style.display = 'none';
+            return;
+        }
+        profiles.forEach(profile => {
+            const label = profile.charAt(0) + profile.slice(1).toLowerCase();
+            invProfile.appendChild(new Option(label, profile));
+        });
+        invProfile.value = data.profile;
+        invProfile.style.display = '';
+    }
+
+    if (invWorld) {
+        invWorld.addEventListener('change', () => {
+            const value = invWorld.value;
+            const split = value.indexOf(':');
+            invView.kind = value ? value.slice(0, split) : 'world';
+            invView.world = value ? value.slice(split + 1) : '';
+            invView.profile = '';
+            loadOverview();
+        });
+    }
+    if (invProfile) {
+        invProfile.addEventListener('change', () => {
+            invView.profile = invProfile.value;
+            loadOverview();
+        });
+    }
+
     async function openOverview(player) {
         if (!invOverlay || !player || !player.uuid) return;
 
         invPlayer = player;
+        resetInvView();
+        loadWorldPicker(player);
         invTitle.textContent = playerLabel(player);
         invUuid.textContent = player.uuid;
         invBody.innerHTML = '';
@@ -4606,22 +4731,40 @@
         // server answers "no entity found" for anybody who has logged off. The
         // endpoint falls back to their saved file on its own, so a player who
         // leaves mid-request still gets an answer.
-        const live = player.online && player.name;
-        invMeta.textContent = live
-            ? 'Asking the server\u2026'
-            : 'Reading saved player data\u2026';
+        const world = invView.world;
+        const live = !world && player.online && player.name;
+        invMeta.textContent = world
+            ? `Reading the inventory stored for ${world}\u2026`
+            : live
+                ? 'Asking the server\u2026'
+                : 'Reading saved player data\u2026';
         invMeta.classList.remove('inv-stale');
         if (invSource) invSource.style.display = 'none';
 
         let url = '/api/admin/console/players/' + encodeURIComponent(player.uuid) + '/inventory';
-        if (live) url += '?live=' + encodeURIComponent(player.name);
+        const params = new URLSearchParams();
+        if (world) {
+            params.set('world', world);
+            params.set('kind', invView.kind);
+            if (invView.profile) params.set('profile', invView.profile);
+            if (player.name) params.set('name', player.name);
+        } else if (live) {
+            params.set('live', player.name);
+        }
+        if (params.toString()) url += '?' + params.toString();
 
         try {
             const response = await fetch(url, { credentials: 'include' });
             const data = await response.json();
 
+            // A slow answer for a view the operator has already left.
+            if (invPlayer !== player || invView.world !== world) return;
+
             if (!response.ok) {
                 invMeta.textContent = data.error || 'Could not read this player\u2019s inventory.';
+                // Otherwise the previous world's grids stay up under this
+                // world's name.
+                if (world) invBody.innerHTML = '';
                 return;
             }
 

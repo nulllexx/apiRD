@@ -9,6 +9,7 @@ use tokio::sync::broadcast::error::RecvError;
 
 use crate::console::control::{self, Phase, PowerAction};
 use crate::console::inventory::{self, InventoryError};
+use crate::console::multiverse::{self, ContainerKind};
 use crate::console::textures::TextureError;
 use crate::console::players::{self, PlayerAction};
 use crate::console::stats::{self, STATS_MAX_AGE};
@@ -533,6 +534,112 @@ struct InventoryQuery {
     /// the name because `/data get` selects by name rather than by UUID. The
     /// UUID in the path still identifies whose file to fall back to.
     live: Option<String>,
+    /// `?world=<name>` reads the inventory Multiverse-Inventories stored for
+    /// that world instead of the one the player is carrying now. `kind` says
+    /// whether the name is a world or a group, and `profile` picks a game-mode
+    /// profile out of the file.
+    world: Option<String>,
+    kind: Option<String>,
+    profile: Option<String>,
+    /// The player's name, for plugin versions that key files by name.
+    name: Option<String>,
+}
+
+/// A player name from the query, validated because it becomes a filename.
+fn query_name(raw: Option<&str>) -> Result<Option<String>, AppError> {
+    match raw.map(str::trim).filter(|n| !n.is_empty()) {
+        None => Ok(None),
+        Some(name) if players::is_valid_name(name) => Ok(Some(name.to_string())),
+        Some(_) => Err(AppError::BadRequest(
+            "That is not a valid Minecraft username".to_string(),
+        )),
+    }
+}
+
+/// The world-specific half of [`player_inventory`].
+///
+/// Never live: the plugin only writes these files when a player leaves the
+/// world (or the server), so they describe what was left behind. The world the
+/// player is standing in right now is the default view's job.
+async fn stored_world_inventory(
+    state: &AppState,
+    uuid: &str,
+    world: &str,
+    query: &InventoryQuery,
+) -> Result<HttpResponse, AppError> {
+    let kind = ContainerKind::parse(query.kind.as_deref().unwrap_or(""))
+        .ok_or_else(|| AppError::BadRequest("kind must be world or group".to_string()))?;
+    if !multiverse::is_valid_container(world) {
+        return Err(AppError::BadRequest("That is not a valid world name".to_string()));
+    }
+    let name = query_name(query.name.as_deref())?;
+
+    let namespaces = state.textures.mod_namespaces().await;
+    let stored = multiverse::load(
+        &state.config.server_properties_path,
+        kind,
+        world,
+        uuid,
+        name.as_deref(),
+        query.profile.as_deref().map(str::trim).filter(|p| !p.is_empty()),
+        &namespaces,
+    )
+    .await
+    .map_err(|e| match e {
+        InventoryError::Missing => AppError::NotFound(
+            "This player has no stored inventory for that world".to_string(),
+        ),
+        InventoryError::Unreadable(why) => {
+            log::error!("console: cannot read Multiverse inventory {world} for {uuid}: {why}");
+            AppError::Internal("Could not read this player's stored inventory".to_string())
+        }
+    })?;
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "uuid": uuid,
+        "source": "multiverse",
+        "vitalsSource": "saved",
+        "savedAt": stored.saved_at,
+        "liveError": null,
+        "world": world,
+        "worldKind": kind,
+        "profile": stored.profile,
+        "profiles": stored.profiles,
+        "items": stored.snapshot.item_count(),
+        "inventory": stored.snapshot,
+    })))
+}
+
+#[derive(Deserialize)]
+struct WorldsQuery {
+    name: Option<String>,
+}
+
+/// GET /api/admin/console/players/{uuid}/worlds — the worlds and groups
+/// Multiverse-Inventories holds a stored inventory for, for the Overview's
+/// world picker. Empty when the plugin is not installed.
+async fn player_worlds(
+    state: web::Data<AppState>,
+    _admin: AdminUser,
+    path: web::Path<String>,
+    query: web::Query<WorldsQuery>,
+) -> Result<HttpResponse, AppError> {
+    let uuid = path.into_inner().trim().to_ascii_lowercase();
+    if !inventory::is_canonical_uuid(&uuid) {
+        return Err(AppError::BadRequest(
+            "That is not a valid player UUID".to_string(),
+        ));
+    }
+    let name = query_name(query.name.as_deref())?;
+
+    let worlds = multiverse::list_containers(
+        &state.config.server_properties_path,
+        &uuid,
+        name.as_deref(),
+    )
+    .await;
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({ "uuid": uuid, "worlds": worlds })))
 }
 
 /// Ask the running server for one player's live inventory.
@@ -592,6 +699,10 @@ async fn player_inventory(
         return Err(AppError::BadRequest(
             "That is not a valid player UUID".to_string(),
         ));
+    }
+
+    if let Some(world) = query.world.as_deref().map(str::trim).filter(|w| !w.is_empty()) {
+        return stored_world_inventory(&state, &uuid, world, &query).await;
     }
 
     let mut live_error: Option<String> = None;
@@ -944,6 +1055,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             // Three segments, so it cannot be swallowed by the two-segment
             // `{action}` route below.
             .route("/players/{uuid}/inventory", web::get().to(player_inventory))
+            .route("/players/{uuid}/worlds", web::get().to(player_worlds))
             // Before `/players/{action}` so a UUID cannot be read as an action.
             .route("/players/{uuid}/vitals", web::post().to(offline_vitals))
             .route(

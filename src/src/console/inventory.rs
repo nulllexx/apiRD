@@ -50,7 +50,7 @@ const OFFHAND_SLOT: i32 = -106;
 /// kilobytes; anything at this size is a corrupt or hostile file, and the
 /// decompressed cap is what actually stops a zip bomb from becoming an
 /// out-of-memory kill.
-const MAX_COMPRESSED: u64 = 8 * 1024 * 1024;
+pub(crate) const MAX_COMPRESSED: u64 = 8 * 1024 * 1024;
 const MAX_DECOMPRESSED: u64 = 64 * 1024 * 1024;
 
 /// Cap on nested container contents (shulker boxes, bundles) reported per item,
@@ -200,7 +200,7 @@ pub struct PlayerSnapshot {
 }
 
 impl PlayerSnapshot {
-    fn empty() -> Self {
+    pub(crate) fn empty() -> Self {
         PlayerSnapshot {
             hotbar: vec![None; HOTBAR_SLOTS],
             main: vec![None; MAIN_SLOTS],
@@ -525,7 +525,7 @@ fn read_contents(item: &HashMap<String, Value>) -> Vec<Item> {
 /// `recurse` stops at one level of nesting: a shulker inside a shulker is not
 /// possible in vanilla, and refusing to recurse means a hand-edited file cannot
 /// make this walk forever.
-fn read_item(item: &HashMap<String, Value>, recurse: bool) -> Option<Item> {
+pub(crate) fn read_item(item: &HashMap<String, Value>, recurse: bool) -> Option<Item> {
     let id = field(item, &["id"]).and_then(as_str)?;
     if id.is_empty() || id == "minecraft:air" {
         return None;
@@ -585,7 +585,7 @@ fn read_item(item: &HashMap<String, Value>, recurse: bool) -> Option<Item> {
 ///
 /// Everything about vanilla's slot numbering is contained here: 0-8 hotbar,
 /// 9-35 the main grid, 100-103 armour counted up from the feet, -106 offhand.
-fn place(snapshot: &mut PlayerSnapshot, slot: i32, item: Item) {
+pub(crate) fn place(snapshot: &mut PlayerSnapshot, slot: i32, item: Item) {
     match slot {
         OFFHAND_SLOT => snapshot.offhand = Some(item),
         0..=8 => snapshot.hotbar[slot as usize] = Some(item),

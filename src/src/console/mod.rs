@@ -15,6 +15,7 @@ pub mod control;
 pub mod inventory;
 pub mod mod_assets;
 pub mod models;
+pub mod multiverse;
 pub mod players;
 pub mod presence;
 pub mod snbt;

@@ -169,6 +169,12 @@ impl TextureCache {
         })
     }
 
+    /// Namespaces the installed mods provide, for code that has to turn a
+    /// flattened Bukkit material name back into a namespaced id.
+    pub async fn mod_namespaces(&self) -> Vec<String> {
+        self.mods.namespaces().await
+    }
+
     /// Cached bytes for one item id, fetching it if this is the first ask.
     pub async fn get(&self, namespace: &str, name: &str) -> Result<Vec<u8>, TextureError> {
         if !is_valid_segment(namespace) || !is_valid_segment(name) {

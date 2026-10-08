@@ -234,6 +234,11 @@ impl ModAssets {
     pub async fn namespace_count(&self) -> usize {
         self.index().await.len()
     }
+
+    /// Every namespace a mod jar ships art for.
+    pub async fn namespaces(&self) -> Vec<String> {
+        self.index().await.keys().cloned().collect()
+    }
 }
 
 /// The namespace an `assets/<ns>/textures/...` entry belongs to.
