@@ -62,7 +62,7 @@ pub struct UpdateProjStatusBody {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct UpdatePlexStatusBody {
+pub struct UpdateChatStatusBody {
     pub username: Option<String>,
     #[serde(rename = "isAllowed")]
     pub is_allowed: Option<bool>,
@@ -402,13 +402,13 @@ pub(super) async fn admin_list_users(
         is_admin: bool,
         is_member: bool,
         is_projallowed: bool,
-        is_plexallowed: bool,
+        is_chatallowed: bool,
         is_og: bool,
         moderation_type: Option<String>,
     }
 
     let users: Vec<UserListRow> = sqlx::query_as(
-        r#"SELECT u.id, u.username, u.is_admin, u.is_member, u.is_projallowed, u.is_plexallowed, u.is_og,
+        r#"SELECT u.id, u.username, u.is_admin, u.is_member, u.is_projallowed, u.is_chatallowed, u.is_og,
             m.type AS moderation_type
         FROM users u
         LEFT JOIN (
@@ -439,7 +439,7 @@ pub(super) async fn admin_list_users(
                 "isAdmin": u.is_admin,
                 "isMember": u.is_member,
                 "isProjAllowed": u.is_projallowed,
-                "isPlexAllowed": u.is_plexallowed,
+                "isChatAllowed": u.is_chatallowed,
                 "isOG": u.is_og
             })
         })
@@ -532,13 +532,13 @@ pub(super) async fn admin_update_proj_status(
     Ok(HttpResponse::Ok().json(json!({ "message": "User project status updated successfully" })))
 }
 
-/// PATCH /admin/update-plex-status
-pub(super) async fn admin_update_plex_status(
+/// PATCH /admin/update-chat-status
+pub(super) async fn admin_update_chat_status(
     req: HttpRequest,
     state: web::Data<AppState>,
     limiter: web::Data<RateLimiter>,
     auth: AuthUser,
-    body: web::Json<UpdatePlexStatusBody>,
+    body: web::Json<UpdateChatStatusBody>,
 ) -> Result<HttpResponse, AppError> {
     check_rate_limit(&req, &limiter)?;
 
@@ -561,7 +561,7 @@ pub(super) async fn admin_update_plex_status(
         )
     })?;
 
-    let result = sqlx::query("UPDATE users SET is_plexallowed = ? WHERE username = ?")
+    let result = sqlx::query("UPDATE users SET is_chatallowed = ? WHERE username = ?")
         .bind(is_allowed)
         .bind(username)
         .execute(&state.pool)
@@ -571,7 +571,7 @@ pub(super) async fn admin_update_plex_status(
         return Err(AppError::NotFound("User not found".to_string()));
     }
 
-    Ok(HttpResponse::Ok().json(json!({ "message": "User Plex status updated successfully" })))
+    Ok(HttpResponse::Ok().json(json!({ "message": "User chat status updated successfully" })))
 }
 
 /// PATCH /admin/update-og-status

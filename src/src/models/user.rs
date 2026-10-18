@@ -12,7 +12,7 @@ pub struct User {
     pub created_at: String,
     pub is_member: bool,
     pub is_projallowed: bool,
-    pub is_plexallowed: bool,
+    pub is_chatallowed: bool,
     pub email: Option<String>,
     pub oauth_provider: Option<String>,
     pub oauth_subject: Option<String>,

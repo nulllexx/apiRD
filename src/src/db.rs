@@ -40,7 +40,7 @@ async fn setup_database(pool: &MySqlPool) -> Result<(), sqlx::Error> {
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             is_member BOOLEAN DEFAULT FALSE,
             is_projallowed BOOLEAN DEFAULT FALSE,
-            is_plexallowed BOOLEAN DEFAULT FALSE,
+            is_chatallowed BOOLEAN DEFAULT FALSE,
             is_og BOOLEAN DEFAULT FALSE
         ) ENGINE=InnoDB"#,
         r#"CREATE TABLE IF NOT EXISTS password_reset_sessions (
@@ -291,6 +291,17 @@ async fn fix_database_schema(pool: &MySqlPool) -> Result<(), sqlx::Error> {
     if column_names.contains(&"isAdmin") && !column_names.contains(&"is_admin") {
         log::info!("Renaming isAdmin column to is_admin...");
         sqlx::query("ALTER TABLE users CHANGE isAdmin is_admin BOOLEAN DEFAULT FALSE")
+            .execute(pool)
+            .await?;
+        log::info!("Column renamed successfully");
+    }
+
+    // Rename is_plexallowed -> is_chatallowed. The Plex flag was never used,
+    // so it was repurposed to gate the AI group chat (ai_gc_app) rather than
+    // adding a column next to it.
+    if column_names.contains(&"is_plexallowed") && !column_names.contains(&"is_chatallowed") {
+        log::info!("Renaming is_plexallowed column to is_chatallowed...");
+        sqlx::query("ALTER TABLE users CHANGE is_plexallowed is_chatallowed BOOLEAN DEFAULT FALSE")
             .execute(pool)
             .await?;
         log::info!("Column renamed successfully");

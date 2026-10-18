@@ -40,7 +40,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .route("/logged-in", web::get().to(logged_in))
         .route("/proj/allowed", web::get().to(proj_allowed))
         .route("/getGames", web::get().to(get_games))
-        .route("/plex/allowed", web::get().to(plex_allowed))
+        .route("/chat-allowed", web::get().to(chat_allowed))
         .route("/refresh-token", web::post().to(refresh_token))
         .route("/logout", web::post().to(logout))
         .route("/purge-logout", web::post().to(purge_logout))
@@ -63,8 +63,8 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             web::patch().to(admin_update_proj_status),
         )
         .route(
-            "/admin/update-plex-status",
-            web::patch().to(admin_update_plex_status),
+            "/admin/update-chat-status",
+            web::patch().to(admin_update_chat_status),
         )
         .route(
             "/admin/update-og-status",

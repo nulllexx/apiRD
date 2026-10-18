@@ -52,8 +52,8 @@ pub(super) async fn proj_allowed(
     }
 }
 
-/// GET /plex/allowed
-pub(super) async fn plex_allowed(
+/// GET /chat-allowed (not /chat/allowed: /api/chat/* belongs to the chat server)
+pub(super) async fn chat_allowed(
     req: HttpRequest,
     state: web::Data<AppState>,
     limiter: web::Data<RateLimiter>,
@@ -77,7 +77,7 @@ pub(super) async fn plex_allowed(
     }
 
     let row: Option<(bool,)> =
-        sqlx::query_as("SELECT is_plexallowed FROM users WHERE username = ?")
+        sqlx::query_as("SELECT is_chatallowed FROM users WHERE username = ?")
             .bind(&user.username)
             .fetch_optional(&state.pool)
             .await?;

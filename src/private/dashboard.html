@@ -1010,7 +1010,7 @@
                     <th>Admin</th>
                     <th>Member</th>
                     <th>RD Projects Access</th>
-                    <th>Plex Access</th>
+                    <th>Chat Access</th>
                     <th>OG</th>
                     <th>Actions</th>
                 </tr>
@@ -1466,8 +1466,8 @@
                     <td data-label="RD Projects">
                         <input type="checkbox" class="projToggle" data-username="${user.username}" ${user.isProjAllowed ? 'checked' : ''}> 
                     </td>
-                    <td data-label="Plex">
-                        <input type="checkbox" class="plexToggle" data-username="${user.username}" ${user.isPlexAllowed ? 'checked' : ''}>
+                    <td data-label="Chat">
+                        <input type="checkbox" class="chatToggle" data-username="${user.username}" ${user.isChatAllowed ? 'checked' : ''}>
                     </td>
                     <td data-label="OG">
                         <input type="checkbox" class="ogToggle" data-username="${user.username}" ${user.isOG ? 'checked' : ''}>
@@ -1636,12 +1636,12 @@
             });
         });
 
-        document.querySelectorAll('.plexToggle').forEach(chk => {
+        document.querySelectorAll('.chatToggle').forEach(chk => {
             chk.addEventListener('change', async () => {
                 const username = chk.dataset.username;
                 const isAllowed = chk.checked;
                 try {
-                    await fetch('/api/admin/update-plex-status', {
+                    await fetch('/api/admin/update-chat-status', {
                         method: 'PATCH',
                         headers: { 'Content-Type': 'application/json' },
                         credentials: 'include',

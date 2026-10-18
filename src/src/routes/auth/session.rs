@@ -256,10 +256,11 @@ pub(super) async fn validate(
     struct UserRow {
         username: String,
         is_admin: bool,
+        is_chatallowed: bool,
     }
 
     let user: Option<UserRow> =
-        sqlx::query_as("SELECT username, is_admin FROM users WHERE id = ?")
+        sqlx::query_as("SELECT username, is_admin, is_chatallowed FROM users WHERE id = ?")
             .bind(&claims.id)
             .fetch_optional(&state.pool)
             .await?;
@@ -268,7 +269,9 @@ pub(super) async fn validate(
 
     Ok(HttpResponse::Ok().json(json!({
         "username": user.username,
-        "isAdmin": user.is_admin
+        "isAdmin": user.is_admin,
+        // Read by the AI group chat server, which only admits accounts with this set.
+        "isChatAllowed": user.is_chatallowed
     })))
 }
 
