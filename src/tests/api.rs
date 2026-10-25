@@ -242,6 +242,46 @@ async fn poll_routes_reject_anonymous_callers() {
     );
 }
 
+/// Neither the chat prompt's admin side nor the chat's side answers without a
+/// session, and saving checks auth before it looks at the body.
+#[actix_web::test]
+async fn chat_prompt_routes_reject_anonymous_callers() {
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(lazy_state()))
+            .configure(configure_api),
+    )
+    .await;
+
+    for uri in ["/api/chat-prompt", "/api/admin/chat-prompt"] {
+        let req = test::TestRequest::get().uri(uri).to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "GET {uri} must require a session"
+        );
+    }
+
+    let req = test::TestRequest::post()
+        .uri("/api/chat-prompt/seen")
+        .set_json(serde_json::json!({ "version": 1 }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    let req = test::TestRequest::put()
+        .uri("/api/admin/chat-prompt")
+        .set_json(serde_json::json!({ "title": "x", "buttons": [{ "label": "y", "action": "nope" }] }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "PUT /api/admin/chat-prompt must require an admin session"
+    );
+}
+
 /// The player-facing polls page sends anonymous visitors to sign in.
 ///
 /// A redirect rather than a 401 because this is a page a person opened, not a

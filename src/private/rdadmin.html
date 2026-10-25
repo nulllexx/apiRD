@@ -1596,6 +1596,90 @@
         }
         .poll-pager[hidden] { display: none; }
         .poll-pager span { font-size: 0.82rem; color: var(--text-muted) !important; }
+
+        /* ------------------------------------------------------ Chat prompt */
+
+        .cprompt-layout {
+            display: grid;
+            grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+            gap: 20px;
+            align-items: start;
+        }
+        .cprompt-status { margin: -4px 0 16px; }
+
+        /* Label, action, what it opens, main?, remove: one line on a wide
+           screen, wrapping to two on a narrow one. */
+        .cprompt-btn-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.4fr) auto auto;
+            gap: 8px;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .cprompt-btn-row .form-control { margin: 0; min-width: 0; }
+        .cprompt-btn-row select.form-control { width: auto; }
+        .cprompt-btn-row .form-control[hidden] { display: none; }
+        /* Keeps the grid columns lined up when the value field is hidden. */
+        .cprompt-btn-row .cprompt-value-slot { min-width: 0; }
+        .cprompt-btn-row button { margin: 0; }
+
+        .cprompt-preview-card { position: sticky; top: 80px; }
+        .cprompt-preview {
+            padding: 20px;
+            border-radius: var(--radius);
+            border: 1px solid var(--line) !important;
+            background: var(--bg-raised) !important;
+            box-shadow: var(--shadow);
+        }
+        .cprompt-preview h3 {
+            margin: 0 0 10px;
+            font-size: 1.1rem;
+            text-transform: none;
+            letter-spacing: normal;
+            overflow-wrap: anywhere;
+            color: var(--text) !important;
+        }
+        .cprompt-preview p {
+            margin: 0 0 16px;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            font-size: 0.88rem;
+            line-height: 1.55;
+            color: var(--text-muted) !important;
+        }
+        .cprompt-preview .cprompt-preview-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+        .cprompt-preview .cprompt-preview-buttons span {
+            padding: 7px 14px;
+            border-radius: var(--radius-sm);
+            font-size: 0.85rem;
+            font-weight: 600;
+            border: 1px solid var(--line) !important;
+            color: var(--text) !important;
+        }
+        .cprompt-preview .cprompt-preview-buttons span.primary {
+            background: var(--accent) !important;
+            border-color: var(--accent) !important;
+            color: var(--accent-contrast) !important;
+        }
+        .cprompt-preview .cprompt-empty { color: var(--text-faint) !important; font-style: italic; }
+
+        @media (max-width: 900px) {
+            .cprompt-layout { grid-template-columns: minmax(0, 1fr); }
+            .cprompt-preview-card { position: static; }
+        }
+        @media (max-width: 640px) {
+            .cprompt-btn-row {
+                grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+                padding-bottom: 10px;
+                margin-bottom: 10px;
+                border-bottom: 1px solid var(--line-soft) !important;
+            }
+            .cprompt-btn-row select.form-control { width: 100%; }
+            .cprompt-btn-row button { justify-self: end; }
+            .cprompt-btn-row .cprompt-value-slot { grid-column: 1 / -1; }
+            .cprompt-btn-row .cprompt-value-slot:empty,
+            .cprompt-btn-row .cprompt-value-slot:has(> [hidden]) { display: none; }
+        }
     </style>
 </head>
 <body>
@@ -1623,6 +1707,7 @@
         <div class="tab" data-tab="console">Server Console</div>
         <div class="tab" data-tab="players">Players</div>
         <div class="tab" data-tab="polls">Polls</div>
+        <div class="tab" data-tab="chatprompt">Chat Prompt</div>
     </div>
 
     <!-- USERS TAB -->
@@ -1981,6 +2066,68 @@
             </div>
         </div>
     </div><!-- /polls-tab -->
+
+    <!-- CHAT PROMPT TAB -->
+    <div class="tab-content" id="chatprompt-tab">
+        <h1>Chat Prompt</h1>
+        <p class="page-hint">A pop-up the AI group chat shows each person once, the first time they open it. After that it stays closed for them, unless you save it with &ldquo;Show it again&rdquo; ticked.</p>
+
+        <div id="cprompt-alert"></div>
+
+        <div class="cprompt-layout">
+            <div class="card">
+                <h2 class="card-title">Prompt</h2>
+                <p class="poll-note cprompt-status" id="cpromptStatus">Loading&hellip;</p>
+
+                <form id="cpromptForm" autocomplete="off">
+                    <div class="form-group">
+                        <label class="poll-check">
+                            <input type="checkbox" id="cpromptEnabled">
+                            <span>Show this prompt in the chat</span>
+                        </label>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="cpromptTitle">Title</label>
+                        <input type="text" id="cpromptTitle" class="form-control" maxlength="120"
+                               placeholder="Welcome to RainDrippy Chat" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="cpromptBody">Text <span class="poll-optional">(optional)</span></label>
+                        <textarea id="cpromptBody" class="form-control" maxlength="4000" rows="6"
+                                  placeholder="Type @ai in any room to ask the bot something."></textarea>
+                        <p class="poll-note">The chat renders this as Markdown: **bold**, *italic*, [links](https://&hellip;), - lists.</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Buttons</label>
+                        <div id="cpromptButtons"><!-- button rows inserted by JS --></div>
+                        <button type="button" id="cpromptAddButton" class="btn btn-outline poll-add">
+                            <i class="fas fa-plus"></i> Add button
+                        </button>
+                        <p class="poll-note" id="cpromptButtonCount"></p>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="poll-check">
+                            <input type="checkbox" id="cpromptShowAgain">
+                            <span>Show it again to people who have already seen it</span>
+                        </label>
+                        <p class="poll-note" id="cpromptShowAgainNote">Leave this off to fix a typo without putting the prompt back in front of everyone.</p>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary" id="cpromptSaveBtn">Save</button>
+                </form>
+            </div>
+
+            <div class="card cprompt-preview-card">
+                <h2 class="card-title">Preview</h2>
+                <div class="cprompt-preview" id="cpromptPreview" aria-live="polite"></div>
+                <p class="poll-note">Roughly how it looks in the chat. Markdown is shown as typed here.</p>
+            </div>
+        </div>
+    </div><!-- /chatprompt-tab -->
 </div>
 
 <!-- Overlay for messages -->
@@ -5637,6 +5784,298 @@
         loadAllPolls();
     }
 
+    /* --------------------------------------------------------- Chat prompt */
+
+    /* Matches MAX_BUTTONS and the other limits in routes/chat_prompt.rs. */
+    const CPROMPT_MAX_BUTTONS = 4;
+    const CPROMPT_ACTIONS = [
+        { code: 'close', label: 'Close the prompt' },
+        { code: 'link', label: 'Open link', placeholder: 'https://… or /a/page/on/this/site', maxLength: 2000 },
+        { code: 'room', label: 'Go to room', placeholder: 'Room name, e.g. general', maxLength: 64 },
+        { code: 'notifications', label: 'Turn on notifications' },
+    ];
+
+    let cpromptInited = false;
+    /* The saved version, or null before the first save, when there is nobody
+       to show it "again" to. */
+    let cpromptVersion = null;
+
+    /* Same as pollAlert, into this tab's own box. */
+    function cpromptAlert(message, type = 'success') {
+        const box = document.getElementById('cprompt-alert');
+        if (!box) return;
+
+        box.innerHTML = '';
+        const alert = document.createElement('div');
+        alert.className = `alert alert-${type}`;
+
+        const icon = document.createElement('i');
+        icon.className = `fas ${type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'}`;
+        alert.appendChild(icon);
+
+        const text = document.createElement('span');
+        text.textContent = message;
+        alert.appendChild(text);
+
+        box.appendChild(alert);
+        box.style.display = 'block';
+        clearTimeout(cpromptAlert.timer);
+        cpromptAlert.timer = setTimeout(() => { box.style.display = 'none'; }, 5000);
+    }
+
+    function cpromptAction(code) {
+        return CPROMPT_ACTIONS.find(a => a.code === code) || CPROMPT_ACTIONS[0];
+    }
+
+    /* The value field only exists for actions that open something. */
+    function syncCpromptRow(row) {
+        const action = cpromptAction(row.querySelector('.cprompt-action').value);
+        const value = row.querySelector('.cprompt-value');
+        value.hidden = !action.placeholder;
+        value.placeholder = action.placeholder || '';
+        value.maxLength = action.maxLength || 0;
+    }
+
+    function cpromptButtonRow(button = {}) {
+        const row = document.createElement('div');
+        row.className = 'cprompt-btn-row';
+
+        const label = document.createElement('input');
+        label.type = 'text';
+        label.className = 'form-control cprompt-label';
+        label.maxLength = 40;
+        label.placeholder = 'Button text';
+        label.setAttribute('aria-label', 'Button text');
+        label.value = button.label || '';
+        row.appendChild(label);
+
+        const action = document.createElement('select');
+        action.className = 'form-control cprompt-action';
+        action.setAttribute('aria-label', 'What the button does');
+        for (const a of CPROMPT_ACTIONS) {
+            const option = document.createElement('option');
+            option.value = a.code;
+            option.textContent = a.label;
+            action.appendChild(option);
+        }
+        action.value = cpromptAction(button.action).code;
+        row.appendChild(action);
+
+        const slot = document.createElement('div');
+        slot.className = 'cprompt-value-slot';
+        const value = document.createElement('input');
+        value.type = 'text';
+        value.className = 'form-control cprompt-value';
+        value.setAttribute('aria-label', 'Link or room');
+        value.value = button.value || '';
+        slot.appendChild(value);
+        row.appendChild(slot);
+
+        const primaryLabel = document.createElement('label');
+        primaryLabel.className = 'poll-check';
+        primaryLabel.title = 'Draw this as the filled, main button';
+        const primary = document.createElement('input');
+        primary.type = 'checkbox';
+        primary.className = 'cprompt-primary';
+        primary.checked = !!button.primary;
+        const primaryText = document.createElement('span');
+        primaryText.textContent = 'Main';
+        primaryLabel.appendChild(primary);
+        primaryLabel.appendChild(primaryText);
+        row.appendChild(primaryLabel);
+
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'btn btn-danger';
+        remove.title = 'Remove this button';
+        remove.setAttribute('aria-label', 'Remove this button');
+        remove.innerHTML = '<i class="fas fa-times"></i>';
+        remove.addEventListener('click', () => {
+            row.remove();
+            syncCpromptButtons();
+            renderCpromptPreview();
+        });
+        row.appendChild(remove);
+
+        action.addEventListener('change', () => syncCpromptRow(row));
+        syncCpromptRow(row);
+        return row;
+    }
+
+    function syncCpromptButtons() {
+        const rows = document.querySelectorAll('#cpromptButtons .cprompt-btn-row');
+        const addBtn = document.getElementById('cpromptAddButton');
+        const note = document.getElementById('cpromptButtonCount');
+        if (addBtn) addBtn.disabled = rows.length >= CPROMPT_MAX_BUTTONS;
+        if (note) {
+            note.textContent = rows.length === 0
+                ? 'No buttons: the chat shows a single “Got it” that closes the prompt.'
+                : `${rows.length} of ${CPROMPT_MAX_BUTTONS} buttons. Every button also closes the prompt.`;
+        }
+    }
+
+    function readCpromptForm() {
+        return {
+            enabled: document.getElementById('cpromptEnabled').checked,
+            title: document.getElementById('cpromptTitle').value.trim(),
+            body: document.getElementById('cpromptBody').value.trimEnd(),
+            buttons: Array.from(document.querySelectorAll('#cpromptButtons .cprompt-btn-row')).map(row => {
+                const action = row.querySelector('.cprompt-action').value;
+                return {
+                    label: row.querySelector('.cprompt-label').value.trim(),
+                    action,
+                    value: cpromptAction(action).placeholder ? row.querySelector('.cprompt-value').value.trim() : '',
+                    primary: row.querySelector('.cprompt-primary').checked,
+                };
+            }),
+        };
+    }
+
+    function renderCpromptPreview() {
+        const box = document.getElementById('cpromptPreview');
+        if (!box) return;
+        const prompt = readCpromptForm();
+        box.innerHTML = '';
+
+        const title = document.createElement('h3');
+        title.textContent = prompt.title || 'Untitled';
+        if (!prompt.title) title.className = 'cprompt-empty';
+        box.appendChild(title);
+
+        if (prompt.body) {
+            const body = document.createElement('p');
+            body.textContent = prompt.body;
+            box.appendChild(body);
+        }
+
+        const buttons = document.createElement('div');
+        buttons.className = 'cprompt-preview-buttons';
+        const shown = prompt.buttons.length ? prompt.buttons : [{ label: 'Got it', primary: true }];
+        for (const b of shown) {
+            const chip = document.createElement('span');
+            chip.textContent = b.label || 'Button';
+            if (b.primary) chip.classList.add('primary');
+            buttons.appendChild(chip);
+        }
+        box.appendChild(buttons);
+    }
+
+    function renderCpromptStatus(data) {
+        const status = document.getElementById('cpromptStatus');
+        const again = document.getElementById('cpromptShowAgain');
+        const againNote = document.getElementById('cpromptShowAgainNote');
+        const prompt = data.prompt;
+
+        cpromptVersion = prompt ? prompt.version : null;
+        again.checked = false;
+        again.disabled = !prompt;
+        againNote.textContent = prompt
+            ? 'Leave this off to fix a typo without putting the prompt back in front of everyone.'
+            : 'Nobody has seen it yet, so the first save reaches everyone anyway.';
+
+        if (!prompt) {
+            status.textContent = 'Not set up yet. Nothing shows in the chat until you save a prompt with “Show this prompt in the chat” ticked.';
+            return;
+        }
+        const when = new Date(prompt.updatedAt);
+        const parts = [
+            prompt.enabled ? 'Showing in the chat' : 'Off: nobody is shown it',
+            `seen by ${data.seen} of ${data.chatUsers} ${data.chatUsers === 1 ? 'person' : 'people'} with chat access`,
+            `last saved by ${prompt.updatedBy}, ${isNaN(when) ? prompt.updatedAt : when.toLocaleString()}`,
+        ];
+        status.textContent = parts.join(' · ');
+    }
+
+    function fillCpromptForm(data) {
+        const prompt = data.prompt || { enabled: false, title: '', body: '', buttons: [] };
+        document.getElementById('cpromptEnabled').checked = prompt.enabled;
+        document.getElementById('cpromptTitle').value = prompt.title;
+        document.getElementById('cpromptBody').value = prompt.body;
+
+        const list = document.getElementById('cpromptButtons');
+        list.innerHTML = '';
+        const buttons = data.prompt ? prompt.buttons : [{ label: 'Got it', action: 'close', primary: true }];
+        for (const b of buttons) list.appendChild(cpromptButtonRow(b));
+
+        syncCpromptButtons();
+        renderCpromptStatus(data);
+        renderCpromptPreview();
+    }
+
+    async function loadCprompt() {
+        try {
+            const response = await fetch('/api/admin/chat-prompt', { credentials: 'include' });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+            fillCpromptForm(data);
+        } catch (err) {
+            document.getElementById('cpromptStatus').textContent = '';
+            cpromptAlert(err.message || 'Could not load the chat prompt', 'error');
+        }
+    }
+
+    async function submitCprompt(event) {
+        event.preventDefault();
+
+        const button = document.getElementById('cpromptSaveBtn');
+        const prompt = readCpromptForm();
+        const showAgain = document.getElementById('cpromptShowAgain').checked;
+
+        // Caught here as well as on the server so the ordinary mistake needs
+        // no round trip. The server stays the authority.
+        if (!prompt.title) return cpromptAlert('Give the prompt a title.', 'error');
+        for (const [i, b] of prompt.buttons.entries()) {
+            if (!b.label) return cpromptAlert(`Button ${i + 1} needs some text.`, 'error');
+            if (b.action === 'link' && !b.value) return cpromptAlert(`Button ${i + 1} needs a link to open.`, 'error');
+            if (b.action === 'room' && !b.value.replace(/^#+/, '').trim()) return cpromptAlert(`Button ${i + 1} needs a room name.`, 'error');
+        }
+        if (showAgain && !confirm('Everyone who has already seen this prompt will see it again the next time they open the chat. Save?')) return;
+
+        button.disabled = true;
+        try {
+            const response = await fetch('/api/admin/chat-prompt', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ ...prompt, showAgain }),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+
+            fillCpromptForm(data);
+            cpromptAlert(showAgain
+                ? 'Saved. Everyone will see it again the next time they open the chat.'
+                : 'Saved.');
+        } catch (err) {
+            cpromptAlert(err.message || 'Could not save the chat prompt', 'error');
+        } finally {
+            button.disabled = false;
+        }
+    }
+
+    function initChatPrompt() {
+        if (cpromptInited) return;
+        cpromptInited = true;
+
+        document.getElementById('cpromptAddButton').addEventListener('click', () => {
+            const list = document.getElementById('cpromptButtons');
+            if (list.querySelectorAll('.cprompt-btn-row').length >= CPROMPT_MAX_BUTTONS) return;
+            const row = cpromptButtonRow({ action: 'link' });
+            list.appendChild(row);
+            syncCpromptButtons();
+            renderCpromptPreview();
+            row.querySelector('.cprompt-label').focus();
+        });
+
+        const form = document.getElementById('cpromptForm');
+        form.addEventListener('submit', submitCprompt);
+        // One listener for every field, the button rows included.
+        form.addEventListener('input', renderCpromptPreview);
+        form.addEventListener('change', renderCpromptPreview);
+
+        loadCprompt();
+    }
+
     /* --------------------------------------------------------- Tab Routing Implementation */
 
     function switchTab(tabName, updateUrl = true) {
@@ -5701,6 +6140,10 @@
             startPollRefresh();
         } else {
             stopPollRefresh();
+        }
+
+        if (activeTabName === 'chatprompt') {
+            initChatPrompt();
         }
 
         if (updateUrl) {

@@ -70,6 +70,7 @@ pub fn configure_api(cfg: &mut web::ServiceConfig) {
             .configure(routes::api::configure)
             .configure(routes::console::configure)
             .configure(routes::polls::configure)
+            .configure(routes::chat_prompt::configure)
             .configure(routes::oauth_google::configure),
     )
     .route("/dashboard.html", web::get().to(routes::auth::serve_dashboard))

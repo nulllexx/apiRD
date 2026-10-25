@@ -225,6 +225,34 @@ async fn setup_database(pool: &MySqlPool) -> Result<(), sqlx::Error> {
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
             INDEX idx_poll_votes_tally (poll_id, option_id)
         ) ENGINE=InnoDB"#,
+        // ------------------------------------------------------- chat prompt
+        //
+        // The pop-up the AI group chat shows each person once (see
+        // routes/chat_prompt.rs). There is only ever one prompt, so the table
+        // holds at most the row with id 1.
+        //
+        // `buttons` is a JSON array the route validates on the way in; TEXT
+        // rather than JSON so it reads back as a plain string on MySQL too.
+        // `version` goes up only when an admin asks for the prompt to be shown
+        // again, so fixing a typo does not put it back in front of everyone.
+        r#"CREATE TABLE IF NOT EXISTS chat_prompt (
+            id TINYINT UNSIGNED PRIMARY KEY,
+            enabled BOOLEAN NOT NULL DEFAULT FALSE,
+            title VARCHAR(255) NOT NULL,
+            body TEXT NOT NULL,
+            buttons TEXT NOT NULL,
+            version INT UNSIGNED NOT NULL DEFAULT 1,
+            updated_at DATETIME(3) NOT NULL,
+            updated_by VARCHAR(255) NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"#,
+        // The newest prompt version each account has been shown. One row per
+        // account, replaced rather than appended to, and no timestamp: nothing
+        // needs to know when someone opened the chat.
+        r#"CREATE TABLE IF NOT EXISTS chat_prompt_seen (
+            user_id VARCHAR(255) PRIMARY KEY,
+            version INT UNSIGNED NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB"#,
     ];
 
     for create_table in &tables {

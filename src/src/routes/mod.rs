@@ -5,5 +5,6 @@ pub mod api_keys;
 pub mod api;
 pub mod console;
 pub mod polls;
+pub mod chat_prompt;
 pub mod util;
 pub mod oauth_google;
