@@ -12,8 +12,8 @@
  * and `cargo test` should not need one. Everything here is stdlib.
  *
  * Supported selector forms are the ones the panel actually uses: tag, #id,
- * .class, [attr], [attr="v"], :checked, :not(.class), and descendant
- * combinators. Anything else needs adding before it will match.
+ * .class, [attr], [attr="v"], :checked, :not(.class), and descendant and
+ * child (`>`) combinators. Anything else needs adding before it will match.
  */
 
 function parseCompound(text) {
@@ -35,8 +35,30 @@ function parseCompound(text) {
     return out;
 }
 
+/* A chain of compounds, each with the combinator joining it to the one
+   before: ' ' for descendant, '>' for child. */
 function parseSelector(sel) {
-    return sel.trim().split(/\s+/).map(parseCompound);
+    const chain = [];
+    let comb = ' ';
+    for (const tok of sel.trim().replace(/\s*>\s*/g, ' > ').split(/\s+/)) {
+        if (tok === '>') { comb = '>'; continue; }
+        chain.push({ c: parseCompound(tok), comb });
+        comb = ' ';
+    }
+    return chain;
+}
+
+function matchChain(el, chain, i) {
+    if (!matchesCompound(el, chain[i].c)) return false;
+    if (i === 0) return true;
+    let node = el.parentNode;
+    if (chain[i].comb === '>') {
+        return !!node && node.nodeType === 1 && matchChain(node, chain, i - 1);
+    }
+    for (; node && node.nodeType === 1; node = node.parentNode) {
+        if (matchChain(node, chain, i - 1)) return true;
+    }
+    return false;
 }
 
 function matchesCompound(el, c) {
@@ -58,15 +80,7 @@ function matchesCompound(el, c) {
 function matches(el, sel) {
     return sel.split(',').some(part => {
         const chain = parseSelector(part);
-        if (!matchesCompound(el, chain[chain.length - 1])) return false;
-        let i = chain.length - 2;
-        let node = el.parentNode;
-        while (i >= 0) {
-            if (!node) return false;
-            if (node.nodeType === 1 && matchesCompound(node, chain[i])) i--;
-            node = node.parentNode;
-        }
-        return true;
+        return matchChain(el, chain, chain.length - 1);
     });
 }
 

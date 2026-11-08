@@ -9,6 +9,7 @@ use actix_web::web;
 use sqlx::MySqlPool;
 use std::sync::{Arc, RwLock};
 
+pub mod access;
 pub mod config;
 pub mod console;
 pub mod db;
@@ -71,6 +72,7 @@ pub fn configure_api(cfg: &mut web::ServiceConfig) {
             .configure(routes::console::configure)
             .configure(routes::polls::configure)
             .configure(routes::chat_prompt::configure)
+            .configure(routes::roles::configure)
             .configure(routes::oauth_google::configure),
     )
     .route("/dashboard.html", web::get().to(routes::auth::serve_dashboard))

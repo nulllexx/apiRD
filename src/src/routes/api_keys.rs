@@ -2,7 +2,8 @@ use actix_web::{web, HttpResponse};
 use uuid::Uuid;
 
 use crate::error::AppError;
-use crate::middleware::admin_auth::AdminUser;
+use crate::access::perm;
+use crate::middleware::permission::Require;
 use crate::AppState;
 
 #[derive(serde::Deserialize)]
@@ -15,7 +16,7 @@ pub struct CreateApiKeyRequest {
 /// POST /api/keys — Create new API key (admin only)
 async fn create_api_key(
     state: web::Data<AppState>,
-    _admin: AdminUser,
+    _admin: Require<perm::ApiKeysManage>,
     body: web::Json<CreateApiKeyRequest>,
 ) -> Result<HttpResponse, AppError> {
     let name = body
@@ -49,7 +50,7 @@ async fn create_api_key(
 /// GET /api/keys — List all API keys (admin only)
 async fn list_api_keys(
     state: web::Data<AppState>,
-    _admin: AdminUser,
+    _admin: Require<perm::ApiKeysManage>,
 ) -> Result<HttpResponse, AppError> {
     let keys: Vec<crate::models::api_key::ApiKey> = sqlx::query_as(
         "SELECT id, name, api_key, hourly_limit, created_at, last_reset, request_count FROM api_keys ORDER BY created_at DESC",
@@ -63,7 +64,7 @@ async fn list_api_keys(
 /// DELETE /api/keys/{id} — Delete API key (admin only)
 async fn delete_api_key(
     state: web::Data<AppState>,
-    _admin: AdminUser,
+    _admin: Require<perm::ApiKeysManage>,
     path: web::Path<String>,
 ) -> Result<HttpResponse, AppError> {
     let id = path.into_inner();

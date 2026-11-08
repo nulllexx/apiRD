@@ -3,6 +3,7 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
+use crate::access::{permission_names, store, Permission};
 use crate::error::AppError;
 use crate::middleware::api_key_auth::get_key_usage;
 use crate::middleware::auth::{decode_jwt, AuthUser};
@@ -39,16 +40,20 @@ pub(super) async fn account_status(
     let hwid_cookie = req.cookie("hwid").map(|c| c.value().to_string());
 
     // Lookup user
-    let user: Option<(String, bool, bool)> =
-        sqlx::query_as("SELECT id, is_og, is_admin FROM users WHERE username = ?")
+    let user: Option<(String, bool)> =
+        sqlx::query_as("SELECT id, is_og FROM users WHERE username = ?")
             .bind(&claims.username)
             .fetch_optional(&state.pool)
             .await?;
 
-    let (user_id, is_og, is_admin) = match user {
+    let (user_id, is_og) = match user {
         Some(u) => u,
-        None => return Ok(HttpResponse::Ok().json(json!({ "accountStatus": null, "is_og": false, "is_admin": false }))),
+        None => return Ok(HttpResponse::Ok().json(json!({ "accountStatus": null, "is_og": false, "is_admin": false, "can_edit_wiki": false }))),
     };
+
+    let (_, perms) = store::grants_for(&state.pool, &user_id).await?;
+    let is_admin = perms.is_superuser();
+    let can_edit_wiki = is_og || perms.has(Permission::WikiEdit);
 
     // Check moderation
     #[derive(sqlx::FromRow)]
@@ -69,7 +74,7 @@ pub(super) async fn account_status(
 
     let moderation = match moderation {
         Some(m) => m,
-        None => return Ok(HttpResponse::Ok().json(json!({ "accountStatus": "ok", "is_og": is_og, "is_admin": is_admin }))),
+        None => return Ok(HttpResponse::Ok().json(json!({ "accountStatus": "ok", "is_og": is_og, "is_admin": is_admin, "can_edit_wiki": can_edit_wiki }))),
     };
 
     // Need hwid cookie for poison check
@@ -110,7 +115,8 @@ pub(super) async fn account_status(
             "modNote": moderation.mod_note,
             "incriminatory": incriminatory_val,
             "is_og": is_og,
-            "is_admin": is_admin
+            "is_admin": is_admin,
+            "can_edit_wiki": can_edit_wiki
         }
     })))
 }
@@ -128,7 +134,6 @@ pub(super) async fn account_data(
     struct UserRow {
         id: String,
         username: String,
-        is_admin: bool,
         is_member: bool,
         created_at: String,
         #[sqlx(rename = "apiKeyId")]
@@ -136,18 +141,21 @@ pub(super) async fn account_data(
     }
 
     let user: Option<UserRow> = sqlx::query_as(
-            "SELECT id, username, is_admin, is_member, CAST(created_at AS CHAR) AS created_at, apiKeyId FROM users WHERE username = ?",
+            "SELECT id, username, is_member, CAST(created_at AS CHAR) AS created_at, apiKeyId FROM users WHERE username = ?",
     )
     .bind(&auth.username)
     .fetch_optional(&state.pool)
     .await?;
 
     let user = user.ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+    let (roles, perms) = store::grants_for(&state.pool, &user.id).await?;
 
     Ok(HttpResponse::Ok().json(json!({
         "id": user.id,
         "username": user.username,
-        "isAdmin": user.is_admin,
+        "isAdmin": perms.is_superuser(),
+        "roles": roles,
+        "permissions": permission_names(&perms),
         "isMember": user.is_member,
         "createdAt": user.created_at,
         "hasApiKey": user.api_key_id.is_some()

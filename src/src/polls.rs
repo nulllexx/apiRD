@@ -131,10 +131,13 @@ impl Audience {
 /// The account flags an eligibility decision is made from.
 ///
 /// Read from the database rather than the session token: `is_member` is not a
-/// JWT claim at all, and the token's expiry is not validated, so its copy of
-/// `is_admin` can be arbitrarily old.
+/// JWT claim at all, and the token's expiry is not validated, so nothing it
+/// says about privilege can be trusted.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Flags {
+    /// Holds the built-in admin role. The "admins" audience means exactly the
+    /// accounts that used to have `is_admin` set; other staff roles are not
+    /// included.
     pub is_admin: bool,
     pub is_member: bool,
     pub is_og: bool,

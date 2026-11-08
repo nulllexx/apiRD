@@ -346,6 +346,108 @@ async fn console_command_checks_auth_before_validating_input() {
     }
 }
 
+/// The role editor, and every account-admin route that used to check the
+/// token's `isAdmin` claim, answer nothing without a session — and decide that
+/// before reading the body or the database.
+#[actix_web::test]
+async fn access_routes_reject_anonymous_callers() {
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(lazy_state()))
+            .app_data(web::Data::new(api_rd::middleware::rate_limit::RateLimiter::new(500, 60)))
+            .configure(configure_api),
+    )
+    .await;
+
+    let hostile = serde_json::json!({ "roles": ["admin"], "permissions": ["roles.manage"],
+                                      "name": "pwn", "username": "x", "isAdmin": true });
+
+    let cases: [(&str, &str); 22] = [
+        ("GET", "/api/access/me"),
+        ("GET", "/api/admin/access/permissions"),
+        ("GET", "/api/admin/access/roles"),
+        ("POST", "/api/admin/access/roles"),
+        ("PATCH", "/api/admin/access/roles/moderator"),
+        ("DELETE", "/api/admin/access/roles/moderator"),
+        ("GET", "/api/admin/access/roles/admin/members"),
+        ("GET", "/api/admin/access/users/someone"),
+        ("PUT", "/api/admin/access/users/someone/roles"),
+        ("GET", "/api/admin/access/audit"),
+        // Formerly gated on the token's own say-so.
+        ("POST", "/api/update-admin-status"),
+        ("GET", "/api/admin/list-users"),
+        ("POST", "/api/admin/moderate"),
+        ("POST", "/api/admin/unban"),
+        ("DELETE", "/api/admin/delete-user"),
+        // Registered as "/api/moderation-list" inside the /api scope.
+        ("GET", "/api/api/moderation-list"),
+        ("POST", "/api/admin/gen-pwd-reset"),
+        ("PATCH", "/api/admin/update-member-status"),
+        ("PATCH", "/api/admin/update-proj-status"),
+        ("PATCH", "/api/admin/update-chat-status"),
+        ("PATCH", "/api/admin/update-og-status"),
+        ("PATCH", "/api/history/wiki/edit"),
+    ];
+
+    for (method, uri) in cases {
+        let req = match method {
+            "GET" => test::TestRequest::get(),
+            "POST" => test::TestRequest::post(),
+            "PATCH" => test::TestRequest::patch(),
+            "PUT" => test::TestRequest::put(),
+            "DELETE" => test::TestRequest::delete(),
+            _ => unreachable!(),
+        }
+        .uri(uri)
+        .set_json(&hostile)
+        .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "{method} {uri} must require a session"
+        );
+    }
+}
+
+/// A token that still says `isAdmin: true` — as every session issued before
+/// roles does — is not taken at its word. With no database reachable the
+/// request fails rather than being let through on the claim.
+#[actix_web::test]
+async fn a_legacy_is_admin_claim_grants_nothing_by_itself() {
+    use jsonwebtoken::{encode, EncodingKey, Header};
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(lazy_state()))
+            .app_data(web::Data::new(api_rd::middleware::rate_limit::RateLimiter::new(500, 60)))
+            .configure(configure_api),
+    )
+    .await;
+
+    let token = encode(
+        &Header::default(),
+        &serde_json::json!({ "username": "old-admin", "id": "old-admin-id",
+                             "isAdmin": true, "isOG": false }),
+        &EncodingKey::from_secret(b"test-secret"),
+    )
+    .unwrap();
+
+    // One route: each request waits out the lazy pool's acquire timeout.
+    for uri in ["/api/admin/list-users"] {
+        let req = test::TestRequest::get()
+            .uri(uri)
+            .cookie(actix_web::cookie::Cookie::new("userToken", token.clone()))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert!(
+            !resp.status().is_success(),
+            "GET {uri} must not succeed on the token's isAdmin claim alone (got {})",
+            resp.status()
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // DB-backed tests (run when TEST_DATABASE_URL is set)
 // ---------------------------------------------------------------------------
@@ -534,6 +636,28 @@ Columns in `{table}`:
     report
 }
 
+/// A signed session cookie for a test account. Says nothing about privilege:
+/// access comes from `user_roles`, which tests set with [`grant_role`].
+/// "test-secret" is the JWT secret test_state's config carries.
+fn session_cookie(username: &str, id: &str) -> actix_web::cookie::Cookie<'static> {
+    let token = api_rd::middleware::auth::create_jwt(username, id, false, "test-secret", 3600)
+        .expect("sign a test session");
+    actix_web::cookie::Cookie::new("userToken", token)
+}
+
+/// Gives a test account a role by name.
+async fn grant_role(pool: &MySqlPool, user_id: &str, role: &str) {
+    sqlx::query(
+        "INSERT IGNORE INTO user_roles (user_id, role_id, granted_by)
+         SELECT ?, id, 'test' FROM roles WHERE name = ?",
+    )
+    .bind(user_id)
+    .bind(role)
+    .execute(pool)
+    .await
+    .expect("grant test role");
+}
+
 /// A minimal `AppState` for tests: the pool is real, the config carries dummy
 /// (but valid, non-empty) required values since the endpoints under test only
 /// touch the pool.
@@ -712,16 +836,18 @@ async fn a_poll_can_be_opened_voted_on_changed_and_ended() {
         ("polltest-outsider-id", "polltest_outsider", 0, 0),
     ] {
         sqlx::query(
-            "INSERT INTO users (id, username, password_hash, is_admin, is_member, is_og)
-             VALUES (?, ?, 'x', ?, ?, 0)",
+            "INSERT INTO users (id, username, password_hash, is_member, is_og)
+             VALUES (?, ?, 'x', ?, 0)",
         )
         .bind(id)
         .bind(username)
-        .bind(is_admin)
         .bind(is_member)
         .execute(&pool)
         .await
         .expect("create test account");
+        if is_admin == 1 {
+            grant_role(&pool, id, "admin").await;
+        }
     }
 
     let app = test::init_service(
@@ -732,18 +858,7 @@ async fn a_poll_can_be_opened_voted_on_changed_and_ended() {
     .await;
 
     // "test-secret" is the JWT secret test_state's config carries.
-    let session = |username: &str, id: &str, is_admin: bool| {
-        let token = api_rd::middleware::auth::create_jwt(
-            username,
-            id,
-            is_admin,
-            false,
-            "test-secret",
-            3600,
-        )
-        .expect("sign a test session");
-        actix_web::cookie::Cookie::new("userToken", token)
-    };
+    let session = |username: &str, id: &str, _is_admin: bool| session_cookie(username, id);
     let admin = session("polltest_admin", "polltest-admin-id", true);
     let member = session("polltest_member", "polltest-member-id", false);
     let excluded = session("polltest_excluded", "polltest-excluded-id", false);
@@ -1055,16 +1170,18 @@ async fn an_exclusion_hides_one_poll_not_every_poll() {
         ("excltest-barred-id", "excltest_barred", 0, 1),
     ] {
         sqlx::query(
-            "INSERT INTO users (id, username, password_hash, is_admin, is_member, is_og)
-             VALUES (?, ?, 'x', ?, ?, 0)",
+            "INSERT INTO users (id, username, password_hash, is_member, is_og)
+             VALUES (?, ?, 'x', ?, 0)",
         )
         .bind(id)
         .bind(username)
-        .bind(is_admin)
         .bind(is_member)
         .execute(&pool)
         .await
         .expect("create test account");
+        if is_admin == 1 {
+            grant_role(&pool, id, "admin").await;
+        }
     }
 
     let app = test::init_service(
@@ -1074,13 +1191,7 @@ async fn an_exclusion_hides_one_poll_not_every_poll() {
     )
     .await;
 
-    let session = |username: &str, id: &str, is_admin: bool| {
-        let token = api_rd::middleware::auth::create_jwt(
-            username, id, is_admin, false, "test-secret", 3600,
-        )
-        .expect("sign a test session");
-        actix_web::cookie::Cookie::new("userToken", token)
-    };
+    let session = |username: &str, id: &str, _is_admin: bool| session_cookie(username, id);
     let admin = session("excltest_admin", "excltest-admin-id", true);
     let member = session("excltest_member", "excltest-member-id", false);
     let barred = session("excltest_barred", "excltest-barred-id", false);
@@ -1252,4 +1363,252 @@ async fn an_exclusion_hides_one_poll_not_every_poll() {
     );
 
     clean(pool).await;
+}
+
+/// Roles end to end: permissions take effect and lapse on the very next
+/// request, and nobody can use `roles.manage` to climb above their own access.
+#[actix_web::test]
+async fn roles_grant_live_access_and_cannot_be_used_to_escalate() {
+    let Some(pool) = shared_pool().await else {
+        eprintln!("skipping roles_grant_live_access_and_cannot_be_used_to_escalate: TEST_DATABASE_URL not set");
+        return;
+    };
+    let _serialized = DB_TEST_LOCK.lock().await;
+
+    let clean = |pool: MySqlPool| async move {
+        sqlx::query(r"DELETE FROM users WHERE username LIKE 'rbactest\_%'")
+            .execute(&pool)
+            .await
+            .expect("clear test accounts");
+        sqlx::query(r"DELETE FROM roles WHERE name LIKE 'rbactest-%'")
+            .execute(&pool)
+            .await
+            .expect("clear test roles");
+    };
+    clean(pool.clone()).await;
+
+    for (id, username) in [
+        ("rbactest-admin-id", "rbactest_admin"),
+        ("rbactest-mgr-id", "rbactest_mgr"),
+        ("rbactest-plain-id", "rbactest_plain"),
+    ] {
+        sqlx::query("INSERT INTO users (id, username, password_hash) VALUES (?, ?, 'x')")
+            .bind(id)
+            .bind(username)
+            .execute(&pool)
+            .await
+            .expect("create test account");
+    }
+    grant_role(&pool, "rbactest-admin-id", "admin").await;
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(test_state(pool.clone())))
+            .app_data(web::Data::new(api_rd::middleware::rate_limit::RateLimiter::new(10_000, 60)))
+            .configure(configure_api),
+    )
+    .await;
+
+    let admin = session_cookie("rbactest_admin", "rbactest-admin-id");
+    let mgr = session_cookie("rbactest_mgr", "rbactest-mgr-id");
+    let plain = session_cookie("rbactest_plain", "rbactest-plain-id");
+
+    macro_rules! call {
+        ($req:expr, $who:expr) => {{
+            let req = $req.cookie($who.clone()).to_request();
+            test::call_service(&app, req).await.status()
+        }};
+    }
+    let list_users = || test::TestRequest::get().uri("/api/admin/list-users");
+    let create = |name: &str, perms: &[&str]| {
+        test::TestRequest::post()
+            .uri("/api/admin/access/roles")
+            .set_json(serde_json::json!({ "name": name, "permissions": perms }))
+    };
+    let set_roles = |user: &str, roles: &[&str]| {
+        test::TestRequest::put()
+            .uri(&format!("/api/admin/access/users/{user}/roles"))
+            .set_json(serde_json::json!({ "roles": roles }))
+    };
+
+    // An account with no roles is refused.
+    assert_eq!(call!(list_users(), plain), StatusCode::FORBIDDEN);
+
+    // The admin sets up a delegated role manager.
+    assert_eq!(
+        call!(create("rbactest-managers", &["roles.manage", "users.view", "panel.access"]), admin),
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        call!(create("rbactest-mods", &["users.view", "users.moderate"]), admin),
+        StatusCode::CREATED
+    );
+    assert_eq!(call!(set_roles("rbactest_mgr", &["rbactest-managers"]), admin), StatusCode::OK);
+
+    // Same token as before the grant: access is read per request.
+    assert_eq!(call!(list_users(), mgr), StatusCode::OK);
+
+    // A manager can make roles out of what they hold...
+    assert_eq!(call!(create("rbactest-viewers", &["users.view"]), mgr), StatusCode::CREATED);
+    // ...but not out of what they do not.
+    assert_eq!(call!(create("rbactest-sneaky", &["console.command"]), mgr), StatusCode::FORBIDDEN);
+    // Nor widen an existing role beyond themselves.
+    assert_eq!(
+        call!(
+            test::TestRequest::patch()
+                .uri("/api/admin/access/roles/rbactest-viewers")
+                .set_json(serde_json::json!({ "permissions": ["users.view", "users.delete"] })),
+            mgr
+        ),
+        StatusCode::FORBIDDEN
+    );
+    // Nor grant themselves the admin role, or a role holding more than they do.
+    assert_eq!(
+        call!(set_roles("rbactest_mgr", &["rbactest-managers", "admin"]), mgr),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        call!(set_roles("rbactest_plain", &["rbactest-mods"]), mgr),
+        StatusCode::FORBIDDEN
+    );
+    // Nor touch the roles of someone who outranks them.
+    assert_eq!(call!(set_roles("rbactest_admin", &["admin"]), mgr), StatusCode::FORBIDDEN);
+    // The legacy switch is admin-only too.
+    assert_eq!(
+        call!(
+            test::TestRequest::post()
+                .uri("/api/update-admin-status")
+                .set_json(serde_json::json!({ "username": "rbactest_mgr", "isAdmin": true })),
+            mgr
+        ),
+        StatusCode::FORBIDDEN
+    );
+
+    // What they can grant, they can grant, and it works at once.
+    assert_eq!(call!(set_roles("rbactest_plain", &["rbactest-viewers"]), mgr), StatusCode::OK);
+    assert_eq!(call!(list_users(), plain), StatusCode::OK);
+
+    // Revocation is just as immediate: no re-login, no waiting for expiry.
+    assert_eq!(call!(set_roles("rbactest_plain", &[]), admin), StatusCode::OK);
+    assert_eq!(call!(list_users(), plain), StatusCode::FORBIDDEN);
+
+    // The built-in role is fixed.
+    assert_eq!(
+        call!(
+            test::TestRequest::patch()
+                .uri("/api/admin/access/roles/admin")
+                .set_json(serde_json::json!({ "permissions": [] })),
+            admin
+        ),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        call!(test::TestRequest::delete().uri("/api/admin/access/roles/admin"), admin),
+        StatusCode::FORBIDDEN
+    );
+
+    // Password resets cannot be aimed upward.
+    assert_eq!(
+        call!(
+            test::TestRequest::post()
+                .uri("/api/admin/gen-pwd-reset")
+                .set_json(serde_json::json!({ "username": "rbactest_admin" })),
+            admin
+        ),
+        StatusCode::OK
+    );
+    grant_role(&pool, "rbactest-mgr-id", "rbactest-mods").await;
+    sqlx::query(
+        "INSERT INTO role_permissions (role_id, permission)
+         SELECT id, 'users.reset_password' FROM roles WHERE name = 'rbactest-managers'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        call!(
+            test::TestRequest::post()
+                .uri("/api/admin/gen-pwd-reset")
+                .set_json(serde_json::json!({ "username": "rbactest_admin" })),
+            mgr
+        ),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        call!(
+            test::TestRequest::post()
+                .uri("/api/admin/gen-pwd-reset")
+                .set_json(serde_json::json!({ "username": "rbactest_plain" })),
+            mgr
+        ),
+        StatusCode::OK
+    );
+
+    // /access/me reports what the caller holds.
+    let req = test::TestRequest::get().uri("/api/access/me").cookie(mgr.clone()).to_request();
+    let me: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+    assert_eq!(me["superuser"], false);
+    let perms: Vec<&str> = me["permissions"].as_array().unwrap().iter().filter_map(|v| v.as_str()).collect();
+    assert!(perms.contains(&"roles.manage") && !perms.contains(&"console.command"), "{me}");
+
+    // Every change above left a line in the audit trail.
+    let (count,): (i64,) = sqlx::query_as(
+        r"SELECT COUNT(*) FROM access_audit WHERE target LIKE 'rbactest%'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(count >= 6, "expected audit entries, found {count}");
+
+    clean(pool.clone()).await;
+    pool.close().await;
+}
+
+/// `users.is_admin` is carried into the admin role once. An admin demoted after
+/// that is not promoted again by the stale column on the next start-up.
+#[actix_web::test]
+async fn the_is_admin_migration_runs_once() {
+    let Some(pool) = shared_pool().await else {
+        eprintln!("skipping the_is_admin_migration_runs_once: TEST_DATABASE_URL not set");
+        return;
+    };
+    let _serialized = DB_TEST_LOCK.lock().await;
+
+    sqlx::query(r"DELETE FROM users WHERE username LIKE 'migtest\_%'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO users (id, username, password_hash, is_admin) VALUES ('migtest-id', 'migtest_old', 'x', 1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let holds_admin = |pool: MySqlPool| async move {
+        let (_, perms) = api_rd::access::store::grants_for(&pool, "migtest-id").await.unwrap();
+        perms.is_superuser()
+    };
+
+    // As if this were the first start-up on the new version.
+    sqlx::query("DELETE FROM meta WHERE `key` = 'rbac_migrated_from_is_admin'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    api_rd::access::store::migrate(&pool).await.unwrap();
+    assert!(holds_admin(pool.clone()).await, "an is_admin account must become an admin");
+
+    // Demoted afterwards; the column still says 1.
+    sqlx::query("DELETE FROM user_roles WHERE user_id = 'migtest-id'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    api_rd::access::store::migrate(&pool).await.unwrap();
+    assert!(!holds_admin(pool.clone()).await, "a later start-up must not re-promote");
+
+    sqlx::query(r"DELETE FROM users WHERE username LIKE 'migtest\_%'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
 }

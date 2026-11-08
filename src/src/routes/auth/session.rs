@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
+use crate::access::{permission_names, store, Permission};
 use crate::error::AppError;
 use crate::middleware::auth::{create_jwt, decode_jwt};
 use crate::middleware::auth_failopen::OptionalAuthUser;
@@ -118,7 +119,7 @@ pub(super) async fn register(
         .execute(&state.pool)
         .await?;
 
-    let token = create_jwt(username, &user_id, false, false, &state.config.jwt_secret, SEVEN_DAYS_SECS)
+    let token = create_jwt(username, &user_id, false, &state.config.jwt_secret, SEVEN_DAYS_SECS)
         .map_err(|e| AppError::Internal(format!("JWT error: {}", e)))?;
 
     let cookie = build_user_token_cookie(&token);
@@ -152,12 +153,11 @@ pub(super) async fn login(
     struct UserRow {
         id: String,
         password_hash: String,
-        is_admin: bool,
         is_og: bool,
     }
 
     let user: Option<UserRow> =
-        sqlx::query_as("SELECT id, password_hash, is_admin, is_og FROM users WHERE username = ?")
+        sqlx::query_as("SELECT id, password_hash, is_og FROM users WHERE username = ?")
             .bind(username)
             .fetch_optional(&state.pool)
             .await?;
@@ -172,7 +172,6 @@ pub(super) async fn login(
     let token = create_jwt(
         username,
         &user.id,
-        user.is_admin,
         user.is_og,
         &state.config.jwt_secret,
         SEVEN_DAYS_SECS,
@@ -180,11 +179,18 @@ pub(super) async fn login(
     .map_err(|e| AppError::Internal(format!("JWT error: {}", e)))?;
 
     let cookie = build_user_token_cookie(&token);
+    let (roles, perms) = store::grants_for(&state.pool, &user.id).await?;
 
     Ok(HttpResponse::Ok().cookie(cookie).json(json!({
         "message": "Login successful",
         "token": token,
-        "isAdmin": user.is_admin
+        // Holds the admin role. Kept for callers written before roles.
+        "isAdmin": perms.is_superuser(),
+        // Whether the admin panel will let this account in; the login pages
+        // use it to decide where to send someone.
+        "canAccessPanel": perms.has(Permission::PanelAccess),
+        "roles": roles,
+        "permissions": permission_names(&perms)
     })))
 }
 
@@ -210,13 +216,13 @@ pub(super) async fn validate_credentials(
 
     #[derive(sqlx::FromRow)]
     struct UserRow {
+        id: String,
         password_hash: String,
-        is_admin: bool,
         is_member: bool,
     }
 
     let user: Option<UserRow> = sqlx::query_as(
-        "SELECT password_hash, is_admin, is_member FROM users WHERE username = ?",
+        "SELECT id, password_hash, is_member FROM users WHERE username = ?",
     )
     .bind(username)
     .fetch_optional(&state.pool)
@@ -229,10 +235,13 @@ pub(super) async fn validate_credentials(
         return Err(AppError::Unauthorized("Invalid credentials".to_string()));
     }
 
+    let (_, perms) = store::grants_for(&state.pool, &user.id).await?;
+
     Ok(HttpResponse::Ok().json(json!({
         "message": "Credentials valid",
-        "isAdmin": user.is_admin,
-        "isMember": user.is_member
+        "isAdmin": perms.is_superuser(),
+        "isMember": user.is_member,
+        "permissions": permission_names(&perms)
     })))
 }
 
@@ -255,21 +264,25 @@ pub(super) async fn validate(
     #[derive(sqlx::FromRow)]
     struct UserRow {
         username: String,
-        is_admin: bool,
         is_chatallowed: bool,
     }
 
     let user: Option<UserRow> =
-        sqlx::query_as("SELECT username, is_admin, is_chatallowed FROM users WHERE id = ?")
+        sqlx::query_as("SELECT username, is_chatallowed FROM users WHERE id = ?")
             .bind(&claims.id)
             .fetch_optional(&state.pool)
             .await?;
 
     let user = user.ok_or_else(|| AppError::Unauthorized("Invalid user".to_string()))?;
+    let (roles, perms) = store::grants_for(&state.pool, &claims.id).await?;
 
     Ok(HttpResponse::Ok().json(json!({
         "username": user.username,
-        "isAdmin": user.is_admin,
+        // The AI group chat server treats this as "may administer the chat".
+        // It means "holds the admin role", exactly as `is_admin = 1` did.
+        "isAdmin": perms.is_superuser(),
+        "roles": roles,
+        "permissions": permission_names(&perms),
         // Read by the AI group chat server, which only admits accounts with this set.
         "isChatAllowed": user.is_chatallowed
     })))
@@ -294,7 +307,6 @@ pub(super) async fn refresh_token(
     let new_access_token = create_jwt(
         &decoded.username,
         &decoded.id,
-        decoded.is_admin,
         decoded.is_og,
         &state.config.jwt_secret,
         15 * 60, // 15 minutes

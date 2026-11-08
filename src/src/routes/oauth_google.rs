@@ -250,13 +250,11 @@ async fn issue_session(
     state: &AppState,
     user_id: &str,
     username: &str,
-    is_admin: bool,
     is_og: bool,
 ) -> Result<Cookie<'static>, AppError> {
     let token = create_jwt(
         username,
         user_id,
-        is_admin,
         is_og,
         &state.config.jwt_secret,
         SEVEN_DAYS_SECS,
@@ -351,8 +349,8 @@ async fn callback(
         .ok_or_else(|| AppError::Unauthorized("Google did not return an email".to_string()))?;
 
     // 1) Returning Google user — looked up by (provider, sub).
-    let by_sub: Option<(String, String, bool, bool)> = sqlx::query_as(
-        "SELECT id, username, is_admin, is_og FROM users
+    let by_sub: Option<(String, String, bool)> = sqlx::query_as(
+        "SELECT id, username, is_og FROM users
          WHERE oauth_provider = ? AND oauth_subject = ?",
     )
     .bind(PROVIDER)
@@ -360,8 +358,8 @@ async fn callback(
     .fetch_optional(&state.pool)
     .await?;
 
-    if let Some((user_id, username, is_admin, is_og)) = by_sub {
-        let session = issue_session(&state, &user_id, &username, is_admin, is_og).await?;
+    if let Some((user_id, username, is_og)) = by_sub {
+        let session = issue_session(&state, &user_id, &username, is_og).await?;
         return Ok(HttpResponse::Found()
             .append_header(("Location", state.config.oauth_success_redirect.as_str()))
             .cookie(session)
@@ -371,14 +369,14 @@ async fn callback(
 
     // 2) Auto-link by verified email.
     if userinfo.email_verified {
-        let by_email: Option<(String, String, bool, bool)> = sqlx::query_as(
-            "SELECT id, username, is_admin, is_og FROM users WHERE email = ?",
+        let by_email: Option<(String, String, bool)> = sqlx::query_as(
+            "SELECT id, username, is_og FROM users WHERE email = ?",
         )
         .bind(&email)
         .fetch_optional(&state.pool)
         .await?;
 
-        if let Some((user_id, username, is_admin, is_og)) = by_email {
+        if let Some((user_id, username, is_og)) = by_email {
             sqlx::query(
                 "UPDATE users SET oauth_provider = ?, oauth_subject = ? WHERE id = ?",
             )
@@ -388,7 +386,7 @@ async fn callback(
             .execute(&state.pool)
             .await?;
 
-            let session = issue_session(&state, &user_id, &username, is_admin, is_og).await?;
+            let session = issue_session(&state, &user_id, &username, is_og).await?;
             return Ok(HttpResponse::Found()
                 .append_header(("Location", state.config.oauth_success_redirect.as_str()))
                 .cookie(session)
@@ -453,16 +451,16 @@ async fn complete(
     }
 
     // Race protection: another tab/session may have already linked this sub.
-    let by_sub: Option<(String, String, bool, bool)> = sqlx::query_as(
-        "SELECT id, username, is_admin, is_og FROM users
+    let by_sub: Option<(String, String, bool)> = sqlx::query_as(
+        "SELECT id, username, is_og FROM users
          WHERE oauth_provider = ? AND oauth_subject = ?",
     )
     .bind(PROVIDER)
     .bind(&pending.pending_sub)
     .fetch_optional(&state.pool)
     .await?;
-    if let Some((user_id, existing_username, is_admin, is_og)) = by_sub {
-        let session = issue_session(&state, &user_id, &existing_username, is_admin, is_og).await?;
+    if let Some((user_id, existing_username, is_og)) = by_sub {
+        let session = issue_session(&state, &user_id, &existing_username, is_og).await?;
         return Ok(HttpResponse::Ok()
             .cookie(session)
             .cookie(clear_cookie("oauth_pending"))
@@ -506,7 +504,7 @@ async fn complete(
     .execute(&state.pool)
     .await?;
 
-    let session = issue_session(&state, &user_id, username, false, false).await?;
+    let session = issue_session(&state, &user_id, username, false).await?;
     Ok(HttpResponse::Ok()
         .cookie(session)
         .cookie(clear_cookie("oauth_pending"))

@@ -16,7 +16,8 @@ use crate::console::stats::{self, STATS_MAX_AGE};
 use crate::console::audit::{self, Kind, Outcome};
 use crate::console::{sse_event, sse_frame, strip_ansi, Line, LogSource};
 use crate::error::AppError;
-use crate::middleware::admin_auth::AdminUser;
+use crate::access::perm;
+use crate::middleware::permission::{Principal, Require};
 use crate::AppState;
 
 /// Idle gap after which a comment frame is emitted. Keeps intermediaries from
@@ -130,7 +131,7 @@ struct StreamQuery {
 /// GET /api/admin/console/stream?source=log|stdout — live log, backlog first.
 async fn stream_log(
     state: web::Data<AppState>,
-    _admin: AdminUser,
+    _admin: Require<perm::ConsoleView>,
     query: web::Query<StreamQuery>,
 ) -> HttpResponse {
     let source = LogSource::parse(query.source.as_deref());
@@ -149,7 +150,7 @@ struct CommandBody {
 /// POST /api/admin/console/command — run one command over RCON.
 async fn run_command(
     state: web::Data<AppState>,
-    admin: AdminUser,
+    admin: Require<perm::ConsoleCommand>,
     body: web::Json<CommandBody>,
 ) -> Result<HttpResponse, AppError> {
     let command = validate_command(&body.command)?;
@@ -179,12 +180,12 @@ async fn run_command(
 /// Every mutating console route goes through here first. The refusal is the
 /// point: an action nobody can be shown to have taken is exactly what this
 /// exists to prevent, so failing to record one means not doing it. That costs
-/// nothing in practice — `AdminUser` is itself resolved by a database query, so
-/// a database that cannot be written to has already turned every one of these
-/// routes into a 401.
+/// nothing in practice — `Require` is itself resolved by a database query, so
+/// a database that cannot be reached has already turned every one of these
+/// routes into an error.
 async fn audit_or_refuse(
     state: &AppState,
-    admin: &AdminUser,
+    admin: &Principal,
     kind: Kind,
     command: &str,
     target: Option<&str>,
@@ -236,7 +237,7 @@ pub fn validate_command(raw: &str) -> Result<String, AppError> {
 
 async fn power(
     state: web::Data<AppState>,
-    admin: AdminUser,
+    admin: Require<perm::ConsolePower>,
     path: web::Path<String>,
 ) -> Result<HttpResponse, AppError> {
     let action = PowerAction::parse(&path).ok_or_else(|| {
@@ -335,7 +336,7 @@ async fn run_power_action(
 /// GET /api/admin/console/power/result/{job} — how a power action went
 async fn power_result(
     state: web::Data<AppState>,
-    _admin: AdminUser,
+    _admin: Require<perm::ConsoleView>,
     path: web::Path<String>,
 ) -> Result<HttpResponse, AppError> {
     let job = path.into_inner();
@@ -421,7 +422,7 @@ async fn flush_saves(state: &AppState) -> Result<(), String> {
 /// GET /api/admin/console/power/status — what the sidecar last observed.
 async fn power_status(
     state: web::Data<AppState>,
-    _admin: AdminUser,
+    _admin: Require<perm::ConsoleView>,
 ) -> Result<HttpResponse, AppError> {
     let state_now = control::status(&state.config.control_dir).await;
     Ok(HttpResponse::Ok().json(serde_json::json!({
@@ -470,7 +471,7 @@ async fn online_now(state: &AppState) -> (Vec<String>, Option<String>) {
 /// costs an RCON command.
 async fn online_players(
     state: web::Data<AppState>,
-    _admin: AdminUser,
+    _admin: Require<perm::ConsoleView>,
 ) -> Result<HttpResponse, AppError> {
     let (names, rcon_error) = online_now(&state).await;
     let max_players = state.max_players.read().map(|m| *m).unwrap_or(0);
@@ -490,7 +491,7 @@ async fn online_players(
 /// the game server itself.
 async fn server_stats(
     state: web::Data<AppState>,
-    _admin: AdminUser,
+    _admin: Require<perm::ConsoleView>,
 ) -> Result<HttpResponse, AppError> {
     let health = state.snapshot.health(&state.rcon).await;
     let container = stats::read_container_stats(&state.config.control_dir, STATS_MAX_AGE).await;
@@ -513,7 +514,7 @@ async fn server_stats(
 /// GET /api/admin/console/players — everyone who has ever joined.
 async fn list_players(
     state: web::Data<AppState>,
-    _admin: AdminUser,
+    _admin: Require<perm::ConsoleView>,
 ) -> Result<HttpResponse, AppError> {
     let (online, rcon_error) = online_now(&state).await;
     let roster = players::load_roster(&state.config.server_properties_path, &online).await;
@@ -620,7 +621,7 @@ struct WorldsQuery {
 /// world picker. Empty when the plugin is not installed.
 async fn player_worlds(
     state: web::Data<AppState>,
-    _admin: AdminUser,
+    _admin: Require<perm::ConsoleView>,
     path: web::Path<String>,
     query: web::Query<WorldsQuery>,
 ) -> Result<HttpResponse, AppError> {
@@ -687,7 +688,7 @@ async fn live_inventory(
 /// everyone who has ever joined but is only as fresh as the last autosave.
 async fn player_inventory(
     state: web::Data<AppState>,
-    _admin: AdminUser,
+    _admin: Require<perm::ConsoleView>,
     path: web::Path<String>,
     query: web::Query<InventoryQuery>,
 ) -> Result<HttpResponse, AppError> {
@@ -790,7 +791,7 @@ async fn player_inventory(
 /// extension is still accepted so an older cached page keeps working.
 async fn item_texture(
     state: web::Data<AppState>,
-    _admin: AdminUser,
+    _admin: Require<perm::ConsoleView>,
     path: web::Path<(String, String)>,
 ) -> Result<HttpResponse, AppError> {
     let (namespace, file) = path.into_inner();
@@ -835,7 +836,7 @@ struct PlayerActionBody {
 /// POST /api/admin/console/players/{action} — op, kick, ban and friends.
 async fn player_action(
     state: web::Data<AppState>,
-    admin: AdminUser,
+    admin: Require<perm::ConsolePlayers>,
     path: web::Path<String>,
     body: web::Json<PlayerActionBody>,
 ) -> Result<HttpResponse, AppError> {
@@ -897,7 +898,7 @@ struct OfflineVitalBody {
 /// happens to a player who is there to have it happen to them.
 async fn offline_vitals(
     state: web::Data<AppState>,
-    admin: AdminUser,
+    admin: Require<perm::ConsolePlayers>,
     path: web::Path<String>,
     body: web::Json<OfflineVitalBody>,
 ) -> Result<HttpResponse, AppError> {
@@ -994,7 +995,7 @@ struct AuditQuery {
 /// operator.
 async fn audit_history(
     state: web::Data<AppState>,
-    _admin: AdminUser,
+    _admin: Require<perm::ConsoleView>,
     query: web::Query<AuditQuery>,
 ) -> Result<HttpResponse, AppError> {
     let user = query
@@ -1017,7 +1018,7 @@ async fn audit_history(
 async fn download_log(
     req: actix_web::HttpRequest,
     state: web::Data<AppState>,
-    _admin: AdminUser,
+    _admin: Require<perm::ConsoleView>,
 ) -> Result<HttpResponse, AppError> {
     let path = &state.config.minecraft_log_path;
 

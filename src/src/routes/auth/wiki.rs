@@ -3,7 +3,8 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::error::AppError;
-use crate::middleware::auth::AuthUser;
+use crate::access::Permission;
+use crate::middleware::permission::Principal;
 use crate::middleware::rate_limit::RateLimiter;
 use crate::AppState;
 
@@ -20,12 +21,13 @@ pub(super) async fn history_wiki_edit(
     req: HttpRequest,
     state: web::Data<AppState>,
     limiter: web::Data<RateLimiter>,
-    auth: AuthUser,
+    auth: Principal,
     body: web::Json<HistoryWikiEditBody>,
 ) -> Result<HttpResponse, AppError> {
     check_rate_limit(&req, &limiter)?;
-    // Check if the user is an OG / admin
-    if !auth.is_og && !auth.is_admin {
+    // OG accounts may always edit; anyone else needs the permission. Both are
+    // read from the database, not the session token.
+    if !auth.is_og && !auth.has(Permission::WikiEdit) {
         return Err(AppError::Forbidden("Access denied".to_string()));
     }
     // Check if it contains the edited_content field

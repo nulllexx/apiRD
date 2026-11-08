@@ -6,7 +6,6 @@ pub struct User {
     pub id: String,
     pub username: String,
     pub password_hash: String,
-    pub is_admin: bool,
     #[sqlx(rename = "apiKeyId")]
     pub api_key_id: Option<String>,
     pub created_at: String,
@@ -44,12 +43,6 @@ pub struct ModerateRequest {
     pub ban_type: String,
     pub mod_note: Option<String>,
     pub incriminatory: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UpdateAdminStatusRequest {
-    pub username: String,
-    pub is_admin: bool,
 }
 
 #[derive(Debug, Deserialize)]

@@ -4,7 +4,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::error::AppError;
-use crate::middleware::admin_auth::AdminUser;
+use crate::access::perm;
+use crate::middleware::permission::Require;
 use crate::models::component::Component;
 use crate::models::incident::{Incident, IncidentStatusHistory, IncidentUpdate};
 use crate::models::meta::Meta;
@@ -285,7 +286,7 @@ struct ComponentUpdateItem {
 
 async fn create_incident(
     state: web::Data<AppState>,
-    admin: AdminUser,
+    admin: Require<perm::StatusManage>,
     body: web::Json<CreateIncidentBody>,
 ) -> Result<HttpResponse, AppError> {
     let title = body
@@ -428,7 +429,7 @@ struct AddUpdateBody {
 
 async fn add_update(
     state: web::Data<AppState>,
-    admin: AdminUser,
+    admin: Require<perm::StatusManage>,
     path: web::Path<String>,
     payload: web::Json<AddUpdateBody>,
 ) -> Result<HttpResponse, AppError> {
@@ -595,7 +596,7 @@ struct UpdateComponentBody {
 
 async fn update_component(
     state: web::Data<AppState>,
-    _admin: AdminUser,
+    _admin: Require<perm::StatusManage>,
     path: web::Path<String>,
     body: web::Json<UpdateComponentBody>,
 ) -> Result<HttpResponse, AppError> {

@@ -1680,6 +1680,104 @@
             .cprompt-btn-row .cprompt-value-slot:empty,
             .cprompt-btn-row .cprompt-value-slot:has(> [hidden]) { display: none; }
         }
+
+        /* ------------------------------------------------------------ Roles */
+
+        /* Tabs the signed-in account has no permission for. */
+        .tab[hidden] { display: none !important; }
+
+        .roles-layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1.3fr) minmax(300px, 1fr);
+            gap: 20px;
+            align-items: start;
+        }
+        .roles-layout > .card { min-width: 0; }
+
+        .role-item {
+            padding: 14px 0;
+            border-bottom: 1px solid var(--line-soft) !important;
+        }
+        .role-item:last-child { border-bottom: none !important; }
+        .role-item-head {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .role-item-name {
+            font-weight: 600;
+            font-family: "JetBrains Mono", Consolas, monospace;
+            color: var(--text) !important;
+        }
+        .role-item-members { color: var(--text-faint) !important; font-size: 0.8rem; }
+        .role-item-head .spacer { flex: 1; }
+        .role-item-head button { margin: 0; padding: 5px 10px; font-size: 0.8rem; }
+        .role-item-desc { margin: 4px 0 8px; color: var(--text-muted) !important; font-size: 0.85rem; }
+        .role-item-perms { display: flex; flex-wrap: wrap; gap: 4px; }
+
+        .badge-role { background: var(--accent-soft) !important; color: var(--accent) !important; }
+        .badge-role-super { background: var(--warn-soft) !important; color: var(--warn) !important; }
+        .badge-perm {
+            background: var(--bg-raised) !important;
+            color: var(--text-muted) !important;
+            border-color: var(--line) !important;
+            font-family: "JetBrains Mono", Consolas, monospace;
+            font-weight: 500;
+        }
+
+        .perm-group { margin-bottom: 12px; }
+        .perm-group-title {
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-faint) !important;
+            margin: 0 0 4px;
+        }
+        .perm-option, .role-option {
+            display: flex !important;
+            gap: 10px;
+            align-items: flex-start;
+            padding: 6px 4px;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            margin: 0 !important;
+        }
+        .perm-option:hover, .role-option:hover { background: var(--bg-raised) !important; }
+        .perm-option input, .role-option input { margin-top: 3px; flex: none; }
+        .perm-option.locked, .role-option.locked { opacity: 0.55; cursor: not-allowed; }
+        .perm-option code, .role-option code {
+            display: block;
+            font-size: 0.82rem;
+            color: var(--text) !important;
+            background: none !important;
+        }
+        .perm-option small, .role-option small { display: block; color: var(--text-muted) !important; font-size: 0.78rem; }
+
+        .role-form-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+
+        .roles-cell { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
+        .roles-cell .roles-none { color: var(--text-faint) !important; font-size: 0.8rem; margin-right: 6px; }
+        .roles-cell .editRolesBtn { margin: 0 0 2px; padding: 3px 8px; font-size: 0.75rem; }
+
+        .role-picker { text-align: left; max-height: 50vh; overflow-y: auto; margin: 8px 0; }
+
+        .roles-audit-wrap { overflow-x: auto; }
+        .roles-audit { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+        .roles-audit th, .roles-audit td {
+            text-align: left;
+            padding: 8px 10px;
+            border-bottom: 1px solid var(--line-soft) !important;
+            vertical-align: top;
+        }
+        .roles-audit th { color: var(--text-muted) !important; font-weight: 500; }
+        .roles-audit td:first-child { white-space: nowrap; color: var(--text-faint) !important; }
+        .roles-audit td:last-child { overflow-wrap: anywhere; font-family: "JetBrains Mono", Consolas, monospace; font-size: 0.8rem; }
+        .roles-pager { display: flex; justify-content: center; align-items: center; gap: 12px; margin-top: 12px; }
+
+        @media (max-width: 900px) {
+            .roles-layout { grid-template-columns: minmax(0, 1fr); }
+        }
     </style>
 </head>
 <body>
@@ -1703,6 +1801,7 @@
 <div id="content">
     <div class="tab-container">
         <div class="tab" data-tab="users">Users</div>
+        <div class="tab" data-tab="roles">Roles</div>
         <div class="tab active" data-tab="status">Status & Incidents</div>
         <div class="tab" data-tab="console">Server Console</div>
         <div class="tab" data-tab="players">Players</div>
@@ -1722,7 +1821,7 @@
                 <tr>
                     <th>Username</th>
                     <th>Status</th>
-                    <th>Admin</th>
+                    <th>Roles</th>
                     <th>Member</th>
                     <th>RD Projects Access</th>
                     <th>Chat Access</th>
@@ -1774,6 +1873,64 @@
             <button id="applyBan" style="margin-top: 15px;">Apply Moderation</button>
         </div>
     </div><!-- /users-tab -->
+
+    <!-- ROLES TAB -->
+    <div class="tab-content" id="roles-tab">
+        <h1>Roles &amp; Permissions</h1>
+        <p class="page-hint">A role is a named set of permissions. An account can hold several roles and may do anything any of them allows. Changes apply on the account's next request &mdash; nobody has to sign out. You can only create, edit or hand out roles made of permissions you hold yourself.</p>
+
+        <div id="roles-alert"></div>
+
+        <div class="roles-layout">
+            <div class="card">
+                <h2 class="card-title">Roles</h2>
+                <div id="rolesList"><p class="page-hint">Loading&hellip;</p></div>
+            </div>
+
+            <div class="card" id="roleFormCard">
+                <h2 class="card-title" id="roleFormTitle">Create a role</h2>
+                <form id="roleForm" autocomplete="off">
+                    <div class="form-group">
+                        <label for="roleName">Name</label>
+                        <input type="text" id="roleName" class="form-control" maxlength="32"
+                               pattern="[a-z0-9][a-z0-9_\-]{1,31}" placeholder="support" required>
+                        <p class="poll-note">Lowercase letters, digits, &ldquo;-&rdquo; and &ldquo;_&rdquo;. Cannot be changed later.</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="roleDescription">Description <span class="poll-optional">(optional)</span></label>
+                        <input type="text" id="roleDescription" class="form-control" maxlength="255"
+                               placeholder="What people with this role are for">
+                    </div>
+                    <div class="form-group">
+                        <label>Permissions</label>
+                        <div id="rolePermissions"></div>
+                    </div>
+                    <div class="role-form-actions">
+                        <button type="button" class="btn btn-outline" id="roleCancel" hidden>Cancel</button>
+                        <button type="submit" class="btn btn-primary" id="roleSubmit">Create role</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2 class="card-title">Access changes</h2>
+            <p class="page-hint">Every role, permission and account-access change, newest first.</p>
+            <div class="roles-audit-wrap">
+                <table class="roles-audit">
+                    <thead>
+                        <tr><th>When</th><th>By</th><th>Change</th><th>On</th><th>Detail</th></tr>
+                    </thead>
+                    <tbody id="accessAuditBody"></tbody>
+                </table>
+            </div>
+            <div class="roles-pager">
+                <button type="button" class="btn btn-outline" id="auditPrev" disabled>Newer</button>
+                <span id="auditPage">Page 1</span>
+                <button type="button" class="btn btn-outline" id="auditNext" disabled>Older</button>
+            </div>
+        </div>
+    </div><!-- /roles-tab -->
 
     <!-- STATUS & INCIDENTS TAB -->
     <div class="tab-content active" id="status-tab">
@@ -2504,6 +2661,10 @@
         try {
             const response = await fetch('/api/admin/list-users?search=' + encodeURIComponent(query) + '&page=' + page, { credentials: 'include' });
             const users = await response.json();
+            if (!response.ok || !Array.isArray(users)) {
+                userTableBody.innerHTML = `<tr><td colspan="8">${escapeHtml((users && users.error) || 'Could not load accounts')}</td></tr>`;
+                return;
+            }
 
             userTableBody.innerHTML = '';
             users.forEach(user => {
@@ -2511,28 +2672,27 @@
                 const statusText = user.accountStatus || 'ok';
                 const statusClass = statusText.toLowerCase() === 'ok' ? 'status-ok' : 'status-bad';
 
+                const name = escapeHtml(user.username);
                 tr.innerHTML = `
-                    <td data-label="Username">${user.username}</td>
-                    <td data-label="Status"><span class="status-pill ${statusClass}">${statusText}</span></td>
-                    <td data-label="Admin">
-                        <input type="checkbox" class="adminToggle" data-username="${user.username}" ${user.isAdmin ? 'checked' : ''}>
-                    </td>
+                    <td data-label="Username">${name}</td>
+                    <td data-label="Status"><span class="status-pill ${statusClass}">${escapeHtml(statusText)}</span></td>
+                    <td data-label="Roles">${renderRolesCell(user)}</td>
                     <td data-label="Member">
-                        <input type="checkbox" class="memberToggle" data-username="${user.username}" ${user.isMember ? 'checked' : ''}>
+                        <input type="checkbox" class="memberToggle" data-username="${name}" ${user.isMember ? 'checked' : ''}>
                     </td>
                     <td data-label="RD Projects">
-                        <input type="checkbox" class="projToggle" data-username="${user.username}" ${user.isProjAllowed ? 'checked' : ''}> 
+                        <input type="checkbox" class="projToggle" data-username="${name}" ${user.isProjAllowed ? 'checked' : ''}> 
                     </td>
                     <td data-label="Chat">
-                        <input type="checkbox" class="chatToggle" data-username="${user.username}" ${user.isChatAllowed ? 'checked' : ''}>
+                        <input type="checkbox" class="chatToggle" data-username="${name}" ${user.isChatAllowed ? 'checked' : ''}>
                     </td>
                     <td data-label="OG">
-                        <input type="checkbox" class="ogToggle" data-username="${user.username}" ${user.isOG ? 'checked' : ''}>
+                        <input type="checkbox" class="ogToggle" data-username="${name}" ${user.isOG ? 'checked' : ''}>
                     </td>
                     <td data-label="Actions">
-                        <button class="unbanBtn" data-username="${user.username}">Unban / Clear Moderation</button>
-                        <button class="deleteBtn" data-username="${user.username}">Delete Account</button>
-                        <button class="genPWDreset" data-username="${user.username}">Generate Password Reset</button>
+                        <button class="unbanBtn" data-username="${name}">Unban / Clear Moderation</button>
+                        <button class="deleteBtn" data-username="${name}">Delete Account</button>
+                        <button class="genPWDreset" data-username="${name}">Generate Password Reset</button>
                     </td>
                 `;
                 userTableBody.appendChild(tr);
@@ -2649,19 +2809,11 @@
             });
         });
 
-        document.querySelectorAll('.adminToggle').forEach(chk => {
-            chk.addEventListener('change', async () => {
-                const username = chk.dataset.username;
-                const isAdmin = chk.checked;
-                try {
-                    await fetch('/api/update-admin-status', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        credentials: 'include',
-                        body: JSON.stringify({ username, isAdmin })
-                    });
-                    fetchUsers(searchUser ? searchUser.value : '');
-                } catch (err) { console.error(err); }
+        document.querySelectorAll('.editRolesBtn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                let current = [];
+                try { current = JSON.parse(btn.dataset.roles || '[]'); } catch (_) { /* treat as none */ }
+                openRolePicker(btn.dataset.username, current);
             });
         });
 
@@ -5056,6 +5208,403 @@
         stopPollRefresh();
     });
 
+    /* --------------------------------------------------------- Roles & Permissions */
+
+    /* What the signed-in account may do, from /api/access/me. null until it
+       loads -- and if it never does, nothing is hidden: the server refuses
+       whatever the account lacks regardless, so hiding is only tidiness. */
+    let accessMe = null;
+    let rolesInited = false;
+    let rolesCache = [];
+    let permCatalog = [];
+    let editingRole = null;
+    let auditPageNo = 1;
+
+    const SUPERUSER_ROLE = 'admin';
+
+    /* Which permission each top-level tab needs to be any use. */
+    const TAB_PERMISSIONS = {
+        users: 'users.view',
+        roles: 'roles.manage',
+        status: 'status.manage',
+        console: 'console.view',
+        players: 'console.view',
+        polls: 'polls.manage',
+        chatprompt: 'chat_prompt.manage'
+    };
+
+    function escapeHtml(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function canAccess(permission) {
+        if (!accessMe) return true;
+        return accessMe.superuser || (accessMe.permissions || []).includes(permission);
+    }
+
+    function rolesAlert(message, type = 'success') {
+        const box = document.getElementById('roles-alert');
+        if (!box) return;
+        box.innerHTML = '';
+        if (!message) return;
+        const alert = document.createElement('div');
+        alert.className = `alert alert-${type}`;
+        const icon = document.createElement('i');
+        icon.className = `fas ${type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'}`;
+        alert.appendChild(icon);
+        const text = document.createElement('span');
+        text.textContent = message;
+        alert.appendChild(text);
+        box.appendChild(alert);
+    }
+
+    /* Sends a JSON request and returns the parsed body, throwing the server's
+       own error message on failure so callers can show it as-is. */
+    async function accessFetch(url, options = {}) {
+        const init = Object.assign({ credentials: 'include' }, options);
+        if (options.body !== undefined) {
+            init.headers = { 'Content-Type': 'application/json' };
+            init.body = JSON.stringify(options.body);
+        }
+        const res = await fetch(url, init);
+        let data = null;
+        try { data = await res.json(); } catch (_) { /* empty body */ }
+        if (!res.ok) {
+            throw new Error((data && (data.error || data.message)) || `Request failed (${res.status})`);
+        }
+        return data;
+    }
+
+    async function loadAccessMe() {
+        try {
+            accessMe = await accessFetch('/api/access/me');
+        } catch (err) {
+            console.error('Could not load your permissions:', err);
+            accessMe = null;
+            return;
+        }
+
+        const tabs = document.querySelectorAll('#content > .tab-container > .tab[data-tab]');
+        let firstVisible = null;
+        tabs.forEach(tab => {
+            const needed = TAB_PERMISSIONS[tab.dataset.tab];
+            const visible = !needed || canAccess(needed);
+            tab.hidden = !visible;
+            if (visible && !firstVisible) firstVisible = tab.dataset.tab;
+        });
+
+        const active = document.querySelector('#content > .tab-container > .tab[data-tab].active');
+        if (active && active.hidden && firstVisible) {
+            switchTab(firstVisible);
+        } else if (active && active.dataset.tab === 'users') {
+            // The user list renders an Edit button only for role managers,
+            // which was not known when it first drew.
+            fetchUsers(searchUser ? searchUser.value : '', currentPage);
+        }
+    }
+
+    function roleBadge(name) {
+        const cls = name === SUPERUSER_ROLE ? 'badge-role-super' : 'badge-role';
+        return `<span class="badge ${cls}">${escapeHtml(name)}</span>`;
+    }
+
+    function renderRolesCell(user) {
+        const roles = Array.isArray(user.roles) ? user.roles : (user.isAdmin ? [SUPERUSER_ROLE] : []);
+        const chips = roles.length
+            ? roles.map(roleBadge).join('')
+            : '<span class="roles-none">none</span>';
+        const edit = canAccess('roles.manage')
+            ? `<button type="button" class="editRolesBtn btn-outline" data-username="${escapeHtml(user.username)}" data-roles="${escapeHtml(JSON.stringify(roles))}">Edit</button>`
+            : '';
+        return `<div class="roles-cell">${chips}${edit}</div>`;
+    }
+
+    async function fetchRoles() {
+        rolesCache = await accessFetch('/api/admin/access/roles');
+        return rolesCache;
+    }
+
+    /* The per-account role picker, opened from the Users table. Roles the
+       caller cannot hand out are shown but locked, so a role the account
+       already holds stays held rather than being silently dropped. */
+    async function openRolePicker(username, currentRoles) {
+        let roles;
+        try {
+            roles = await fetchRoles();
+        } catch (err) {
+            showOverlay('Error', escapeHtml(err.message));
+            return;
+        }
+
+        const held = new Set(currentRoles);
+        const options = roles.map(role => {
+            const locked = !role.manageable;
+            const summary = role.superuser
+                ? 'Every permission'
+                : `${role.permissions.length} permission${role.permissions.length === 1 ? '' : 's'}`;
+            const desc = role.description ? `${escapeHtml(role.description)} &middot; ` : '';
+            return `
+                <label class="role-option${locked ? ' locked' : ''}" title="${locked ? 'Includes permissions you do not hold' : ''}">
+                    <input type="checkbox" value="${escapeHtml(role.name)}" ${held.has(role.name) ? 'checked' : ''} ${locked ? 'disabled' : ''}>
+                    <span><code>${escapeHtml(role.name)}</code><small>${desc}${summary}</small></span>
+                </label>`;
+        }).join('');
+
+        showOverlay(
+            `Roles for ${username}`,
+            `<div class="role-picker" id="rolePicker">${options || '<p>No roles exist yet.</p>'}</div>`,
+            [
+                { text: 'Cancel', class: 'closeBtn', onClick: hideOverlay },
+                {
+                    text: 'Save roles',
+                    class: 'btn-primary',
+                    onClick: async () => {
+                        const chosen = Array.from(
+                            document.querySelectorAll('#rolePicker input[type="checkbox"]:checked')
+                        ).map(cb => cb.value);
+                        try {
+                            await accessFetch(`/api/admin/access/users/${encodeURIComponent(username)}/roles`, {
+                                method: 'PUT',
+                                body: { roles: chosen }
+                            });
+                            hideOverlay();
+                            fetchUsers(searchUser ? searchUser.value : '', currentPage);
+                        } catch (err) {
+                            showOverlay('Could not change roles', escapeHtml(err.message));
+                        }
+                    }
+                }
+            ]
+        );
+    }
+
+    /* ----- Roles tab */
+
+    function renderRolesList() {
+        const list = document.getElementById('rolesList');
+        if (!list) return;
+        if (!rolesCache.length) {
+            list.innerHTML = '<p class="page-hint">No roles yet.</p>';
+            return;
+        }
+
+        list.innerHTML = rolesCache.map(role => {
+            const perms = role.superuser
+                ? '<span class="badge badge-role-super">every permission, including future ones</span>'
+                : (role.permissions.length
+                    ? role.permissions.map(p => `<span class="badge badge-perm">${escapeHtml(p)}</span>`).join('')
+                    : '<span class="roles-none">no permissions</span>');
+            const actions = (!role.system && role.manageable)
+                ? `<button type="button" class="btn-outline roleEditBtn" data-role="${escapeHtml(role.name)}">Edit</button>
+                   <button type="button" class="btn-danger roleDeleteBtn" data-role="${escapeHtml(role.name)}">Delete</button>`
+                : (role.system ? '<span class="role-item-members">built-in</span>' : '');
+            return `
+                <div class="role-item">
+                    <div class="role-item-head">
+                        ${roleBadge(role.name)}
+                        <button type="button" class="btn-outline roleMembersBtn" data-role="${escapeHtml(role.name)}">
+                            ${role.members} account${role.members === 1 ? '' : 's'}
+                        </button>
+                        <span class="spacer"></span>
+                        ${actions}
+                    </div>
+                    ${role.description ? `<p class="role-item-desc">${escapeHtml(role.description)}</p>` : ''}
+                    <div class="role-item-perms">${perms}</div>
+                </div>`;
+        }).join('');
+
+        list.querySelectorAll('.roleEditBtn').forEach(btn =>
+            btn.addEventListener('click', () => startEditRole(btn.dataset.role)));
+        list.querySelectorAll('.roleDeleteBtn').forEach(btn =>
+            btn.addEventListener('click', () => deleteRole(btn.dataset.role)));
+        list.querySelectorAll('.roleMembersBtn').forEach(btn =>
+            btn.addEventListener('click', () => showRoleMembers(btn.dataset.role)));
+    }
+
+    function renderPermissionPicker(selected) {
+        const box = document.getElementById('rolePermissions');
+        if (!box) return;
+        const groups = [];
+        permCatalog.forEach(p => {
+            let g = groups.find(x => x.name === p.group);
+            if (!g) { g = { name: p.group, perms: [] }; groups.push(g); }
+            g.perms.push(p);
+        });
+
+        box.innerHTML = groups.map(g => `
+            <div class="perm-group">
+                <p class="perm-group-title">${escapeHtml(g.name)}</p>
+                ${g.perms.map(p => {
+                    const locked = !p.held;
+                    return `
+                    <label class="perm-option${locked ? ' locked' : ''}" title="${locked ? 'You do not hold this permission' : ''}">
+                        <input type="checkbox" name="rolePerm" value="${escapeHtml(p.key)}" ${selected.has(p.key) ? 'checked' : ''} ${locked ? 'disabled' : ''}>
+                        <span><code>${escapeHtml(p.key)}</code><small>${escapeHtml(p.description)}</small></span>
+                    </label>`;
+                }).join('')}
+            </div>`).join('');
+    }
+
+    function resetRoleForm() {
+        editingRole = null;
+        document.getElementById('roleFormTitle').textContent = 'Create a role';
+        const name = document.getElementById('roleName');
+        name.value = '';
+        name.disabled = false;
+        document.getElementById('roleDescription').value = '';
+        document.getElementById('roleSubmit').textContent = 'Create role';
+        document.getElementById('roleCancel').hidden = true;
+        renderPermissionPicker(new Set());
+    }
+
+    function startEditRole(roleName) {
+        const role = rolesCache.find(r => r.name === roleName);
+        if (!role) return;
+        editingRole = role.name;
+        document.getElementById('roleFormTitle').textContent = `Edit ${role.name}`;
+        const name = document.getElementById('roleName');
+        name.value = role.name;
+        name.disabled = true;
+        document.getElementById('roleDescription').value = role.description || '';
+        document.getElementById('roleSubmit').textContent = 'Save changes';
+        document.getElementById('roleCancel').hidden = false;
+        renderPermissionPicker(new Set(role.permissions));
+        document.getElementById('roleFormCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    async function submitRoleForm(e) {
+        e.preventDefault();
+        const permissions = Array.from(
+            document.querySelectorAll('#rolePermissions input[name="rolePerm"]:checked')
+        ).map(cb => cb.value);
+        const description = document.getElementById('roleDescription').value.trim();
+
+        try {
+            if (editingRole) {
+                await accessFetch(`/api/admin/access/roles/${encodeURIComponent(editingRole)}`, {
+                    method: 'PATCH',
+                    body: { description, permissions }
+                });
+                rolesAlert(`Saved ${editingRole}.`);
+            } else {
+                const name = document.getElementById('roleName').value.trim();
+                await accessFetch('/api/admin/access/roles', {
+                    method: 'POST',
+                    body: { name, description, permissions }
+                });
+                rolesAlert(`Created ${name}.`);
+            }
+            resetRoleForm();
+            await refreshRolesTab();
+        } catch (err) {
+            rolesAlert(err.message, 'error');
+        }
+    }
+
+    async function deleteRole(roleName) {
+        const role = rolesCache.find(r => r.name === roleName);
+        const members = role ? role.members : 0;
+        const ok = await askConfirm({
+            title: `Delete the ${roleName} role?`,
+            body: members
+                ? `${members} account${members === 1 ? '' : 's'} will lose everything this role grants, straight away.\n\nThis cannot be undone.`
+                : 'Nobody holds it. This cannot be undone.',
+            confirmLabel: 'Delete role',
+            danger: true
+        });
+        if (!ok) return;
+        try {
+            await accessFetch(`/api/admin/access/roles/${encodeURIComponent(roleName)}`, { method: 'DELETE' });
+            if (editingRole === roleName) resetRoleForm();
+            rolesAlert(`Deleted ${roleName}.`);
+            await refreshRolesTab();
+        } catch (err) {
+            rolesAlert(err.message, 'error');
+        }
+    }
+
+    async function showRoleMembers(roleName) {
+        try {
+            const members = await accessFetch(`/api/admin/access/roles/${encodeURIComponent(roleName)}/members`);
+            const body = members.length
+                ? '<ul style="text-align:left; margin: 8px 0; padding-left: 20px;">' + members.map(m =>
+                    `<li><strong>${escapeHtml(m.username)}</strong> <small>since ${escapeHtml(m.grantedAt || '?')}${m.grantedBy ? ' by ' + escapeHtml(m.grantedBy) : ''}</small></li>`
+                  ).join('') + '</ul>'
+                : '<p>Nobody holds this role.</p>';
+            showOverlay(`Accounts with ${roleName}`, body);
+        } catch (err) {
+            showOverlay('Error', escapeHtml(err.message));
+        }
+    }
+
+    const AUDIT_LABELS = {
+        'role.create': 'Created role',
+        'role.update': 'Edited role',
+        'role.delete': 'Deleted role',
+        'user.roles': 'Changed roles',
+        'user.flag': 'Changed access',
+        'user.delete': 'Deleted account',
+        'user.reset_link': 'Reset link issued',
+        'migrate': 'Migration'
+    };
+
+    async function loadAccessAudit(page = 1) {
+        const body = document.getElementById('accessAuditBody');
+        if (!body) return;
+        try {
+            const data = await accessFetch(`/api/admin/access/audit?page=${page}`);
+            auditPageNo = data.page;
+            body.innerHTML = data.entries.length
+                ? data.entries.map(e => `
+                    <tr>
+                        <td>${escapeHtml(e.at)}</td>
+                        <td>${escapeHtml(e.actor)}</td>
+                        <td>${escapeHtml(AUDIT_LABELS[e.action] || e.action)}</td>
+                        <td>${escapeHtml(e.target)}</td>
+                        <td>${escapeHtml(e.detail || '')}</td>
+                    </tr>`).join('')
+                : '<tr><td colspan="5">Nothing yet.</td></tr>';
+            document.getElementById('auditPage').textContent = `Page ${auditPageNo}`;
+            document.getElementById('auditPrev').disabled = auditPageNo <= 1;
+            document.getElementById('auditNext').disabled = data.entries.length < data.pageSize;
+        } catch (err) {
+            body.innerHTML = `<tr><td colspan="5">${escapeHtml(err.message)}</td></tr>`;
+        }
+    }
+
+    async function refreshRolesTab() {
+        try {
+            const [catalog] = await Promise.all([
+                accessFetch('/api/admin/access/permissions'),
+                fetchRoles()
+            ]);
+            permCatalog = catalog;
+            renderRolesList();
+            if (!editingRole) renderPermissionPicker(
+                new Set(Array.from(document.querySelectorAll('#rolePermissions input[name="rolePerm"]:checked')).map(cb => cb.value))
+            );
+        } catch (err) {
+            rolesAlert(err.message, 'error');
+        }
+        loadAccessAudit(auditPageNo);
+    }
+
+    function initRoles() {
+        if (!rolesInited) {
+            rolesInited = true;
+            document.getElementById('roleForm').addEventListener('submit', submitRoleForm);
+            document.getElementById('roleCancel').addEventListener('click', resetRoleForm);
+            document.getElementById('auditPrev').addEventListener('click', () => loadAccessAudit(Math.max(1, auditPageNo - 1)));
+            document.getElementById('auditNext').addEventListener('click', () => loadAccessAudit(auditPageNo + 1));
+        }
+        refreshRolesTab();
+    }
+
     /* --------------------------------------------------------- Polls */
 
     const POLL_EXTENSIONS = [
@@ -6146,6 +6695,10 @@
             initChatPrompt();
         }
 
+        if (activeTabName === 'roles') {
+            initRoles();
+        }
+
         if (updateUrl) {
             const url = new URL(window.location);
             url.searchParams.set('page', activeTabName);
@@ -6171,6 +6724,9 @@
         const page = urlParams.get('page') || urlParams.get('tab') || 'users';
         switchTab(page, false);
     })();
+
+    // Hides the tabs this account has no permission for, once that is known.
+    loadAccessMe();
 </script>
 
 <script src="https://bakosmp.go.ro/js/topbar-show.js"></script>

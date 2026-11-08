@@ -11,9 +11,9 @@ use crate::AppState;
 pub struct JwtClaims {
     pub username: String,
     pub id: String,
-    #[serde(rename = "isAdmin")]
-    #[serde(default)]
-    pub is_admin: bool,
+    // Tokens issued before roles also carry an `isAdmin` claim. It is ignored
+    // on decode and no longer written: access is read from the database on
+    // every request (see middleware::permission), never from the token.
     #[serde(rename = "isOG")]
     #[serde(default)]
     pub is_og: bool,
@@ -21,12 +21,15 @@ pub struct JwtClaims {
     pub iat: Option<usize>,
 }
 
-/// Strict auth extractor — returns 401 if no valid JWT
+/// Strict auth extractor — returns 401 if no valid JWT.
+///
+/// Identifies the caller only. For anything gated on privilege use
+/// `middleware::permission::Require`, which reads the caller's roles from the
+/// database rather than trusting the token.
 #[derive(Debug, Clone)]
 pub struct AuthUser {
     pub username: String,
     pub id: String,
-    pub is_admin: bool,
     pub is_og: bool,
 }
 
@@ -63,7 +66,6 @@ impl FromRequest for AuthUser {
             Ok(AuthUser {
                 username: claims.username,
                 id: claims.id,
-                is_admin: claims.is_admin,
                 is_og: claims.is_og,
             })
         })
@@ -88,7 +90,6 @@ pub fn decode_jwt(token: &str, secret: &str) -> Result<JwtClaims, jsonwebtoken::
 pub fn create_jwt(
     username: &str,
     id: &str,
-    is_admin: bool,
     is_og: bool,
     secret: &str,
     expires_in_secs: u64,
@@ -99,7 +100,6 @@ pub fn create_jwt(
     let claims = JwtClaims {
         username: username.to_string(),
         id: id.to_string(),
-        is_admin,
         is_og,
         iat: Some(now),
         exp: Some(now + expires_in_secs as usize),

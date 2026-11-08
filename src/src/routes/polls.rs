@@ -5,8 +5,8 @@
 //! develop:
 //!
 //!   * `/api/admin/polls` — create, browse live and past, end early. Gated by
-//!     [`AdminUser`], which re-checks the database rather than trusting a token
-//!     whose expiry is never validated.
+//!     `Require<perm::PollsManage>`, which re-checks the database rather than
+//!     trusting a token whose expiry is never validated.
 //!   * `/api/polls` — what the player-facing frontend calls: which polls I may
 //!     answer, what one says, whether I may vote on it, and casting a vote.
 //!
@@ -26,7 +26,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 use crate::error::AppError;
-use crate::middleware::admin_auth::AdminUser;
+use crate::access::perm;
+use crate::middleware::permission::Require;
 use crate::middleware::auth::AuthUser;
 use crate::polls::{self, Audience, Duration, Flags, MAX_OPTIONS, MIN_OPTIONS};
 use crate::AppState;
@@ -340,8 +341,9 @@ async fn load_one(pool: &sqlx::MySqlPool, id: i64) -> Result<PollRow, AppError> 
 ///
 /// Read from the database, not from the session token: `is_member` is not a
 /// JWT claim at all, and `middleware::auth` disables expiry validation, so the
-/// token's `is_admin` can be arbitrarily out of date. `routes::auth::access`
-/// re-reads for the same reason.
+/// token cannot be trusted about privilege. "Admin" means holding the admin
+/// role (see `crate::access`). `routes::auth::access` re-reads for the same
+/// reason.
 ///
 /// Matched on `users.id` first and only then on the username. The id is what
 /// every other poll table keys on -- `poll_exclusions`, `poll_votes` -- so
@@ -358,9 +360,9 @@ async fn load_one(pool: &sqlx::MySqlPool, id: i64) -> Result<PollRow, AppError> 
 /// is a sqlx error, which would turn one odd row into a 500 on a page that
 /// should simply have told them they are not a member.
 async fn viewer(pool: &sqlx::MySqlPool, auth: &AuthUser) -> Result<(String, Flags), AppError> {
-    const FLAGS: &str = "SELECT id, is_admin, is_member, is_og FROM users";
+    const FLAGS: &str = "SELECT id, is_member, is_og FROM users";
 
-    let mut row: Option<(String, Option<bool>, Option<bool>, Option<bool>)> = None;
+    let mut row: Option<(String, Option<bool>, Option<bool>)> = None;
 
     if !auth.id.is_empty() {
         row = sqlx::query_as(&format!("{FLAGS} WHERE id = ?"))
@@ -376,13 +378,15 @@ async fn viewer(pool: &sqlx::MySqlPool, auth: &AuthUser) -> Result<(String, Flag
             .await?;
     }
 
-    let (id, is_admin, is_member, is_og) =
+    let (id, is_member, is_og) =
         row.ok_or_else(|| AppError::Unauthorized("Unknown account".to_string()))?;
+
+    let (_, perms) = crate::access::store::grants_for(pool, &id).await?;
 
     Ok((
         id,
         Flags {
-            is_admin: is_admin.unwrap_or(false),
+            is_admin: perms.is_superuser(),
             is_member: is_member.unwrap_or(false),
             is_og: is_og.unwrap_or(false),
         },
@@ -587,7 +591,7 @@ fn validate_new_poll(body: &CreatePollBody) -> Result<NewPoll, String> {
 /// POST /api/admin/polls — open a poll (admin only)
 async fn create_poll(
     state: web::Data<AppState>,
-    admin: AdminUser,
+    admin: Require<perm::PollsManage>,
     body: web::Json<CreatePollBody>,
 ) -> Result<HttpResponse, AppError> {
     let new = validate_new_poll(&body).map_err(AppError::BadRequest)?;
@@ -745,7 +749,7 @@ fn wants_live(status: Option<&str>) -> Result<bool, AppError> {
 /// POST /api/admin/polls/{id}/extend — give a live poll more time (admin only)
 async fn extend_poll(
     state: web::Data<AppState>,
-    admin: AdminUser,
+    admin: Require<perm::PollsManage>,
     path: web::Path<i64>,
     body: web::Json<ExtendBody>,
 ) -> Result<HttpResponse, AppError> {
@@ -819,7 +823,7 @@ async fn extend_poll(
 /// GET /api/admin/polls?status=live|past&page=N — browse polls (admin only)
 async fn list_polls_admin(
     state: web::Data<AppState>,
-    _admin: AdminUser,
+    _admin: Require<perm::PollsManage>,
     query: web::Query<ListQuery>,
 ) -> Result<HttpResponse, AppError> {
     let live = wants_live(query.status.as_deref())?;
@@ -1149,7 +1153,7 @@ async fn cast_vote(
 /// POST /api/admin/polls/{id}/end — close a poll now (admin only)
 async fn end_poll(
     state: web::Data<AppState>,
-    admin: AdminUser,
+    admin: Require<perm::PollsManage>,
     path: web::Path<i64>,
 ) -> Result<HttpResponse, AppError> {
     let poll_id = path.into_inner();

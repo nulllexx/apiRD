@@ -1,9 +1,11 @@
 use actix_web::{web, HttpRequest, HttpResponse};
 
+use crate::access::Permission;
 use crate::middleware::auth::decode_jwt;
+use crate::middleware::permission::load_principal;
 use crate::AppState;
 
-/// Check admin auth for status dashboard — redirects to status login on failure
+/// Check panel access for the status dashboard — redirects to status login on failure
 pub async fn check_status_dashboard_auth(
     req: &HttpRequest,
     state: &web::Data<AppState>,
@@ -11,7 +13,7 @@ pub async fn check_status_dashboard_auth(
     check_dashboard_auth(req, state, "https://bakosmp.go.ro/status/login.html", true).await
 }
 
-/// Check admin auth for RD admin dashboard — redirects to raindrippy login on failure
+/// Check panel access for the RD admin dashboard — redirects to raindrippy login on failure
 pub async fn check_rd_admin_auth(
     req: &HttpRequest,
     state: &web::Data<AppState>,
@@ -19,7 +21,7 @@ pub async fn check_rd_admin_auth(
     check_dashboard_auth(req, state, "https://bakosmp.go.ro/raindrippy/login.html", true).await
 }
 
-/// Check that *some* account is signed in — no admin flag required.
+/// Check that *some* account is signed in — no permission required.
 ///
 /// For pages every player uses rather than the two staff dashboards, so it
 /// sends people to the site's ordinary sign-in rather than a staff login.
@@ -34,7 +36,7 @@ async fn check_dashboard_auth(
     req: &HttpRequest,
     state: &web::Data<AppState>,
     redirect_url: &str,
-    require_admin: bool,
+    require_panel: bool,
 ) -> Result<(), HttpResponse> {
     let redirect = || HttpResponse::Found()
         .append_header(("Location", redirect_url))
@@ -56,25 +58,21 @@ async fn check_dashboard_auth(
         }
     };
 
-    // Look up user in DB
-    let user: Option<(String, bool)> = sqlx::query_as(
-        "SELECT id, is_admin FROM users WHERE id = ?",
-    )
-    .bind(&claims.id)
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None);
-
-    match user {
-        Some((_, true)) => Ok(()),
-        Some((_, false)) if !require_admin => Ok(()),
-        Some((_, false)) => {
-            log::info!("User not an admin");
-            Err(redirect())
-        }
-        None => {
+    let principal = match load_principal(&state.pool, &claims.id, &claims.username).await {
+        Ok(Some(p)) => p,
+        Ok(None) => {
             log::info!("User not found");
-            Err(redirect())
+            return Err(redirect());
         }
+        Err(e) => {
+            log::error!("Dashboard permission lookup failed: {}", e);
+            return Err(redirect());
+        }
+    };
+
+    if require_panel && !principal.has(Permission::PanelAccess) {
+        log::info!("{} lacks {}", principal.username, Permission::PanelAccess);
+        return Err(redirect());
     }
+    Ok(())
 }

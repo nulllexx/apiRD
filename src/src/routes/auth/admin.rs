@@ -3,8 +3,9 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::access::{perm, store, SUPERUSER_ROLE};
 use crate::error::AppError;
-use crate::middleware::auth::AuthUser;
+use crate::middleware::permission::Require;
 use crate::AppState;
 use crate::middleware::rate_limit::RateLimiter;
 
@@ -76,33 +77,37 @@ pub struct UpdateOgStatusBody {
 }
 
 /// POST /update-admin-status
+///
+/// The old admin switch, kept for the dashboards that still send it. It now
+/// grants or revokes the built-in admin role, which only an existing admin may
+/// hand out, and refuses to remove the last one.
 pub(super) async fn update_admin_status(
     req: HttpRequest,
     state: web::Data<AppState>,
     limiter: web::Data<RateLimiter>,
-    auth: AuthUser,
+    actor: Require<perm::RolesManage>,
     body: web::Json<UpdateAdminStatusBody>,
 ) -> Result<HttpResponse, AppError> {
     check_rate_limit(&req, &limiter)?;
 
-    if !auth.is_admin {
-        return Err(AppError::Forbidden("Access Denied".to_string()));
+    if !actor.is_superuser() {
+        return Err(AppError::Forbidden(
+            "Only an admin can grant or revoke the admin role".to_string(),
+        ));
     }
 
-    let target: Option<(String,)> =
-        sqlx::query_as("SELECT id FROM users WHERE username = ?")
+    let target: Option<(String, String)> =
+        sqlx::query_as("SELECT id, username FROM users WHERE username = ?")
             .bind(&body.username)
             .fetch_optional(&state.pool)
             .await?;
 
-    let (user_id,) =
+    let (user_id, username) =
         target.ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
-    sqlx::query("UPDATE users SET is_admin = ? WHERE id = ?")
-        .bind(body.is_admin)
-        .bind(&user_id)
-        .execute(&state.pool)
-        .await?;
+    let mut tx = state.pool.begin().await?;
+    store::set_superuser(&mut tx, &actor.username, &user_id, &username, body.is_admin).await?;
+    tx.commit().await?;
 
     Ok(HttpResponse::Ok().json(json!({ "message": "Admin status updated" })))
 }
@@ -112,14 +117,10 @@ pub(super) async fn admin_delete_user(
     req: HttpRequest,
     state: web::Data<AppState>,
     limiter: web::Data<RateLimiter>,
-    auth: AuthUser,
+    actor: Require<perm::UsersDelete>,
     body: web::Json<DeleteUserBody>,
 ) -> Result<HttpResponse, AppError> {
     check_rate_limit(&req, &limiter)?;
-
-    if !auth.is_admin {
-        return Err(AppError::Forbidden("Access denied".to_string()));
-    }
 
     let username = body
         .username
@@ -136,15 +137,32 @@ pub(super) async fn admin_delete_user(
     let (user_id,) =
         user.ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
-    sqlx::query("DELETE FROM users WHERE id = ?")
-        .bind(&user_id)
-        .execute(&state.pool)
-        .await?;
+    store::ensure_can_act_on(&state.pool, &actor.permissions, &user_id).await?;
+
+    // Deleting an account cascades its roles away, so the last admin would go
+    // with it. Checked and deleted under one lock for the same reason
+    // set_superuser does.
+    let mut tx = state.pool.begin().await?;
+    let (_, target) = store::grants_for(&mut *tx, &user_id).await?;
+    if target.is_superuser() && store::count_superusers_for_update(&mut tx).await? <= 1 {
+        return Err(AppError::Conflict(
+            "This is the last administrator; grant the admin role to someone else first"
+                .to_string(),
+        ));
+    }
 
     sqlx::query("DELETE FROM user_moderation WHERE user_id = ?")
         .bind(&user_id)
-        .execute(&state.pool)
+        .execute(&mut *tx)
         .await?;
+
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(&user_id)
+        .execute(&mut *tx)
+        .await?;
+
+    store::record(&mut *tx, &actor.username, "user.delete", username, None).await?;
+    tx.commit().await?;
 
     Ok(HttpResponse::Ok().json(json!({ "message": "User deleted successfully" })))
 }
@@ -154,14 +172,10 @@ pub(super) async fn admin_moderate(
     req: HttpRequest,
     state: web::Data<AppState>,
     limiter: web::Data<RateLimiter>,
-    auth: AuthUser,
+    actor: Require<perm::UsersModerate>,
     body: web::Json<ModerateBody>,
 ) -> Result<HttpResponse, AppError> {
     check_rate_limit(&req, &limiter)?;
-
-    if !auth.is_admin {
-        return Err(AppError::Forbidden("Access denied".to_string()));
-    }
 
     let username = body
         .username
@@ -182,6 +196,28 @@ pub(super) async fn admin_moderate(
 
     let (user_id,) =
         user.ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+
+    // A moderator may not ban someone who outranks them: that would let them
+    // remove the people able to undo it.
+    store::ensure_can_act_on(&state.pool, &actor.permissions, &user_id).await?;
+
+    // `makeAdmin` predates roles: true grants the admin role, false revokes
+    // it. The panel always sends false, so moderating an admin also strips
+    // their admin role, as it always has; for anyone else false is a no-op.
+    // Applied before the ban so a refusal (not an admin; last admin) leaves
+    // nothing half-done.
+    if let Some(make_admin) = body.make_admin {
+        if make_admin && !actor.is_superuser() {
+            return Err(AppError::Forbidden(
+                "Only an admin can grant the admin role".to_string(),
+            ));
+        }
+        let mut tx = state.pool.begin().await?;
+        if store::set_superuser(&mut tx, &actor.username, &user_id, username, make_admin).await? {
+            log::info!("Admin role changed for {}: {}", username, make_admin);
+        }
+        tx.commit().await?;
+    }
 
     let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let mod_note = body.mod_note.as_deref().unwrap_or("");
@@ -236,7 +272,7 @@ pub(super) async fn admin_moderate(
         .bind(mod_note)
         .bind(&now)
         .bind(&expiration)
-        .bind(&auth.username)
+        .bind(&actor.username)
         .bind(&incriminatory_str)
         .bind(&user_id)
         .execute(&state.pool)
@@ -250,7 +286,7 @@ pub(super) async fn admin_moderate(
         .bind(mod_note)
         .bind(&now)
         .bind(&expiration)
-        .bind(&auth.username)
+        .bind(&actor.username)
         .bind(&incriminatory_str)
         .execute(&state.pool)
         .await?;
@@ -281,16 +317,6 @@ pub(super) async fn admin_moderate(
     .await
     .ok();
 
-    // Handle admin toggle
-    if let Some(make_admin) = body.make_admin {
-        sqlx::query("UPDATE users SET is_admin = ? WHERE id = ?")
-            .bind(make_admin)
-            .bind(&user_id)
-            .execute(&state.pool)
-            .await?;
-        log::info!("Admin status changed for {}: {}", username, make_admin);
-    }
-
     log::info!("Moderation applied: {}", message);
     Ok(HttpResponse::Ok().json(json!({ "message": message })))
 }
@@ -300,14 +326,10 @@ pub(super) async fn admin_unban(
     req: HttpRequest,
     state: web::Data<AppState>,
     limiter: web::Data<RateLimiter>,
-    auth: AuthUser,
+    _actor: Require<perm::UsersModerate>,
     body: web::Json<UnbanBody>,
 ) -> Result<HttpResponse, AppError> {
     check_rate_limit(&req, &limiter)?;
-
-    if !auth.is_admin {
-        return Err(AppError::Forbidden("Access denied".to_string()));
-    }
 
     let username = body
         .username
@@ -337,13 +359,9 @@ pub(super) async fn moderation_list(
     req: HttpRequest,
     state: web::Data<AppState>,
     limiter: web::Data<RateLimiter>,
-    auth: AuthUser,
+    _actor: Require<perm::UsersView>,
 ) -> Result<HttpResponse, AppError> {
     check_rate_limit(&req, &limiter)?;
-
-    if !auth.is_admin {
-        return Err(AppError::Forbidden("Access denied".to_string()));
-    }
 
     #[derive(sqlx::FromRow, Serialize)]
     struct ModerationListRow {
@@ -379,14 +397,10 @@ pub(super) async fn admin_list_users(
     req: HttpRequest,
     state: web::Data<AppState>,
     limiter: web::Data<RateLimiter>,
-    auth: AuthUser,
+    _actor: Require<perm::UsersView>,
     query: web::Query<ListUsersQuery>,
 ) -> Result<HttpResponse, AppError> {
     check_rate_limit(&req, &limiter)?;
-
-    if !auth.is_admin {
-        return Err(AppError::Forbidden("Access denied".to_string()));
-    }
 
     let search = match &query.search {
         Some(s) if !s.is_empty() => format!("%{}%", s),
@@ -398,8 +412,8 @@ pub(super) async fn admin_list_users(
 
     #[derive(sqlx::FromRow)]
     struct UserListRow {
+        id: String,
         username: String,
-        is_admin: bool,
         is_member: bool,
         is_projallowed: bool,
         is_chatallowed: bool,
@@ -408,7 +422,7 @@ pub(super) async fn admin_list_users(
     }
 
     let users: Vec<UserListRow> = sqlx::query_as(
-        r#"SELECT u.id, u.username, u.is_admin, u.is_member, u.is_projallowed, u.is_chatallowed, u.is_og,
+        r#"SELECT u.id, u.username, u.is_member, u.is_projallowed, u.is_chatallowed, u.is_og,
             m.type AS moderation_type
         FROM users u
         LEFT JOIN (
@@ -430,13 +444,33 @@ pub(super) async fn admin_list_users(
     .fetch_all(&state.pool)
     .await?;
 
+    // Each listed account's roles, in one query for the whole page.
+    let mut roles: std::collections::HashMap<String, Vec<String>> = Default::default();
+    if !users.is_empty() {
+        let marks = vec!["?"; users.len()].join(",");
+        let sql = format!(
+            "SELECT ur.user_id, r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+             WHERE ur.user_id IN ({marks}) ORDER BY r.name"
+        );
+        let mut q = sqlx::query_as::<_, (String, String)>(&sql);
+        for u in &users {
+            q = q.bind(&u.id);
+        }
+        for (user_id, role) in q.fetch_all(&state.pool).await? {
+            roles.entry(user_id).or_default().push(role);
+        }
+    }
+
     let result: Vec<serde_json::Value> = users
         .iter()
         .map(|u| {
+            let user_roles = roles.remove(&u.id).unwrap_or_default();
             json!({
                 "username": u.username,
                 "accountStatus": if u.moderation_type.is_some() { "moderated" } else { "ok" },
-                "isAdmin": u.is_admin,
+                // Kept for the status dashboard's admin checkbox.
+                "isAdmin": user_roles.iter().any(|r| r == SUPERUSER_ROLE),
+                "roles": user_roles,
                 "isMember": u.is_member,
                 "isProjAllowed": u.is_projallowed,
                 "isChatAllowed": u.is_chatallowed,
@@ -453,14 +487,10 @@ pub(super) async fn admin_update_member_status(
     req: HttpRequest,
     state: web::Data<AppState>,
     limiter: web::Data<RateLimiter>,
-    auth: AuthUser,
+    actor: Require<perm::UsersManageAccess>,
     body: web::Json<UpdateMemberStatusBody>,
 ) -> Result<HttpResponse, AppError> {
     check_rate_limit(&req, &limiter)?;
-
-    if !auth.is_admin {
-        return Err(AppError::Forbidden("Access denied".to_string()));
-    }
 
     let username = body
         .username
@@ -487,6 +517,9 @@ pub(super) async fn admin_update_member_status(
         return Err(AppError::NotFound("User not found".to_string()));
     }
 
+    let detail = format!("member={}", is_member);
+    store::record(&state.pool, &actor.username, "user.flag", username, Some(&detail)).await?;
+
     Ok(HttpResponse::Ok().json(json!({ "message": "User member status updated successfully" })))
 }
 
@@ -495,14 +528,10 @@ pub(super) async fn admin_update_proj_status(
     req: HttpRequest,
     state: web::Data<AppState>,
     limiter: web::Data<RateLimiter>,
-    auth: AuthUser,
+    actor: Require<perm::UsersManageAccess>,
     body: web::Json<UpdateProjStatusBody>,
 ) -> Result<HttpResponse, AppError> {
     check_rate_limit(&req, &limiter)?;
-
-    if !auth.is_admin {
-        return Err(AppError::Forbidden("Access denied".to_string()));
-    }
 
     let username = body
         .username
@@ -529,6 +558,9 @@ pub(super) async fn admin_update_proj_status(
         return Err(AppError::NotFound("User not found".to_string()));
     }
 
+    let detail = format!("projects={}", is_allowed);
+    store::record(&state.pool, &actor.username, "user.flag", username, Some(&detail)).await?;
+
     Ok(HttpResponse::Ok().json(json!({ "message": "User project status updated successfully" })))
 }
 
@@ -537,14 +569,10 @@ pub(super) async fn admin_update_chat_status(
     req: HttpRequest,
     state: web::Data<AppState>,
     limiter: web::Data<RateLimiter>,
-    auth: AuthUser,
+    actor: Require<perm::UsersManageAccess>,
     body: web::Json<UpdateChatStatusBody>,
 ) -> Result<HttpResponse, AppError> {
     check_rate_limit(&req, &limiter)?;
-
-    if !auth.is_admin {
-        return Err(AppError::Forbidden("Access denied".to_string()));
-    }
 
     let username = body
         .username
@@ -571,6 +599,9 @@ pub(super) async fn admin_update_chat_status(
         return Err(AppError::NotFound("User not found".to_string()));
     }
 
+    let detail = format!("chat={}", is_allowed);
+    store::record(&state.pool, &actor.username, "user.flag", username, Some(&detail)).await?;
+
     Ok(HttpResponse::Ok().json(json!({ "message": "User chat status updated successfully" })))
 }
 
@@ -579,14 +610,10 @@ pub(super) async fn admin_update_og_status(
     req: HttpRequest,
     state: web::Data<AppState>,
     limiter: web::Data<RateLimiter>,
-    auth: AuthUser,
+    actor: Require<perm::UsersManageAccess>,
     body: web::Json<UpdateOgStatusBody>,
 ) -> Result<HttpResponse, AppError> {
     check_rate_limit(&req, &limiter)?;
-
-    if !auth.is_admin {
-        return Err(AppError::Forbidden("Access denied".to_string()));
-    }
 
     let username = body
         .username
@@ -612,6 +639,9 @@ pub(super) async fn admin_update_og_status(
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound("User not found".to_string()));
     }
+
+    let detail = format!("og={}", is_og);
+    store::record(&state.pool, &actor.username, "user.flag", username, Some(&detail)).await?;
 
     Ok(HttpResponse::Ok().json(json!({ "message": "User OG status updated successfully" })))
 }

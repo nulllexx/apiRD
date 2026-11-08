@@ -5,7 +5,8 @@
 //!
 //! Two surfaces, as with polls:
 //!
-//!   * `/api/admin/chat-prompt` — read and save it. Gated by [`AdminUser`].
+//!   * `/api/admin/chat-prompt` — read and save it. Gated by
+//!     `Require<perm::ChatPromptManage>`.
 //!   * `/api/chat-prompt` — what the chat server calls on a person's behalf,
 //!     forwarding their cookie: the prompt if they have not been shown it yet,
 //!     and recording that they have. Not under `/api/chat/`, which belongs to
@@ -21,7 +22,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::error::AppError;
-use crate::middleware::admin_auth::AdminUser;
+use crate::access::perm;
+use crate::middleware::permission::Require;
 use crate::middleware::auth::AuthUser;
 use crate::AppState;
 
@@ -281,7 +283,7 @@ async fn admin_view(pool: &sqlx::MySqlPool) -> Result<serde_json::Value, AppErro
 /// GET /api/admin/chat-prompt
 async fn get_prompt_admin(
     state: web::Data<AppState>,
-    _admin: AdminUser,
+    _admin: Require<perm::ChatPromptManage>,
 ) -> Result<HttpResponse, AppError> {
     Ok(HttpResponse::Ok().json(admin_view(&state.pool).await?))
 }
@@ -289,7 +291,7 @@ async fn get_prompt_admin(
 /// PUT /api/admin/chat-prompt — replace the prompt (admin only)
 async fn save_prompt(
     state: web::Data<AppState>,
-    admin: AdminUser,
+    admin: Require<perm::ChatPromptManage>,
     body: web::Json<SavePromptBody>,
 ) -> Result<HttpResponse, AppError> {
     let new = validate(&body).map_err(AppError::BadRequest)?;

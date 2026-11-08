@@ -20,6 +20,7 @@ pub async fn init_database(pool: &MySqlPool) -> Result<(), sqlx::Error> {
     create_api_keys_table(pool).await?;
     seed_components(pool).await?;
     seed_history_wiki(pool).await?;
+    crate::access::store::migrate(pool).await?;
     Ok(())
 }
 
@@ -35,6 +36,7 @@ async fn setup_database(pool: &MySqlPool) -> Result<(), sqlx::Error> {
             id VARCHAR(255) PRIMARY KEY,
             username VARCHAR(255) UNIQUE NOT NULL,
             password_hash VARCHAR(255) NOT NULL,
+            -- Superseded by the roles tables; read once by the roles migration.
             is_admin BOOLEAN DEFAULT FALSE,
             apiKeyId VARCHAR(255) NULL,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -253,6 +255,49 @@ async fn setup_database(pool: &MySqlPool) -> Result<(), sqlx::Error> {
             version INT UNSIGNED NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         ) ENGINE=InnoDB"#,
+        // ------------------------------------------------------------- roles
+        //
+        // Roles-based access control (see crate::access). These replace the
+        // `users.is_admin` switch, which is kept only so the one-time
+        // migration in access::store::migrate can read it.
+        //
+        // `permission` holds a string crate::access::Permission produces; a
+        // unit test pins those spellings. The admin role has no rows here: it
+        // holds every permission implicitly.
+        r#"CREATE TABLE IF NOT EXISTS roles (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(64) NOT NULL UNIQUE,
+            description VARCHAR(255) NOT NULL DEFAULT '',
+            is_system BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+        ) ENGINE=InnoDB"#,
+        r#"CREATE TABLE IF NOT EXISTS role_permissions (
+            role_id BIGINT NOT NULL,
+            permission VARCHAR(64) NOT NULL,
+            PRIMARY KEY (role_id, permission),
+            FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB"#,
+        r#"CREATE TABLE IF NOT EXISTS user_roles (
+            user_id VARCHAR(255) NOT NULL,
+            role_id BIGINT NOT NULL,
+            granted_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+            granted_by VARCHAR(255) NULL,
+            PRIMARY KEY (user_id, role_id),
+            INDEX idx_user_roles_role (role_id),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB"#,
+        // Every change to who can do what. Usernames, not foreign keys, so
+        // the trail outlives the accounts in it.
+        r#"CREATE TABLE IF NOT EXISTS access_audit (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            at DATETIME(3) NOT NULL,
+            actor VARCHAR(255) NOT NULL,
+            action VARCHAR(32) NOT NULL,
+            target VARCHAR(255) NOT NULL,
+            detail TEXT NULL,
+            INDEX idx_access_audit_at (at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"#,
     ];
 
     for create_table in &tables {

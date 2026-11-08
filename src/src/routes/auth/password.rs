@@ -6,7 +6,8 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::error::AppError;
-use crate::middleware::auth::AuthUser;
+use crate::access::{perm, store};
+use crate::middleware::permission::Require;
 use crate::AppState;
 use crate::middleware::rate_limit::RateLimiter;
 
@@ -170,14 +171,10 @@ pub(super) async fn admin_gen_pwd_reset(
     req: HttpRequest,
     state: web::Data<AppState>,
     limiter: web::Data<RateLimiter>,
-    auth: AuthUser,
+    actor: Require<perm::UsersResetPassword>,
     body: web::Json<GenPwdResetBody>,
 ) -> Result<HttpResponse, AppError> {
     check_rate_limit(&req, &limiter)?;
-
-    if !auth.is_admin {
-        return Err(AppError::Forbidden("Access denied".to_string()));
-    }
 
     let username = body
         .username
@@ -193,6 +190,10 @@ pub(super) async fn admin_gen_pwd_reset(
 
     let (user_id,) =
         user.ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+
+    // A reset link is the account. Handing one out for an account with more
+    // access than your own would be a way to acquire that access.
+    store::ensure_can_act_on(&state.pool, &actor.permissions, &user_id).await?;
 
     // Generate session token: 32 random bytes -> hex
     let mut rng = rand::thread_rng();
@@ -211,6 +212,8 @@ pub(super) async fn admin_gen_pwd_reset(
     .bind(&expires_at)
     .execute(&state.pool)
     .await?;
+
+    store::record(&state.pool, &actor.username, "user.reset_link", username, None).await?;
 
     Ok(HttpResponse::Ok().json(json!({
         "message": "Password reset session created",
