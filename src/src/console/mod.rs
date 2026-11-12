@@ -12,6 +12,8 @@
 
 pub mod audit;
 pub mod control;
+pub mod files;
+pub mod files_write;
 pub mod inventory;
 pub mod mod_assets;
 pub mod models;

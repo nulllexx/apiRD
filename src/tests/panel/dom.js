@@ -91,9 +91,12 @@ class ClassList {
     contains(c) { return this._all().includes(c); }
     add(...cs) { const l = this._all(); cs.forEach(c => { if (!l.includes(c)) l.push(c); }); this._set(l); }
     remove(...cs) { this._set(this._all().filter(c => !cs.includes(c))); }
-    toggle(c) {
-        if (this.contains(c)) { this.remove(c); return false; }
-        this.add(c); return true;
+    /* With a second argument, adds when it is truthy and removes when not,
+       as the DOM does; without one, flips. */
+    toggle(c, force) {
+        const on = force === undefined ? !this.contains(c) : !!force;
+        if (on) this.add(c); else this.remove(c);
+        return on;
     }
 }
 

@@ -66,6 +66,21 @@ pub struct AppConfig {
     /// The server's mod jars, read for the textures of modded items. Absent on
     /// a vanilla or plugin-only server, which is not an error.
     pub mods_dir: String,
+    /// Root of the game server's files, as mounted into this container. The
+    /// admin panel's file browser can read anything beneath it and nothing
+    /// outside it.
+    pub minecraft_server_dir: String,
+    /// Extra patterns the file browser refuses to serve, on top of its built-in
+    /// list of credential stores. Comma-separated; see `console::files`.
+    pub server_files_deny: Vec<String>,
+    /// Extra patterns the file browser will show but never write, on top of
+    /// its built-in list. Comma-separated, same syntax as the deny list.
+    pub server_files_readonly: Vec<String>,
+    /// Where the file browser keeps the previous version of every file it
+    /// overwrites. Must be outside the server directory -- backups hold
+    /// unmasked secrets -- and writing is refused if it is not. Empty disables
+    /// editing and uploads entirely.
+    pub server_files_backup_dir: String,
     pub upload_logs_path: String,
     pub content_path: String,
     pub seasons_path: String,
@@ -77,6 +92,11 @@ pub struct AppConfig {
     pub google_redirect_uri: String,
     pub oauth_signup_redirect: String,
     pub oauth_success_redirect: String,
+}
+
+/// A comma-separated list of patterns, blanks dropped.
+fn patterns(raw: &str) -> Vec<String> {
+    raw.split(',').map(str::trim).filter(|p| !p.is_empty()).map(str::to_string).collect()
 }
 
 impl AppConfig {
@@ -163,6 +183,16 @@ impl AppConfig {
             ),
             minecraft_assets_version: optional("MINECRAFT_ASSETS_VERSION", "1.21.1"),
             mods_dir: optional("MODS_DIR", "/mcserver/mods"),
+            minecraft_server_dir: optional("MINECRAFT_SERVER_DIR", "/mcserver"),
+            server_files_deny: get("SERVER_FILES_DENY").map(|v| patterns(&v)).unwrap_or_default(),
+            server_files_readonly: get("SERVER_FILES_READONLY")
+                .map(|v| patterns(&v))
+                .unwrap_or_default(),
+            // Through `get`, like the texture mirror: set-but-empty means
+            // "writes off", unset means the default.
+            server_files_backup_dir: get("SERVER_FILES_BACKUP_DIR").unwrap_or_else(|| {
+                "/home/useradmin/api/mainapi/data/file-backups".to_string()
+            }),
             // Read through `get` rather than `optional` so that setting the
             // variable to an empty string is honoured as "never fetch" instead
             // of silently falling back to the default mirror. Unset still means
@@ -341,6 +371,11 @@ mod tests {
         assert!(cfg.item_texture_base_url.starts_with("https://"));
         // Next to server.properties in the same bind mount.
         assert_eq!(cfg.mods_dir, "/mcserver/mods");
+        assert_eq!(cfg.minecraft_server_dir, "/mcserver");
+        assert!(cfg.server_files_deny.is_empty());
+        assert!(cfg.server_files_readonly.is_empty());
+        // In the persisted data mount, outside the server directory.
+        assert_eq!(cfg.server_files_backup_dir, "/home/useradmin/api/mainapi/data/file-backups");
     }
 
     #[test]

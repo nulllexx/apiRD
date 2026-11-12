@@ -8,6 +8,8 @@ use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::console::control::{self, Phase, PowerAction};
+use crate::console::files::{Download, ServerFiles};
+use crate::console::files_write::{MAX_EDIT_BYTES, MAX_UPLOAD_BYTES};
 use crate::console::inventory::{self, InventoryError};
 use crate::console::multiverse::{self, ContainerKind};
 use crate::console::textures::TextureError;
@@ -1043,12 +1045,321 @@ async fn download_log(
         .into_response(&req))
 }
 
+#[derive(Deserialize)]
+struct FileQuery {
+    #[serde(default)]
+    path: String,
+}
+
+fn server_files(state: &AppState) -> ServerFiles {
+    ServerFiles::new(&state.config.minecraft_server_dir, &state.config.server_files_deny)
+        .with_writes(&state.config.server_files_readonly, &state.config.server_files_backup_dir)
+}
+
+/// Refuse a write that did not come from the panel's own pages.
+///
+/// The session cookie is SameSite=Lax, which stops other *sites* -- but this
+/// one lives under go.ro, a shared dynamic-DNS domain, where other people's
+/// hosts may count as the same site. A custom header settles it: a page on
+/// another origin cannot send one without a CORS preflight, and CORS here
+/// allows no custom headers at all. `Sec-Fetch-Site`, where the browser sends
+/// it, must also say same-origin.
+fn require_panel_request(req: &actix_web::HttpRequest) -> Result<(), AppError> {
+    let headers = req.headers();
+    let marked = headers.get("x-rd-panel").and_then(|v| v.to_str().ok()) == Some("1");
+    let site = headers.get("sec-fetch-site").and_then(|v| v.to_str().ok());
+    if !marked || site.is_some_and(|s| s != "same-origin") {
+        return Err(AppError::Forbidden(
+            "File changes are only accepted from the admin panel".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// Run file-browser work on the blocking pool: it is all synchronous I/O.
+async fn on_blocking_pool<T, F>(f: F) -> Result<T, AppError>
+where
+    F: FnOnce() -> Result<T, crate::console::files::FileError> + Send + 'static,
+    T: Send + 'static,
+{
+    web::block(f)
+        .await
+        .map_err(|e| {
+            log::error!("files: blocking task failed: {e}");
+            AppError::Internal("Could not read the server's files".to_string())
+        })?
+        .map_err(AppError::from)
+}
+
+/// Headers for anything that carries a server file's contents.
+///
+/// Never cached, since a config can still hold something the masking missed,
+/// and never interpreted: whatever is in the server directory -- an `.html`
+/// a plugin exported, say -- must not run on this origin.
+fn harden(resp: &mut HttpResponse) {
+    use actix_web::http::header::{self, HeaderValue};
+    let headers = resp.headers_mut();
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static("default-src 'none'; sandbox"),
+    );
+}
+
+/// A download name safe to put in a header: ASCII letters, digits, `.`, `-`
+/// and `_`, everything else replaced.
+fn attachment_name(name: &str) -> String {
+    let safe: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
+        .collect();
+    if safe.trim_matches('.').is_empty() { "download".to_string() } else { safe }
+}
+
+/// Record that someone read a file's contents, or refuse to hand them over.
+///
+/// Recorded after the file has been opened, so a mistyped path does not leave
+/// an entry, but before a byte is sent: contents nobody can be shown to have
+/// read are exactly what this exists to prevent.
+async fn audit_file_read(
+    state: &AppState,
+    admin: &Principal,
+    verb: &str,
+    path: &str,
+    masked: usize,
+) -> Result<(), AppError> {
+    let command = format!("{verb} {path}");
+    let record = audit_or_refuse(state, admin, Kind::File, &command, Some(path)).await?;
+    let detail = (masked > 0).then(|| {
+        format!("{masked} secret value{} masked", if masked == 1 { "" } else { "s" })
+    });
+    audit::finish(&state.pool, &state.console.audit, record, Outcome::Ok, detail.as_deref()).await;
+    Ok(())
+}
+
+/// GET /api/admin/console/files?path= -- list one folder of the server.
+async fn list_files(
+    state: web::Data<AppState>,
+    _admin: Require<perm::ConsoleFiles>,
+    query: web::Query<FileQuery>,
+) -> Result<HttpResponse, AppError> {
+    let files = server_files(&state);
+    let path = query.into_inner().path;
+    let listing = on_blocking_pool(move || files.list(&path)).await?;
+    let mut resp = HttpResponse::Ok().json(listing);
+    harden(&mut resp);
+    Ok(resp)
+}
+
+/// GET /api/admin/console/files/view?path= -- the start of a file, as text,
+/// with secrets masked.
+async fn view_file(
+    state: web::Data<AppState>,
+    admin: Require<perm::ConsoleFiles>,
+    query: web::Query<FileQuery>,
+) -> Result<HttpResponse, AppError> {
+    let files = server_files(&state);
+    let path = query.into_inner().path;
+    let preview = on_blocking_pool(move || files.preview(&path)).await?;
+
+    // Opening a binary file returns no contents, so there is nothing to record.
+    if !preview.binary {
+        audit_file_read(&state, &admin, "view", &preview.path, preview.masked).await?;
+    }
+
+    let mut resp = HttpResponse::Ok().json(preview);
+    harden(&mut resp);
+    Ok(resp)
+}
+
+/// GET /api/admin/console/files/download?path= -- one file, as an attachment.
+/// Config files have their secrets masked; everything else is streamed as-is.
+async fn download_file(
+    req: actix_web::HttpRequest,
+    state: web::Data<AppState>,
+    admin: Require<perm::ConsoleFiles>,
+    query: web::Query<FileQuery>,
+) -> Result<HttpResponse, AppError> {
+    use actix_web::http::header::{ContentDisposition, DispositionParam, DispositionType};
+
+    let files = server_files(&state);
+    let path = crate::console::files::normalize(&query.path)?;
+    let requested = path.clone();
+    let download = on_blocking_pool(move || files.download(&path)).await?;
+
+    let masked = match &download {
+        Download::Masked { masked, .. } => *masked,
+        Download::Raw { .. } => 0,
+    };
+    audit_file_read(&state, &admin, "download", &requested, masked).await?;
+
+    let disposition = ContentDisposition {
+        disposition: DispositionType::Attachment,
+        parameters: vec![DispositionParam::Filename(attachment_name(download.name()))],
+    };
+
+    let mut resp = match download {
+        Download::Masked { bytes, .. } => HttpResponse::Ok()
+            .content_type(mime_guess::mime::APPLICATION_OCTET_STREAM)
+            .insert_header(disposition)
+            .body(bytes),
+        // Streamed rather than buffered: world backups and mod jars run to
+        // gigabytes. Always octet-stream, whatever the extension says.
+        Download::Raw { file, path, .. } => actix_files::NamedFile::from_file(file, path)
+            .map_err(|e| {
+                log::error!("files: cannot stream {requested}: {e}");
+                AppError::Internal("Could not read the server's files".to_string())
+            })?
+            .set_content_type(mime_guess::mime::APPLICATION_OCTET_STREAM)
+            .set_content_disposition(disposition)
+            .into_response(&req),
+    };
+    harden(&mut resp);
+    Ok(resp)
+}
+
+#[derive(Deserialize)]
+struct SaveBody {
+    path: String,
+    content: String,
+    version: String,
+}
+
+/// PUT /api/admin/console/files/content -- replace a text file with edited
+/// contents. Masked secrets are restored, and every rule in
+/// `console::files_write` applies.
+async fn save_file(
+    req: actix_web::HttpRequest,
+    state: web::Data<AppState>,
+    admin: Require<perm::ConsoleEdit>,
+    body: web::Json<SaveBody>,
+) -> Result<HttpResponse, AppError> {
+    require_panel_request(&req)?;
+    let SaveBody { path, content, version } = body.into_inner();
+    let path = crate::console::files::normalize(&path)?;
+
+    // Recorded before anything is written, refusals included: an attempt to
+    // change a locked key is exactly what someone will later want to see.
+    let record = audit_or_refuse(&state, &admin, Kind::File, &format!("edit {path}"), Some(&path))
+        .await?;
+    let files = server_files(&state);
+    let target = path.clone();
+    let result = on_blocking_pool(move || files.save(&target, &content, &version)).await;
+
+    let detail = match &result {
+        Ok(saved) if saved.unchanged => Some("no changes".to_string()),
+        Ok(saved) if saved.restored > 0 => Some(format!(
+            "{} masked value{} kept",
+            saved.restored,
+            if saved.restored == 1 { "" } else { "s" }
+        )),
+        Ok(_) => None,
+        Err(e) => Some(e.to_string()),
+    };
+    let outcome = if result.is_ok() { Outcome::Ok } else { Outcome::Failed };
+    audit::finish(&state.pool, &state.console.audit, record, outcome, detail.as_deref()).await;
+
+    let saved = result?;
+    log::info!("files: {} saved {}", admin.username, saved.path);
+    Ok(HttpResponse::Ok().json(saved))
+}
+
+#[derive(Deserialize)]
+struct UploadQuery {
+    #[serde(default)]
+    path: String,
+    #[serde(default)]
+    overwrite: bool,
+}
+
+/// POST /api/admin/console/files/upload?path=<folder>&overwrite= -- one file,
+/// as the multipart field `file`. Replacing an existing file is an edit, so it
+/// also needs `console.edit`.
+async fn upload_file(
+    req: actix_web::HttpRequest,
+    state: web::Data<AppState>,
+    admin: Require<perm::ConsoleUpload>,
+    query: web::Query<UploadQuery>,
+    mut payload: actix_multipart::Multipart,
+) -> Result<HttpResponse, AppError> {
+    require_panel_request(&req)?;
+    let UploadQuery { path, overwrite } = query.into_inner();
+    if overwrite && !admin.has(crate::access::Permission::ConsoleEdit) {
+        return Err(AppError::Forbidden(
+            "Replacing an existing file needs the console.edit permission".to_string(),
+        ));
+    }
+    let folder = crate::console::files::normalize(&path)?;
+
+    // The first `file` field; anything else is drained and ignored. The size
+    // limit is enforced while reading, not taken from Content-Length.
+    let mut upload: Option<(String, Vec<u8>)> = None;
+    while let Some(field) = payload.next().await {
+        let mut field =
+            field.map_err(|e| AppError::BadRequest(format!("Malformed upload: {e}")))?;
+        let name = field
+            .content_disposition()
+            .filter(|cd| cd.get_name() == Some("file"))
+            .and_then(|cd| cd.get_filename().map(str::to_string));
+        let keep = upload.is_none() && name.is_some();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = field.next().await {
+            let chunk = chunk.map_err(|e| AppError::BadRequest(format!("Malformed upload: {e}")))?;
+            if keep {
+                if bytes.len() + chunk.len() > MAX_UPLOAD_BYTES {
+                    return Err(AppError::PayloadTooLarge(format!(
+                        "Uploads can be at most {} MiB",
+                        MAX_UPLOAD_BYTES / (1024 * 1024)
+                    )));
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+        }
+        if keep {
+            upload = name.map(|n| (n, bytes));
+        }
+    }
+    let (name, bytes) =
+        upload.ok_or_else(|| AppError::BadRequest("No file was sent".to_string()))?;
+    // Before the audit entry, so what gets recorded is a name that passed.
+    crate::console::files_write::check_upload_name(&name)?;
+
+    let shown = crate::console::files::join(&folder, &name);
+    let verb = if overwrite { "replace" } else { "upload" };
+    let record =
+        audit_or_refuse(&state, &admin, Kind::File, &format!("{verb} {shown}"), Some(&shown)).await?;
+    let files = server_files(&state);
+    let result = on_blocking_pool(move || files.upload(&folder, &name, &bytes, overwrite)).await;
+    let detail = match &result {
+        Ok(up) => Some(format!("{} bytes{}", up.size, if up.replaced { ", previous version backed up" } else { "" })),
+        Err(e) => Some(e.to_string()),
+    };
+    let outcome = if result.is_ok() { Outcome::Ok } else { Outcome::Failed };
+    audit::finish(&state.pool, &state.console.audit, record, outcome, detail.as_deref()).await;
+
+    let uploaded = result?;
+    log::info!("files: {} uploaded {}", admin.username, uploaded.path);
+    Ok(HttpResponse::Ok().json(uploaded))
+}
+
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/admin/console")
             .route("/stream", web::get().to(stream_log))
             .route("/command", web::post().to(run_command))
             .route("/download", web::get().to(download_log))
+            .route("/files", web::get().to(list_files))
+            .route("/files/view", web::get().to(view_file))
+            .route("/files/download", web::get().to(download_file))
+            // Its own resource for the body limit: actix's default of 32 KiB
+            // is far below an editable file, which JSON escaping can grow.
+            .service(
+                web::resource("/files/content")
+                    .app_data(web::JsonConfig::default().limit(MAX_EDIT_BYTES * 6 + 4096))
+                    .route(web::put().to(save_file)),
+            )
+            .route("/files/upload", web::post().to(upload_file))
             .route("/stats", web::get().to(server_stats))
             .route("/audit", web::get().to(audit_history))
             .route("/online", web::get().to(online_players))

@@ -1279,6 +1279,262 @@
         #playerTable td button { margin: 0 4px 4px 0; }
         #playerTable td button[disabled] { opacity: 0.45; cursor: not-allowed; }
 
+        /* Minecraft server: sub-views */
+        .mc-subtabs { margin: 18px 0 16px; }
+        .mc-view { display: none; }
+        .mc-view.active { display: block; }
+        #mcOverview[hidden], .mc-view[hidden] { display: none !important; }
+        /* `button` and `.btn` set a display of their own, which beats the
+           hidden attribute; inside this tab, hidden means hidden. */
+        #minecraft-tab [hidden] { display: none !important; }
+        #mc-players #playersPanel { margin-top: 0; }
+
+        .sr-only {
+            position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+            overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+        }
+
+        /* Files */
+        #filesToolbar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 8px;
+        }
+        #filesToolbar .spacer { flex: 1; }
+        #filesFilter { max-width: 220px; margin: 0; }
+
+        #filesCrumbs {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 2px;
+            font-family: "JetBrains Mono", Consolas, monospace;
+            font-size: 0.88rem;
+            min-width: 0;
+        }
+        #filesCrumbs .crumb {
+            background: none !important;
+            border: none !important;
+            padding: 4px 6px;
+            margin: 0;
+            color: var(--accent) !important;
+            font-family: inherit;
+            font-size: inherit;
+            border-radius: 6px;
+        }
+        #filesCrumbs .crumb:hover { background: var(--accent-soft) !important; transform: none; }
+        #filesCrumbs .crumb[aria-current] { color: var(--text) !important; font-weight: 600; cursor: default; }
+        #filesCrumbs .crumb-sep { color: var(--text-faint) !important; }
+
+        .files-policy { font-size: 0.8rem; margin: 0 0 12px; }
+        .files-policy i { color: var(--ok) !important; margin-right: 4px; }
+        #filesNote { margin: 0 0 8px; }
+        #filesNote.error { color: var(--danger) !important; }
+
+        #filesLayout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+        #filesLayout.viewing { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); }
+        #filesTableWrap {
+            background: var(--bg-panel) !important;
+            border: 1px solid var(--line) !important;
+            border-radius: var(--radius);
+            overflow: auto;
+            max-height: 70vh;
+        }
+        #fileTable th, #fileTable td { padding: 8px 12px; }
+        #fileTable thead th { position: sticky; top: 0; z-index: 1; }
+        #fileTable td.file-size, #fileTable td.file-when {
+            white-space: nowrap;
+            color: var(--text-muted) !important;
+            font-variant-numeric: tabular-nums;
+        }
+        #fileTable td.file-actions { white-space: nowrap; text-align: right; }
+        #fileTable td.file-actions .btn, #fileTable td.file-actions button { padding: 4px 10px; margin: 0 0 0 4px; font-size: 0.8rem; }
+        #fileTable tr.selected td { background: var(--accent-soft) !important; }
+        #fileTable td.file-empty { color: var(--text-muted) !important; }
+        /* Beside the viewer, the name needs the room more than the date does;
+           the open file's date is in the viewer's header. */
+        #filesLayout.viewing #fileTable th:nth-child(3),
+        #filesLayout.viewing #fileTable td.file-when { display: none; }
+
+        .file-name {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: none !important;
+            border: none !important;
+            padding: 0;
+            margin: 0;
+            font-size: 0.88rem;
+            color: var(--text) !important;
+            text-align: left;
+            overflow-wrap: anywhere;
+        }
+        button.file-name:hover { color: var(--accent) !important; transform: none; }
+        .file-name i { width: 16px; text-align: center; color: var(--text-faint) !important; }
+        .file-name .fa-folder { color: var(--warn) !important; }
+        .file-name.restricted { color: var(--text-faint) !important; cursor: not-allowed; }
+        .file-lock { font-size: 0.7rem; color: var(--text-faint) !important; margin-left: 6px; }
+        .file-link-tag { font-size: 0.7rem; color: var(--text-faint) !important; margin-left: 4px; }
+
+        #fileViewer {
+            background: var(--bg-panel) !important;
+            border: 1px solid var(--line) !important;
+            border-radius: var(--radius);
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+            max-height: 70vh;
+        }
+        #fileViewer[hidden] { display: none !important; }
+        #fileViewerHeader {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--line);
+        }
+        #fileViewerTitle { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+        #fileViewerName { font-family: "JetBrains Mono", Consolas, monospace; font-size: 0.88rem; word-break: break-all; }
+        #fileViewerMeta { font-size: 0.75rem; color: var(--text-muted) !important; }
+        #fileViewerHeader .btn, #fileViewerHeader button { margin: 0; padding: 6px 10px; }
+        #fileViewerNote {
+            margin: 0;
+            padding: 8px 12px;
+            font-size: 0.8rem;
+            background: var(--warn-soft) !important;
+            color: var(--warn) !important;
+            border-bottom: 1px solid var(--line);
+        }
+        #fileViewerText {
+            margin: 0;
+            padding: 12px 14px;
+            overflow: auto;
+            flex: 1;
+            min-height: 200px;
+            background: #0a0d12 !important;
+            color: #d6dbe3 !important;
+            font-family: "JetBrains Mono", Consolas, "Courier New", monospace;
+            font-size: 12px;
+            line-height: 1.5;
+            white-space: pre;
+            tab-size: 4;
+            border-radius: 0 0 var(--radius) var(--radius);
+        }
+        #fileViewerText.empty {
+            white-space: normal;
+            font-family: inherit;
+            color: #8891a3 !important;
+        }
+        #fileViewerNote.error { background: var(--danger-soft) !important; color: var(--danger) !important; }
+        #fileViewerNote.ok { background: var(--ok-soft) !important; color: var(--ok) !important; }
+        #fileViewerText[hidden] { display: none !important; }
+
+        /* Syntax colours. The viewer is dark in both themes, so these are too. */
+        .hl-key { color: #7dd3fc; }
+        .hl-str { color: #a5e3a1; }
+        .hl-num { color: #f9b97a; }
+        .hl-kw { color: #d8a6ff; }
+        .hl-com, .hl-dim { color: #6b7488; font-style: italic; }
+        .hl-sec { color: #f0c674; font-weight: 600; }
+        .hl-punc { color: #8891a3; }
+        .hl-time { color: #6b7488; }
+        .hl-info { color: #7dd3fc; }
+        .hl-warn { color: #f0c674; }
+        .hl-err { color: #ff8080; }
+        .hl-mask {
+            color: #f0c674;
+            background: rgba(240, 198, 116, 0.12);
+            border-radius: 3px;
+        }
+
+        /* Editor: a transparent textarea over a highlighted copy of its text.
+           Both must lay text out identically, so every metric is pinned. */
+        #fileEditor {
+            position: relative;
+            flex: 1;
+            min-height: 320px;
+            background: #0a0d12 !important;
+            border-radius: 0 0 var(--radius) var(--radius);
+            overflow: hidden;
+        }
+        #fileEditor[hidden] { display: none !important; }
+        #fileEditorHighlight, #fileEditorInput {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 12px 14px !important;
+            border: 0 !important;
+            border-radius: 0;
+            box-shadow: none !important;
+            font-family: "JetBrains Mono", Consolas, "Courier New", monospace !important;
+            font-size: 12px !important;
+            line-height: 1.5 !important;
+            letter-spacing: 0;
+            white-space: pre;
+            tab-size: 4;
+            overflow: auto;
+            min-height: 0;
+            transition: none !important;
+        }
+        #fileEditorHighlight { pointer-events: none; overflow: hidden; color: #d6dbe3 !important; }
+        /* Italic and bold can change a glyph's width in a fallback font, which
+           would push the colours out from under the caret. */
+        #fileEditorHighlight span { font-style: normal; font-weight: inherit; }
+        #fileEditorInput {
+            background: transparent !important;
+            color: transparent !important;
+            -webkit-text-fill-color: transparent;
+            caret-color: #e7ebf3;
+            resize: none;
+            outline: none;
+        }
+        #fileEditorInput::selection { background: rgba(79, 209, 255, 0.28); }
+        /* Too large to highlight as you type: show the textarea's own text. */
+        #fileEditor.plain #fileEditorInput { color: #d6dbe3 !important; -webkit-text-fill-color: #d6dbe3; }
+        #fileEditor.plain #fileEditorHighlight { display: none; }
+        #fileViewer.editing { height: 70vh; }
+        #fileViewer.editing #fileViewerHeader { border-bottom-color: var(--accent) !important; }
+
+        /* Expanded: the viewer takes the whole width. */
+        #filesLayout.maximized { grid-template-columns: minmax(0, 1fr) !important; }
+        #filesLayout.maximized #filesTableWrap { display: none; }
+        #filesLayout.maximized #fileViewer { max-height: none; height: 78vh; }
+
+        #filesTableWrap { position: relative; }
+        #filesDrop {
+            position: absolute;
+            inset: 0;
+            z-index: 2;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            background: var(--accent-soft) !important;
+            border: 2px dashed var(--accent) !important;
+            border-radius: var(--radius);
+            color: var(--accent) !important;
+            font-weight: 600;
+            pointer-events: none;
+        }
+        #filesDrop[hidden] { display: none !important; }
+        #filesDrop span { color: var(--accent) !important; }
+
+        @media (max-width: 1100px) {
+            #filesLayout.viewing { grid-template-columns: minmax(0, 1fr); }
+            #fileViewer { order: -1; }
+        }
+
+        @media (max-width: 720px) {
+            #fileTable th:nth-child(3), #fileTable td.file-when { display: none; }
+            #filesFilter { max-width: none; flex: 1 1 100%; }
+            #fileViewer, #filesTableWrap { max-height: none; }
+            #fileViewerText { max-height: 60vh; }
+        }
+
         /* Mobile */
         @media (max-width: 720px) {
             #content, .container { padding: 16px 12px 48px; }
@@ -1803,8 +2059,7 @@
         <div class="tab" data-tab="users">Users</div>
         <div class="tab" data-tab="roles">Roles</div>
         <div class="tab active" data-tab="status">Status & Incidents</div>
-        <div class="tab" data-tab="console">Server Console</div>
-        <div class="tab" data-tab="players">Players</div>
+        <div class="tab" data-tab="minecraft">Minecraft Server</div>
         <div class="tab" data-tab="polls">Polls</div>
         <div class="tab" data-tab="chatprompt">Chat Prompt</div>
     </div>
@@ -2030,11 +2285,14 @@
         </div>
     </div><!-- /status-tab -->
 
-    <!-- SERVER CONSOLE TAB -->
-    <div class="tab-content" id="console-tab">
-        <h1>Server Console</h1>
-        <p class="page-hint">Live output from the Minecraft server, with start / stop / restart control.</p>
+    <!-- MINECRAFT SERVER TAB: console, players and files under one header -->
+    <div class="tab-content" id="minecraft-tab">
+        <h1>Minecraft Server</h1>
+        <p class="page-hint">Live console, players and files of the Minecraft server, with start / stop / restart control.</p>
 
+        <!-- Shared by every view below. Hidden for an account that can browse
+             files but not watch the console: it is all console.view data. -->
+        <div id="mcOverview">
         <div id="consoleToolbar">
             <span id="powerControls">
                 <span id="serverState" class="state-unknown">Server: unknown</span>
@@ -2066,7 +2324,16 @@
         </div>
 
         <p id="statsNote" style="display: none;"></p>
+        </div><!-- /mcOverview -->
 
+        <div class="tab-container mc-subtabs" role="tablist">
+            <div class="tab active" data-mc-tab="console" role="tab" tabindex="0">Console</div>
+            <div class="tab" data-mc-tab="players" role="tab" tabindex="0">Players</div>
+            <div class="tab" data-mc-tab="files" role="tab" tabindex="0">Files</div>
+        </div>
+
+        <!-- CONSOLE VIEW -->
+        <div class="mc-view active" id="mc-console">
         <div id="consoleToolbar">
             <label for="consoleSource">Source:
                 <select id="consoleSource">
@@ -2097,7 +2364,10 @@
             <input type="text" id="consoleInput" placeholder="Type a command (e.g. list) and press Enter…">
             <button type="submit" id="consoleSend">Send</button>
         </form>
+        </div><!-- /mc-console -->
 
+        <!-- PLAYERS VIEW -->
+        <div class="mc-view" id="mc-players">
         <section id="playersPanel">
             <div id="playersHeader">
                 <h2>Players</h2>
@@ -2124,7 +2394,87 @@
                 </tbody>
             </table>
         </section>
-    </div><!-- /console-tab -->
+        </div><!-- /mc-players -->
+
+        <!-- FILES VIEW: read-only; see console/files.rs for what keeps it safe -->
+        <div class="mc-view" id="mc-files">
+            <div id="filesToolbar">
+                <nav id="filesCrumbs" aria-label="Current folder"></nav>
+                <span class="spacer"></span>
+                <input type="text" id="filesFilter" placeholder="Filter this folder&hellip;" aria-label="Filter this folder">
+                <button type="button" id="filesUpload" hidden>
+                    <i class="fas fa-upload" aria-hidden="true"></i> Upload
+                </button>
+                <input type="file" id="filesUploadInput" multiple hidden>
+                <button type="button" id="filesRefresh">Refresh</button>
+            </div>
+
+            <p class="page-hint files-policy">
+                <i class="fas fa-shield-halved" aria-hidden="true"></i>
+                Credential stores are never served, and values of keys that look like passwords,
+                tokens or secrets are masked &mdash; in the viewer, in downloads, and in the editor,
+                where they are kept as they are when you save. Code, logs, and op, whitelist and ban
+                lists are read-only. Every file you open, edit, upload or download is recorded in
+                the console audit log, and edited files are backed up first.
+            </p>
+            <p id="filesNote" class="page-hint" style="display: none;"></p>
+
+            <div id="filesLayout">
+                <div id="filesTableWrap">
+                    <div id="filesDrop" hidden>
+                        <i class="fas fa-upload" aria-hidden="true"></i>
+                        <span>Drop files to upload them to this folder</span>
+                    </div>
+                    <table id="fileTable">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Size</th>
+                                <th>Modified</th>
+                                <th><span class="sr-only">Actions</span></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- file rows dynamically inserted here -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <section id="fileViewer" hidden>
+                    <div id="fileViewerHeader">
+                        <div id="fileViewerTitle">
+                            <strong id="fileViewerName"></strong>
+                            <span id="fileViewerMeta"></span>
+                        </div>
+                        <button type="button" id="fileViewerEdit" hidden>
+                            <i class="fas fa-pen" aria-hidden="true"></i> Edit
+                        </button>
+                        <button type="button" id="fileViewerSave" class="btn-primary" hidden>
+                            <i class="fas fa-floppy-disk" aria-hidden="true"></i> Save
+                        </button>
+                        <button type="button" id="fileViewerCancel" hidden>Cancel</button>
+                        <a id="fileViewerDownload" class="btn" href="#" download title="Download">
+                            <i class="fas fa-download" aria-hidden="true"></i>
+                            <span class="sr-only">Download</span>
+                        </a>
+                        <button type="button" id="fileViewerMax" aria-label="Expand viewer" title="Expand">
+                            <i class="fas fa-up-right-and-down-left-from-center" aria-hidden="true"></i>
+                        </button>
+                        <button type="button" id="fileViewerClose" aria-label="Close viewer" title="Close">
+                            <i class="fas fa-xmark" aria-hidden="true"></i>
+                        </button>
+                    </div>
+                    <p id="fileViewerNote" aria-live="polite" style="display: none;"></p>
+                    <pre id="fileViewerText"></pre>
+                    <div id="fileEditor" hidden>
+                        <pre id="fileEditorHighlight" aria-hidden="true"></pre>
+                        <textarea id="fileEditorInput" spellcheck="false" autocomplete="off"
+                                  autocapitalize="off" wrap="off" aria-label="File contents"></textarea>
+                    </div>
+                </section>
+            </div>
+        </div><!-- /mc-files -->
+    </div><!-- /minecraft-tab -->
 
     <!-- POLLS TAB -->
     <div class="tab-content" id="polls-tab">
@@ -3545,13 +3895,26 @@
         who.textContent = entry.username || 'unknown';
         line.appendChild(who);
 
-        const verb = entry.outcome === 'failed' ? ' tried to run ' :
-                     entry.outcome === 'pending' ? ' is running ' : ' ran ';
+        let verb = entry.outcome === 'failed' ? ' tried to run ' :
+                   entry.outcome === 'pending' ? ' is running ' : ' ran ';
+        let command = entry.command || '';
+        // File actions are recorded as "<action> <path>".
+        if (entry.kind === 'file') {
+            const space = command.indexOf(' ');
+            const action = space === -1 ? command : command.slice(0, space);
+            command = space === -1 ? '' : command.slice(space + 1);
+            const done = { view: 'viewed', download: 'downloaded', edit: 'edited',
+                           upload: 'uploaded', replace: 'replaced' }[action] || 'opened';
+            const tried = { view: 'view', download: 'download', edit: 'edit',
+                            upload: 'upload', replace: 'replace' }[action] || 'open';
+            verb = entry.outcome === 'failed' ? ` tried to ${tried} ` :
+                   entry.outcome === 'pending' ? ` is changing ` : ` ${done} `;
+        }
         line.appendChild(document.createTextNode(verb));
 
         const what = document.createElement('span');
         what.className = 'what';
-        what.textContent = entry.command || '';
+        what.textContent = command;
         line.appendChild(what);
 
         if (entry.detail) {
@@ -3627,8 +3990,7 @@
 
             setStatus('down', `Reconnecting in ${Math.round(retryDelay / 1000)}s…`);
             retryTimer = setTimeout(() => {
-                const consoleTab = document.getElementById('console-tab');
-                if (consoleTab && consoleTab.classList.contains('active')) {
+                if (minecraftTabActive() && canAccess('console.view')) {
                     consoleConnect();
                 }
             }, retryDelay);
@@ -3876,11 +4238,19 @@
         return line.includes('Rcon issued server command:') || line.includes('[Rcon: ');
     }
 
+    /* Whether the Minecraft Server tab is on screen, whichever of its views
+       is showing: the header's stats and the presence list behind Players
+       are both fed while any of them is. */
+    function minecraftTabActive() {
+        const tab = document.getElementById('minecraft-tab');
+        return !!(tab && tab.classList.contains('active'));
+    }
+
     function shouldPollMetrics() {
-        const consoleTab = document.getElementById('console-tab');
         return liveMetrics && liveMetrics.checked
             && document.visibilityState === 'visible'
-            && consoleTab && consoleTab.classList.contains('active');
+            && minecraftTabActive()
+            && canAccess('console.view');
     }
 
     async function scheduleStatsRefresh(immediate = false) {
@@ -3907,8 +4277,7 @@
 
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState !== 'visible') return;
-        const consoleTab = document.getElementById('console-tab');
-        if (consoleTab && consoleTab.classList.contains('active')) refreshOnline();
+        if (minecraftTabActive() && canAccess('console.view')) refreshOnline();
         if (shouldPollMetrics()) scheduleStatsRefresh(true);
     });
 
@@ -5208,6 +5577,899 @@
         stopPollRefresh();
     });
 
+    /* --------------------------------------------------------- Server Files */
+
+    /* A browser and editor over the game server's directory.
+
+       Everything shown here came off a disk that the server, its mods and its
+       plugins can all write to, so names and contents are rendered with
+       textContent and never as markup -- the highlighter included. The real
+       gatekeeping is server-side and does not depend on this page:
+       confinement, refusing credential stores, masking secrets, the rules on
+       what may be written, and recording everything in the audit log. See
+       console/files.rs and console/files_write.rs.
+
+       Writes carry an X-RD-Panel header, which the server requires: a page
+       on another origin cannot send it. */
+    const FILES_API = '/api/admin/console/files';
+    const FILES_PREVIEW_LIMIT = '512 KiB';
+    const fileTableBody = document.querySelector('#fileTable tbody');
+    const filesCrumbs = document.getElementById('filesCrumbs');
+    const filesFilter = document.getElementById('filesFilter');
+    const filesNote = document.getElementById('filesNote');
+    const filesLayout = document.getElementById('filesLayout');
+    const fileViewer = document.getElementById('fileViewer');
+    const fileViewerName = document.getElementById('fileViewerName');
+    const fileViewerMeta = document.getElementById('fileViewerMeta');
+    const fileViewerNote = document.getElementById('fileViewerNote');
+    const fileViewerText = document.getElementById('fileViewerText');
+    const fileViewerDownload = document.getElementById('fileViewerDownload');
+    const fileViewerEdit = document.getElementById('fileViewerEdit');
+    const fileViewerSave = document.getElementById('fileViewerSave');
+    const fileViewerCancel = document.getElementById('fileViewerCancel');
+    const fileViewerMax = document.getElementById('fileViewerMax');
+    const fileEditor = document.getElementById('fileEditor');
+    const fileEditorHighlight = document.getElementById('fileEditorHighlight');
+    const fileEditorInput = document.getElementById('fileEditorInput');
+    const filesUploadButton = document.getElementById('filesUpload');
+    const filesUploadInput = document.getElementById('filesUploadInput');
+    const filesTableWrap = document.getElementById('filesTableWrap');
+    const filesDrop = document.getElementById('filesDrop');
+    const FILES_UPLOAD_LIMIT = 16 * 1024 * 1024;
+    const FILES_MASK = '********';
+
+    let filesInited = false;
+    let filesPath = '';
+    let filesEntries = [];
+    /* Path of the file in the viewer, or null. */
+    let filesOpen = null;
+    /* Bumped per request so a slow response cannot overwrite a newer one. */
+    let filesTicket = 0;
+    let viewTicket = 0;
+    /* The server's answer for the file in the viewer, plus its language. */
+    let viewed = null;
+    let editing = false;
+    let saving = false;
+    let editorFrame = 0;
+
+    function filesUrl(suffix, path) {
+        return `${FILES_API}${suffix}?path=${encodeURIComponent(path || '')}`;
+    }
+
+    function formatBytes(n) {
+        if (typeof n !== 'number' || !isFinite(n)) return '';
+        const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+        let value = n;
+        let unit = 0;
+        while (value >= 1024 && unit < units.length - 1) {
+            value /= 1024;
+            unit++;
+        }
+        return unit === 0 ? `${value} B` : `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
+    }
+
+    function formatWhen(iso) {
+        if (!iso) return '';
+        const when = new Date(iso);
+        if (isNaN(when.getTime())) return '';
+        return when.toLocaleString(undefined, {
+            year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+        });
+    }
+
+    /* --- Syntax highlighting
+
+       Tokens become spans whose text is set with textContent: this builds
+       nodes, never markup, so nothing in a file can become an element however
+       it is written. Each language is a list of [class, pattern] rules joined
+       into one regex; the leftmost match wins, and the earlier rule a tie.
+       Everything else is plain text.
+
+       Every rule must stay linear on any input, or a hostile file freezes the
+       page. So: nothing spans lines (no block comments or multi-line
+       strings); lookbehinds are bounded ({0,64}, never *), since an unbounded
+       one rescans back to the line start from every position in a run of
+       spaces; a key must end on a non-space before its lookahead, so the two
+       cannot both walk the same spaces; a bracket scan stops at the next
+       opener; and a string with no closing quote runs to the end of its line
+       instead of failing, so the engine never backtracks a whole line and
+       retries from the next quote. files.test.js holds the inputs that broke
+       each of these. */
+    const HIGHLIGHT_LIMIT = 256 * 1024;
+    const HL_MASK = ['mask', /"\*{8}"|'\*{8}'|\*{8}/];
+    const HL_LANGS = {
+        json: [
+            HL_MASK,
+            ['com', /\/\/[^\n]*/],
+            ['key', /"(?:[^"\\\n]|\\.)*"(?=\s*:)/],
+            ['str', /"(?:[^"\\\n]|\\.?)*"?|'(?:[^'\\\n]|\\.?)*'?/],
+            ['kw', /\b(?:true|false|null)\b/],
+            ['num', /-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?[bBsSlLfFdD]?\b/],
+            ['key', /(?<![\w.+-])[A-Za-z_][\w.+-]*(?=\s*:)/],
+            ['punc', /[{}[\],:;]/]
+        ],
+        yaml: [
+            HL_MASK,
+            ['com', /(?<=^|\s)#[^\n]*/],
+            ['punc', /^(?:---|\.\.\.)$|(?<=^[ \t]{0,64})-(?=[ \t]|$)/],
+            ['key', /(?<=^[ \t]{0,64}(?:-[ \t]{1,8})?)(?:"[^"\n]*"|'[^'\n]*'|[^\s#:'"{}[\],&*!|>%@`-][^:\n]*?)(?=:(?:[ \t]|$))/],
+            ['str', /"(?:[^"\\\n]|\\.?)*"?|'(?:[^'\n]|'')*'?/],
+            ['kw', /(?<=:[ \t]{1,16}|^[ \t]{0,64}-[ \t]{1,8})(?:true|false|yes|no|on|off|null|True|False|TRUE|FALSE|~)(?=[ \t]*(?:#.*)?$)/],
+            ['num', /(?<=:[ \t]{1,16}|^[ \t]{0,64}-[ \t]{1,8}|[[,][ \t]{0,16})[-+]?\d+(?:\.\d+)?(?=[ \t]*(?:[,\]]|#.*$|$))/],
+            ['punc', /[[\]{},]/]
+        ],
+        toml: [
+            HL_MASK,
+            ['com', /#[^\n]*/],
+            ['sec', /^[ \t]*\[\[?[^\]\n]*\]\]?/],
+            ['key', /(?<=^[ \t]{0,64})(?:"[^"\n]*"|'[^'\n]*'|[\w.-](?:[\w.\- ]*[\w.-])?)(?=[ \t]*=)/],
+            ['str', /"(?:[^"\\\n]|\\.?)*"?|'[^'\n]*'?/],
+            ['kw', /\b(?:true|false|inf|nan)\b/],
+            ['num', /(?<![\w.-])[+-]?\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?(?!\w)/],
+            ['punc', /[[\]{},=]/]
+        ],
+        props: [
+            HL_MASK,
+            ['com', /^[ \t]*(?:[#;!]|\/\/)[^\n]*/],
+            ['sec', /^[ \t]*\[[^\]\n]*\]/],
+            // Forge's old `S:name=value` type prefix.
+            ['punc', /^[ \t]*[A-Z]:(?=[^\n=]*=)/],
+            ['key', /(?<=^[ \t]{0,64}(?:[A-Z]:)?)[^\s=:#;!{}[\]"](?:[^=:\n{}]*[^\s=:{}])?(?=[ \t]*[=:])/],
+            ['kw', /(?<=[=:][ \t]{0,16})(?:true|false|TRUE|FALSE|True|False|on|off|yes|no)(?=[ \t]*$)/],
+            ['num', /(?<=[=:][ \t]{0,16})-?\d+(?:\.\d+)?(?=[ \t]*$)/],
+            ['str', /"(?:[^"\\\n]|\\.?)*"?/],
+            ['punc', /[{}[\]=:]/]
+        ],
+        log: [
+            ['err', /^.*\/(?:ERROR|FATAL|SEVERE)\].*$|^(?:Caused by:|Exception in thread)[^\n]*|^[\w$.]*(?:Exception|Error)\b[^\n]*$/],
+            ['warn', /^.*\/WARN(?:ING)?\].*$/],
+            ['dim', /^[ \t]+at [^\n]*|^[ \t]+\.\.\. \d+ more$/],
+            ['time', /^\[[^\]\n]*\]/],
+            ['info', /\[[^[\]\n]*\/INFO\]/],
+            ['com', /\[[^[\]\n]*\/(?:DEBUG|TRACE)\]/],
+            ['key', /<\w{1,16}>/]
+        ],
+        md: [
+            ['sec', /^#{1,6}[ \t].*$/],
+            ['com', /^>[^\n]*/],
+            ['str', /`[^`\n]+`/],
+            ['kw', /\*\*[^*\n]+\*\*/],
+            ['punc', /^[ \t]*(?:[-*+]|\d+\.)(?=[ \t])/]
+        ]
+    };
+    const hlCompiled = {};
+
+    /* Which highlighter a file gets, from its path. Null for plain text. */
+    function fileLanguage(path) {
+        const name = String(path || '').toLowerCase().replace(/\.gz$/, '');
+        if (/\.(json5?|jsonc|mcmeta|snbt)$/.test(name)) return 'json';
+        if (/\.ya?ml$/.test(name)) return 'yaml';
+        if (/\.toml$/.test(name)) return 'toml';
+        if (/\.(properties|cfg|ini|conf|config|hocon|lang|env)$/.test(name)) return 'props';
+        if (/\.(log|out)$/.test(name) || /(^|\/)crash-reports\//.test(name)) return 'log';
+        if (/\.(md|markdown)$/.test(name)) return 'md';
+        return null;
+    }
+
+    function hlPattern(lang) {
+        if (!hlCompiled[lang]) {
+            const source = HL_LANGS[lang].map(([, re], i) => `(?<t${i}>${re.source})`).join('|');
+            hlCompiled[lang] = new RegExp(source, 'gm');
+        }
+        return hlCompiled[lang];
+    }
+
+    /* Fill `el` with `text`, highlighted as `lang`. Returns whether it was:
+       an unknown language, or more than HIGHLIGHT_LIMIT, is left plain. */
+    function highlightInto(el, text, lang) {
+        el.textContent = '';
+        if (!lang || !HL_LANGS[lang] || text.length > HIGHLIGHT_LIMIT) {
+            el.textContent = text;
+            return false;
+        }
+        const rules = HL_LANGS[lang];
+        const re = hlPattern(lang);
+        // Built off-document where the browser can, so the page lays out once.
+        const out = typeof document.createDocumentFragment === 'function'
+            ? document.createDocumentFragment()
+            : el;
+        re.lastIndex = 0;
+        let last = 0;
+        let match;
+        while ((match = re.exec(text)) !== null) {
+            if (match[0] === '') {
+                re.lastIndex++;
+                continue;
+            }
+            if (match.index > last) out.appendChild(document.createTextNode(text.slice(last, match.index)));
+            let rule = 0;
+            while (rule < rules.length - 1 && match.groups['t' + rule] === undefined) rule++;
+            const span = document.createElement('span');
+            span.className = 'hl-' + rules[rule][0];
+            if (rules[rule][0] === 'mask') span.title = 'Masked secret: kept as it is when you save';
+            span.textContent = match[0];
+            out.appendChild(span);
+            last = match.index + match[0].length;
+        }
+        if (last < text.length) out.appendChild(document.createTextNode(text.slice(last)));
+        if (out !== el) el.appendChild(out);
+        return true;
+    }
+
+    function joinPath(dir, name) {
+        return dir ? `${dir}/${name}` : name;
+    }
+
+    function filesViewActive() {
+        const view = document.getElementById('mc-files');
+        return minecraftTabActive() && !!(view && view.classList.contains('active'));
+    }
+
+    /* Keeps the folder and open file in the address bar, so a reload or a
+       shared link lands in the same place. */
+    function syncFilesUrl() {
+        if (!filesViewActive()) return;
+        const url = new URL(window.location);
+        if (filesPath) url.searchParams.set('path', filesPath); else url.searchParams.delete('path');
+        if (filesOpen) url.searchParams.set('file', filesOpen); else url.searchParams.delete('file');
+        window.history.replaceState(null, '', url.toString());
+    }
+
+    function setFilesNote(message, isError = false) {
+        if (!filesNote) return;
+        filesNote.textContent = message || '';
+        filesNote.style.display = message ? '' : 'none';
+        filesNote.classList.toggle('error', !!isError);
+    }
+
+    async function filesFetch(url) {
+        const res = await fetch(url, { credentials: 'include' });
+        let data = null;
+        try { data = await res.json(); } catch (_) { /* empty body */ }
+        if (!res.ok) {
+            throw new Error((data && (data.error || data.message)) || `Request failed (${res.status})`);
+        }
+        return data;
+    }
+
+    function renderCrumbs(path) {
+        if (!filesCrumbs) return;
+        filesCrumbs.textContent = '';
+        const parts = path ? path.split('/') : [];
+
+        const crumb = (label, target, current) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'crumb';
+            button.textContent = label;
+            if (current) {
+                button.setAttribute('aria-current', 'location');
+            } else {
+                button.addEventListener('click', () => loadFiles(target));
+            }
+            filesCrumbs.appendChild(button);
+        };
+
+        crumb('server', '', parts.length === 0);
+        parts.forEach((part, i) => {
+            const sep = document.createElement('span');
+            sep.className = 'crumb-sep';
+            sep.textContent = '/';
+            filesCrumbs.appendChild(sep);
+            crumb(part, parts.slice(0, i + 1).join('/'), i === parts.length - 1);
+        });
+    }
+
+    function fileIcon(entry) {
+        if (entry.up) return 'fa-turn-up';
+        if (entry.restricted) return 'fa-lock';
+        if (entry.kind === 'dir') return 'fa-folder';
+        const name = entry.name.toLowerCase();
+        if (/\.(log|txt|md)(\.gz)?$/.test(name)) return 'fa-file-lines';
+        if (/\.(json5?|toml|ya?ml|properties|cfg|conf|ini|snbt|hocon)$/.test(name)) return 'fa-file-code';
+        if (/\.(jar|zip|gz|tar|7z|rar)$/.test(name)) return 'fa-file-zipper';
+        if (/\.(png|jpe?g|gif|webp)$/.test(name)) return 'fa-file-image';
+        return 'fa-file';
+    }
+
+    function fileRow(entry) {
+        const tr = document.createElement('tr');
+        const isFile = entry.kind === 'file' && !entry.restricted;
+        if (isFile && entry.path === filesOpen) tr.classList.add('selected');
+
+        const nameTd = document.createElement('td');
+        let name;
+        if (entry.restricted || (entry.kind !== 'dir' && entry.kind !== 'file')) {
+            name = document.createElement('span');
+            name.className = 'file-name restricted';
+            name.title = entry.restricted || 'Cannot be opened';
+        } else {
+            name = document.createElement('button');
+            name.type = 'button';
+            name.className = 'file-name';
+            name.title = entry.kind === 'dir' ? 'Open folder' : 'View file';
+            name.addEventListener('click', () => {
+                if (entry.kind === 'dir') loadFiles(entry.path);
+                else openFile(entry.path);
+            });
+        }
+        const icon = document.createElement('i');
+        icon.className = `fas ${fileIcon(entry)}`;
+        icon.setAttribute('aria-hidden', 'true');
+        name.appendChild(icon);
+        const label = document.createElement('span');
+        label.textContent = entry.name;
+        name.appendChild(label);
+        nameTd.appendChild(name);
+
+        if (entry.link) {
+            const tag = document.createElement('span');
+            tag.className = 'file-link-tag';
+            tag.textContent = 'link';
+            nameTd.appendChild(tag);
+        }
+        if (entry.restricted) {
+            const why = document.createElement('span');
+            why.className = 'file-lock';
+            why.textContent = entry.restricted;
+            nameTd.appendChild(why);
+        }
+        tr.appendChild(nameTd);
+
+        const sizeTd = document.createElement('td');
+        sizeTd.className = 'file-size';
+        sizeTd.textContent = isFile ? formatBytes(entry.size) : '';
+        tr.appendChild(sizeTd);
+
+        const whenTd = document.createElement('td');
+        whenTd.className = 'file-when';
+        whenTd.textContent = entry.restricted ? '' : formatWhen(entry.modified);
+        tr.appendChild(whenTd);
+
+        const actions = document.createElement('td');
+        actions.className = 'file-actions';
+        if (isFile) {
+            const view = document.createElement('button');
+            view.type = 'button';
+            view.className = 'btn-outline';
+            view.textContent = 'View';
+            view.addEventListener('click', () => openFile(entry.path));
+            actions.appendChild(view);
+
+            const download = document.createElement('a');
+            download.className = 'btn btn-outline';
+            download.href = filesUrl('/download', entry.path);
+            download.setAttribute('download', '');
+            download.title = 'Download';
+            download.setAttribute('aria-label', `Download ${entry.name}`);
+            const dl = document.createElement('i');
+            dl.className = 'fas fa-download';
+            dl.setAttribute('aria-hidden', 'true');
+            download.appendChild(dl);
+            actions.appendChild(download);
+        }
+        tr.appendChild(actions);
+        return tr;
+    }
+
+    function renderFileRows() {
+        if (!fileTableBody) return;
+        fileTableBody.textContent = '';
+
+        const needle = ((filesFilter && filesFilter.value) || '').trim().toLowerCase();
+        const shown = needle
+            ? filesEntries.filter(entry => entry.name.toLowerCase().includes(needle))
+            : filesEntries;
+
+        if (filesPath) {
+            const cut = filesPath.lastIndexOf('/');
+            fileTableBody.appendChild(fileRow({
+                name: '..', path: cut === -1 ? '' : filesPath.slice(0, cut), kind: 'dir', up: true
+            }));
+        }
+        shown.forEach(entry => fileTableBody.appendChild(fileRow(entry)));
+
+        if (!shown.length) {
+            const tr = document.createElement('tr');
+            const td = document.createElement('td');
+            td.colSpan = 4;
+            td.className = 'file-empty';
+            td.textContent = needle ? 'Nothing in this folder matches the filter.' : 'This folder is empty.';
+            tr.appendChild(td);
+            fileTableBody.appendChild(tr);
+        }
+    }
+
+    async function loadFiles(path = filesPath) {
+        const ticket = ++filesTicket;
+        const changingFolder = path !== filesPath;
+        setFilesNote('Loading…');
+        try {
+            const listing = await filesFetch(filesUrl('', path));
+            if (ticket !== filesTicket) return;
+            // The server answers with the resolved path, which differs from the
+            // requested one when the way in was a symlink.
+            filesPath = listing.path || '';
+            filesEntries = Array.isArray(listing.entries) ? listing.entries : [];
+            if (changingFolder && filesFilter) filesFilter.value = '';
+            renderCrumbs(filesPath);
+            renderFileRows();
+            setFilesNote(listing.truncated
+                ? `Showing the first ${filesEntries.length} of ${listing.total} entries, sorted by name.`
+                : '');
+            syncFilesUrl();
+        } catch (err) {
+            if (ticket !== filesTicket) return;
+            renderCrumbs(path);
+            if (changingFolder) {
+                filesEntries = [];
+                if (fileTableBody) fileTableBody.textContent = '';
+            }
+            setFilesNote(err.message || 'Could not open this folder', true);
+        }
+    }
+
+    function showViewer(open) {
+        if (fileViewer) fileViewer.hidden = !open;
+        if (filesLayout) {
+            filesLayout.classList.toggle('viewing', open);
+            if (!open) filesLayout.classList.remove('maximized');
+        }
+    }
+
+    function setViewerNote(message, tone) {
+        if (!fileViewerNote) return;
+        fileViewerNote.textContent = message || '';
+        fileViewerNote.style.display = message ? '' : 'none';
+        fileViewerNote.classList.toggle('error', tone === 'error');
+        fileViewerNote.classList.toggle('ok', tone === 'ok');
+    }
+
+    function setViewerText(text, placeholder) {
+        if (!fileViewerText) return;
+        fileViewerText.classList.toggle('empty', !!placeholder);
+        if (placeholder) fileViewerText.textContent = placeholder;
+        else highlightInto(fileViewerText, text, viewed && viewed.lang);
+        fileViewerText.scrollTop = 0;
+        fileViewerText.scrollLeft = 0;
+    }
+
+    /* The notes for a file as opened, outside the editor. */
+    function showViewedNotes() {
+        if (!viewed) {
+            setViewerNote('');
+            return;
+        }
+        const notes = [];
+        if (viewed.masked) {
+            notes.push(`${viewed.masked} secret value${viewed.masked === 1 ? ' is' : 's are'} masked, here and in the download.`);
+        }
+        if (viewed.truncated) {
+            notes.push(`Showing the first ${FILES_PREVIEW_LIMIT}${viewed.compressed ? ' (decompressed)' : ''}. Download for the rest.`);
+        }
+        if (canAccess('console.edit') && !viewed.editable && viewed.readonly_reason && !viewed.binary) {
+            notes.push(`Read-only: ${viewed.readonly_reason}.`);
+        }
+        setViewerNote(notes.join(' '));
+    }
+
+    function updateViewerButtons() {
+        const mayEdit = canAccess('console.edit');
+        const editable = !!(viewed && viewed.editable);
+        if (fileViewerEdit) {
+            fileViewerEdit.hidden = editing || !mayEdit || !viewed || !!viewed.binary;
+            fileViewerEdit.disabled = !editable;
+            fileViewerEdit.title = editable
+                ? 'Edit this file'
+                : ((viewed && viewed.readonly_reason) || "This file can't be edited");
+        }
+        if (fileViewerSave) {
+            fileViewerSave.hidden = !editing;
+            fileViewerSave.disabled = saving;
+        }
+        if (fileViewerCancel) {
+            fileViewerCancel.hidden = !editing;
+            fileViewerCancel.disabled = saving;
+        }
+    }
+
+    function applyFilesPermissions() {
+        if (filesUploadButton) filesUploadButton.hidden = !canAccess('console.upload');
+        updateViewerButtons();
+    }
+
+    async function openFile(path, { force = false } = {}) {
+        if (!force && !(await confirmDiscard())) return;
+        if (editing) stopEdit();
+        const ticket = ++viewTicket;
+        filesOpen = path;
+        viewed = null;
+        showViewer(true);
+        renderFileRows();
+        updateViewerButtons();
+
+        fileViewerName.textContent = path.split('/').pop();
+        fileViewerName.title = path;
+        fileViewerMeta.textContent = 'Loading…';
+        setViewerNote('');
+        fileViewerDownload.href = filesUrl('/download', path);
+        setViewerText('', 'Loading…');
+        syncFilesUrl();
+
+        try {
+            const file = await filesFetch(filesUrl('/view', path));
+            if (ticket !== viewTicket) return;
+            viewed = Object.assign({}, file, { lang: fileLanguage(file.path || path) });
+
+            fileViewerName.textContent = file.name || path.split('/').pop();
+            fileViewerMeta.textContent = [
+                formatBytes(file.size),
+                file.compressed ? 'gzip' : '',
+                formatWhen(file.modified)
+            ].filter(Boolean).join(' · ');
+            showViewedNotes();
+
+            if (file.binary) setViewerText('', 'Binary file. Download it to inspect.');
+            else if (!file.text) setViewerText('', 'Empty file.');
+            else setViewerText(file.text);
+        } catch (err) {
+            if (ticket !== viewTicket) return;
+            fileViewerMeta.textContent = '';
+            setViewerText('', err.message || 'Could not open this file');
+        }
+        updateViewerButtons();
+    }
+
+    async function closeViewer() {
+        if (!(await confirmDiscard())) return;
+        if (editing) stopEdit();
+        viewTicket++;
+        filesOpen = null;
+        viewed = null;
+        showViewer(false);
+        renderFileRows();
+        syncFilesUrl();
+        updateViewerButtons();
+    }
+
+    function toggleMaximized() {
+        if (!filesLayout) return;
+        const on = !filesLayout.classList.contains('maximized');
+        filesLayout.classList.toggle('maximized', on);
+        if (fileViewerMax) {
+            fileViewerMax.setAttribute('aria-label', on ? 'Shrink viewer' : 'Expand viewer');
+            fileViewerMax.title = on ? 'Shrink' : 'Expand';
+        }
+    }
+
+    /* --- Editing
+
+       The editor holds the text as the viewer showed it, masked values and
+       all. The server puts the real values back on save and refuses any
+       change to them, so nothing here ever sees a secret. */
+
+    function editorDirty() {
+        return editing && !!viewed && !!fileEditorInput && fileEditorInput.value !== (viewed.text || '');
+    }
+
+    /* Resolves true when there is nothing unsaved, or the operator agrees to
+       lose it. */
+    async function confirmDiscard() {
+        if (!editorDirty()) return true;
+        return askConfirm({
+            title: 'Discard your changes?',
+            body: `Your edits to ${viewed.name || 'this file'} haven't been saved.`,
+            confirmLabel: 'Discard changes',
+            danger: true
+        });
+    }
+
+    function syncEditorScroll() {
+        if (!fileEditorHighlight || !fileEditorInput) return;
+        fileEditorHighlight.scrollTop = fileEditorInput.scrollTop;
+        fileEditorHighlight.scrollLeft = fileEditorInput.scrollLeft;
+    }
+
+    /* Repaint the highlighted copy under the textarea, at most once a frame. */
+    function renderEditor() {
+        if (!fileEditor || !fileEditorInput) return;
+        const paint = () => {
+            editorFrame = 0;
+            const text = fileEditorInput.value;
+            const lang = viewed && viewed.lang;
+            const plain = !lang || text.length > HIGHLIGHT_LIMIT;
+            fileEditor.classList.toggle('plain', plain);
+            if (plain) {
+                fileEditorHighlight.textContent = '';
+                return;
+            }
+            // A textarea shows an empty last line after a final newline; a
+            // <pre> needs one more newline to be as tall.
+            highlightInto(fileEditorHighlight, text + '\n', lang);
+            syncEditorScroll();
+        };
+        if (typeof requestAnimationFrame !== 'function') {
+            paint();
+            return;
+        }
+        if (!editorFrame) editorFrame = requestAnimationFrame(paint);
+    }
+
+    function startEdit() {
+        if (!viewed || !viewed.editable || editing || !fileEditorInput) return;
+        editing = true;
+        fileViewer.classList.add('editing');
+        fileViewerText.hidden = true;
+        fileEditor.hidden = false;
+        fileEditorInput.value = viewed.text || '';
+        renderEditor();
+
+        const notes = ['Tab indents, Esc cancels, Ctrl+S saves.'];
+        if (viewed.masked) {
+            notes.push(`Masked values (${FILES_MASK}) are kept as they are when you save; existing secrets can't be changed here.`);
+        }
+        if (viewed.locked && viewed.locked.length) {
+            notes.push(`Locked, can't be changed from the panel: ${viewed.locked.join(', ')}.`);
+        }
+        setViewerNote(notes.join(' '));
+        updateViewerButtons();
+        fileEditorInput.focus();
+        if (typeof fileEditorInput.setSelectionRange === 'function') fileEditorInput.setSelectionRange(0, 0);
+        fileEditorInput.scrollTop = 0;
+    }
+
+    function stopEdit() {
+        editing = false;
+        saving = false;
+        if (fileViewer) fileViewer.classList.remove('editing');
+        if (fileEditor) fileEditor.hidden = true;
+        if (fileViewerText) fileViewerText.hidden = false;
+        updateViewerButtons();
+    }
+
+    async function cancelEdit() {
+        if (!(await confirmDiscard())) return;
+        stopEdit();
+        showViewedNotes();
+    }
+
+    async function saveEdit() {
+        if (!editing || saving || !viewed) return;
+        if (!editorDirty()) {
+            stopEdit();
+            setViewerNote('No changes to save.');
+            return;
+        }
+        saving = true;
+        updateViewerButtons();
+        setViewerNote('Saving…');
+        const path = viewed.path;
+        const name = viewed.name || path;
+
+        try {
+            const res = await fetch(`${FILES_API}/content`, {
+                method: 'PUT',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json', 'X-RD-Panel': '1' },
+                body: JSON.stringify({ path, content: fileEditorInput.value, version: viewed.version })
+            });
+            let data = null;
+            try { data = await res.json(); } catch (_) { /* empty body */ }
+
+            if (res.status === 409) {
+                saving = false;
+                updateViewerButtons();
+                setViewerNote((data && data.error) || 'The file changed on the server.', 'error');
+                const reload = await askConfirm({
+                    title: 'The file changed on the server',
+                    body: `${name} was changed after you opened it, so saving would overwrite that change. ` +
+                          'Load the current version? Your edits will be discarded; copy anything you want to keep first.',
+                    confirmLabel: 'Load current version',
+                    danger: true
+                });
+                if (reload) {
+                    stopEdit();
+                    await openFile(path, { force: true });
+                }
+                return;
+            }
+            if (!res.ok) {
+                throw new Error((data && (data.error || data.message)) || `Save failed (${res.status})`);
+            }
+
+            stopEdit();
+            await openFile(path, { force: true });
+            setViewerNote(
+                data && data.unchanged ? 'No changes to save.' : 'Saved. The previous version was backed up.',
+                'ok'
+            );
+            loadFiles(filesPath);
+        } catch (err) {
+            // Still editing, edits intact: the server said why, and it can be fixed.
+            saving = false;
+            updateViewerButtons();
+            setViewerNote(err.message || 'Could not save', 'error');
+        }
+    }
+
+    function insertIntoEditor(text) {
+        // execCommand keeps the browser's undo history; setRangeText is the fallback.
+        const viaCommand = typeof document.execCommand === 'function'
+            && document.execCommand('insertText', false, text);
+        if (!viaCommand) {
+            const { selectionStart, selectionEnd } = fileEditorInput;
+            fileEditorInput.setRangeText(text, selectionStart, selectionEnd, 'end');
+            renderEditor();
+        }
+    }
+
+    /* --- Uploads */
+
+    async function uploadOne(file, overwrite) {
+        const form = new FormData();
+        form.append('file', file, file.name);
+        const url = `${FILES_API}/upload?path=${encodeURIComponent(filesPath)}${overwrite ? '&overwrite=true' : ''}`;
+        const res = await fetch(url, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'X-RD-Panel': '1' },
+            body: form
+        });
+        let data = null;
+        try { data = await res.json(); } catch (_) { /* empty body */ }
+        return { res, data };
+    }
+
+    async function uploadFiles(list) {
+        const files = Array.from(list || []);
+        if (!files.length || !canAccess('console.upload')) return;
+        const done = [];
+        const failed = [];
+
+        for (const file of files) {
+            if (file.size > FILES_UPLOAD_LIMIT) {
+                failed.push(`${file.name}: larger than ${formatBytes(FILES_UPLOAD_LIMIT)}`);
+                continue;
+            }
+            setFilesNote(`Uploading ${file.name}…`);
+            try {
+                let { res, data } = await uploadOne(file, false);
+                if (res.status === 409 && canAccess('console.edit')) {
+                    const replace = await askConfirm({
+                        title: `Replace ${file.name}?`,
+                        body: `${file.name} already exists in this folder. The current version is backed up before it is replaced.`,
+                        confirmLabel: 'Replace',
+                        danger: true
+                    });
+                    if (!replace) {
+                        failed.push(`${file.name}: skipped, it already exists`);
+                        continue;
+                    }
+                    ({ res, data } = await uploadOne(file, true));
+                }
+                if (!res.ok) {
+                    throw new Error((data && (data.error || data.message)) || `Upload failed (${res.status})`);
+                }
+                done.push(file.name);
+            } catch (err) {
+                failed.push(`${file.name}: ${err.message || 'upload failed'}`);
+            }
+        }
+
+        await loadFiles(filesPath);
+        const parts = [];
+        if (done.length) parts.push(`Uploaded ${done.length} file${done.length === 1 ? '' : 's'}.`);
+        if (failed.length) parts.push(failed.join(' · '));
+        setFilesNote(parts.join(' '), failed.length > 0);
+
+        // A replaced file open in the viewer is now stale.
+        if (filesOpen && !editing && done.some(name => joinPath(filesPath, name) === filesOpen)) {
+            openFile(filesOpen, { force: true });
+        }
+    }
+
+    function dragHasFiles(e) {
+        return !!(e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files'));
+    }
+
+    /* Called each time the Files view is shown. */
+    function initFiles() {
+        applyFilesPermissions();
+        if (filesInited) {
+            loadFiles(filesPath);
+            syncFilesUrl();
+            return;
+        }
+        filesInited = true;
+
+        if (filesFilter) filesFilter.addEventListener('input', renderFileRows);
+        const refresh = document.getElementById('filesRefresh');
+        if (refresh) {
+            refresh.addEventListener('click', () => {
+                loadFiles(filesPath);
+                if (filesOpen && !editing) openFile(filesOpen);
+            });
+        }
+        const close = document.getElementById('fileViewerClose');
+        if (close) close.addEventListener('click', closeViewer);
+        if (fileViewerMax) fileViewerMax.addEventListener('click', toggleMaximized);
+        if (fileViewerEdit) fileViewerEdit.addEventListener('click', startEdit);
+        if (fileViewerSave) fileViewerSave.addEventListener('click', saveEdit);
+        if (fileViewerCancel) fileViewerCancel.addEventListener('click', cancelEdit);
+        if (fileViewer) {
+            fileViewer.addEventListener('keydown', e => {
+                if (e.key === 'Escape' && !editing) closeViewer();
+            });
+        }
+
+        if (fileEditorInput) {
+            fileEditorInput.addEventListener('input', renderEditor);
+            fileEditorInput.addEventListener('scroll', syncEditorScroll);
+            fileEditorInput.addEventListener('keydown', e => {
+                if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') {
+                    e.preventDefault();
+                    saveEdit();
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    cancelEdit();
+                } else if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+                    // Shift+Tab still leaves the field, so the keyboard is never trapped.
+                    e.preventDefault();
+                    insertIntoEditor('  ');
+                }
+            });
+        }
+
+        if (filesUploadButton && filesUploadInput) {
+            filesUploadButton.addEventListener('click', () => filesUploadInput.click());
+            filesUploadInput.addEventListener('change', () => {
+                const chosen = Array.from(filesUploadInput.files || []);
+                filesUploadInput.value = '';
+                uploadFiles(chosen);
+            });
+        }
+        if (filesTableWrap && filesDrop) {
+            let depth = 0;
+            const reset = () => { depth = 0; filesDrop.hidden = true; };
+            filesTableWrap.addEventListener('dragenter', e => {
+                if (!canAccess('console.upload') || !dragHasFiles(e)) return;
+                e.preventDefault();
+                depth++;
+                filesDrop.hidden = false;
+            });
+            filesTableWrap.addEventListener('dragover', e => {
+                if (!canAccess('console.upload') || !dragHasFiles(e)) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+            });
+            filesTableWrap.addEventListener('dragleave', () => {
+                depth = Math.max(0, depth - 1);
+                if (!depth) filesDrop.hidden = true;
+            });
+            filesTableWrap.addEventListener('drop', e => {
+                if (!canAccess('console.upload') || !dragHasFiles(e)) return;
+                e.preventDefault();
+                reset();
+                uploadFiles(e.dataTransfer.files);
+            });
+        }
+
+        if (typeof window.addEventListener === 'function') {
+            window.addEventListener('beforeunload', e => {
+                if (!editorDirty()) return;
+                e.preventDefault();
+                e.returnValue = '';
+            });
+        }
+
+        // A reload or shared link restores the folder and open file.
+        const params = new URLSearchParams(window.location.search);
+        const file = params.get('file');
+        loadFiles(params.get('path') || '');
+        if (file) openFile(file);
+    }
+
     /* --------------------------------------------------------- Roles & Permissions */
 
     /* What the signed-in account may do, from /api/access/me. null until it
@@ -5227,8 +6489,9 @@
         users: 'users.view',
         roles: 'roles.manage',
         status: 'status.manage',
-        console: 'console.view',
-        players: 'console.view',
+        // Any one of these makes the tab worth showing; each view inside it is
+        // gated on its own below.
+        minecraft: ['console.view', 'console.files'],
         polls: 'polls.manage',
         chatprompt: 'chat_prompt.manage'
     };
@@ -5242,9 +6505,21 @@
             .replace(/'/g, '&#39;');
     }
 
+    /* Which permission each view of the Minecraft Server tab needs. */
+    const MC_VIEW_PERMISSIONS = {
+        console: 'console.view',
+        players: 'console.view',
+        files: 'console.files'
+    };
+
     function canAccess(permission) {
         if (!accessMe) return true;
         return accessMe.superuser || (accessMe.permissions || []).includes(permission);
+    }
+
+    /* A single permission, or a list of which any one will do. */
+    function canAccessAny(needed) {
+        return [].concat(needed).some(canAccess);
     }
 
     function rolesAlert(message, type = 'success') {
@@ -5293,14 +6568,30 @@
         let firstVisible = null;
         tabs.forEach(tab => {
             const needed = TAB_PERMISSIONS[tab.dataset.tab];
-            const visible = !needed || canAccess(needed);
+            const visible = !needed || canAccessAny(needed);
             tab.hidden = !visible;
             if (visible && !firstVisible) firstVisible = tab.dataset.tab;
         });
 
+        let firstView = null;
+        document.querySelectorAll('#minecraft-tab [data-mc-tab]').forEach(tab => {
+            const visible = canAccess(MC_VIEW_PERMISSIONS[tab.dataset.mcTab]);
+            tab.hidden = !visible;
+            if (visible && !firstView) firstView = tab.dataset.mcTab;
+        });
+        // Power controls and stats are console.view data.
+        const overview = document.getElementById('mcOverview');
+        if (overview) overview.hidden = !canAccess('console.view');
+
         const active = document.querySelector('#content > .tab-container > .tab[data-tab].active');
         if (active && active.hidden && firstVisible) {
             switchTab(firstVisible);
+        } else if (active && active.dataset.tab === 'minecraft') {
+            // Re-enter the tab now that access is known: leaves a view the
+            // account cannot use, and stops the console stream it may have
+            // opened on the optimistic first pass.
+            const view = document.querySelector('#minecraft-tab [data-mc-tab].active');
+            switchTab(view && !view.hidden ? view.dataset.mcTab : (firstView || 'console'));
         } else if (active && active.dataset.tab === 'users') {
             // The user list renders an Edit button only for role managers,
             // which was not known when it first drew.
@@ -6627,6 +7918,31 @@
 
     /* --------------------------------------------------------- Tab Routing Implementation */
 
+    /* The Minecraft Server tab's views. Each is also a page name of its own,
+       so ?page=console and ?page=players -- the tabs these used to be --
+       still land in the right place. */
+    const MC_VIEWS = ['console', 'players', 'files'];
+    let mcView = 'console';
+
+    function showMcView(view) {
+        mcView = MC_VIEWS.includes(view) ? view : 'console';
+        document.querySelectorAll('#minecraft-tab [data-mc-tab]').forEach(tab => {
+            const on = tab.dataset.mcTab === mcView;
+            tab.classList.toggle('active', on);
+            tab.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        document.querySelectorAll('#minecraft-tab .mc-view').forEach(panel => {
+            panel.classList.toggle('active', panel.id === 'mc-' + mcView);
+        });
+
+        if (mcView === 'files') initFiles();
+        // Lines that arrived while the console was hidden left it scrolled
+        // short of the bottom.
+        if (mcView === 'console' && consoleOutput && autoscroll && autoscroll.checked) {
+            consoleOutput.scrollTop = consoleOutput.scrollHeight;
+        }
+    }
+
     function switchTab(tabName, updateUrl = true) {
         // Nested tab strips (e.g. the incident history tabs) reuse the .tab class
         // but carry no data-tab, so a stray call must be a no-op rather than
@@ -6634,20 +7950,21 @@
         if (!tabName) return;
 
         let activeTabName = String(tabName).toLowerCase();
-        let targetContentId = activeTabName + '-tab';
-        let scrollToPlayers = false;
+        let view = null;
 
         if (activeTabName === 'incidents' || activeTabName === 'dashboard') {
             activeTabName = 'status';
-            targetContentId = 'status-tab';
-        } else if (activeTabName === 'server') {
-            activeTabName = 'console';
-            targetContentId = 'console-tab';
-        } else if (activeTabName === 'players') {
-            activeTabName = 'players';
-            targetContentId = 'console-tab';
-            scrollToPlayers = true;
+        } else if (activeTabName === 'server' || activeTabName === 'minecraft') {
+            activeTabName = 'minecraft';
+            view = mcView;
+        } else if (MC_VIEWS.includes(activeTabName)) {
+            view = activeTabName;
+            activeTabName = 'minecraft';
         }
+        const targetContentId = activeTabName + '-tab';
+        // Switching between the server tab's own views must not tear down and
+        // replay the console stream.
+        const wasMinecraft = minecraftTabActive();
 
         document.querySelectorAll('#content > .tab-container > .tab[data-tab]').forEach(tab => {
             if (tab.dataset.tab === activeTabName) {
@@ -6666,14 +7983,15 @@
             targetPanel.classList.add('active');
         }
 
-        if (activeTabName === 'console' || activeTabName === 'players') {
-            consoleConnect();
-            startStatusPolling();
-            if (scrollToPlayers) {
-                setTimeout(() => {
-                    const panel = document.getElementById('playersPanel');
-                    if (panel) panel.scrollIntoView({ behavior: 'smooth' });
-                }, 100);
+        if (activeTabName === 'minecraft') {
+            showMcView(view);
+            // The stream, stats and player presence are all console.view data.
+            if (!canAccess('console.view')) {
+                consoleDisconnect();
+                stopStatusPolling();
+            } else if (!wasMinecraft || !evtSource) {
+                consoleConnect();
+                startStatusPolling();
             }
         } else {
             consoleDisconnect();
@@ -6701,7 +8019,13 @@
 
         if (updateUrl) {
             const url = new URL(window.location);
-            url.searchParams.set('page', activeTabName);
+            url.searchParams.set('page', activeTabName === 'minecraft' ? mcView : activeTabName);
+            url.searchParams.delete('tab');
+            // Folder and file belong to the Files view only; it re-adds them.
+            if (activeTabName !== 'minecraft' || mcView !== 'files') {
+                url.searchParams.delete('path');
+                url.searchParams.delete('file');
+            }
             window.history.replaceState(null, '', url.toString());
         }
     }
@@ -6709,6 +8033,16 @@
     document.querySelectorAll('#content > .tab-container > .tab[data-tab]').forEach(tab => {
         tab.addEventListener('click', () => {
             switchTab(tab.dataset.tab);
+        });
+    });
+
+    document.querySelectorAll('#minecraft-tab [data-mc-tab]').forEach(tab => {
+        tab.addEventListener('click', () => switchTab(tab.dataset.mcTab));
+        tab.addEventListener('keydown', e => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                switchTab(tab.dataset.mcTab);
+            }
         });
     });
 

@@ -38,9 +38,10 @@ assert.ok(
 
 const source = html.slice(start, end);
 
-const TABS = ['users', 'roles', 'status', 'console', 'players', 'polls', 'chatprompt'];
+const TABS = ['users', 'roles', 'status', 'minecraft', 'polls', 'chatprompt'];
+const MC_VIEWS = ['console', 'players', 'files'];
 
-function buildPage(activeTab = 'users') {
+function buildPage(activeTab = 'users', activeView = 'console') {
     const doc = createDocument();
     const content = doc.createElement('div');
     content.id = 'content';
@@ -54,11 +55,29 @@ function buildPage(activeTab = 'users') {
         tab.setAttribute('data-tab', name);
         strip.appendChild(tab);
     }
+
+    // The Minecraft Server tab: a shared header, then its own view strip.
+    const mc = doc.createElement('div');
+    mc.id = 'minecraft-tab';
+    mc.className = activeTab === 'minecraft' ? 'tab-content active' : 'tab-content';
+    content.appendChild(mc);
+    const overview = doc.createElement('div');
+    overview.id = 'mcOverview';
+    mc.appendChild(overview);
+    const views = doc.createElement('div');
+    views.className = 'tab-container mc-subtabs';
+    mc.appendChild(views);
+    for (const name of MC_VIEWS) {
+        const tab = doc.createElement('div');
+        tab.className = name === activeView ? 'tab active' : 'tab';
+        tab.setAttribute('data-mc-tab', name);
+        views.appendChild(tab);
+    }
     return doc;
 }
 
-function setup({ fetchImpl, activeTab } = {}) {
-    const doc = buildPage(activeTab);
+function setup({ fetchImpl, activeTab, activeView } = {}) {
+    const doc = buildPage(activeTab, activeView);
     const calls = { switched: [], usersFetched: 0, overlays: [], requests: [] };
     const ctx = {
         document: doc,
@@ -132,7 +151,7 @@ test('the Edit button appears only for accounts that can manage roles', async ()
 
 test('tabs the account cannot use are hidden, and a hidden active tab is left', async () => {
     const { doc, calls, run } = setup({
-        activeTab: 'console',
+        activeTab: 'minecraft',
         fetchImpl: () => json({ username: 'mod', superuser: false, roles: ['moderator'],
                                 permissions: ['panel.access', 'users.view', 'users.moderate'] }),
     });
@@ -140,8 +159,56 @@ test('tabs the account cannot use are hidden, and a hidden active tab is left', 
 
     const hidden = TABS.filter(name =>
         doc.querySelector(`.tab[data-tab="${name}"]`).hidden);
-    assert.deepEqual(hidden, ['roles', 'status', 'console', 'players', 'polls', 'chatprompt']);
+    assert.deepEqual(hidden, ['roles', 'status', 'minecraft', 'polls', 'chatprompt']);
     assert.deepEqual(calls.switched, ['users']);
+});
+
+const mcHidden = (doc) => MC_VIEWS.filter(name =>
+    doc.querySelector(`[data-mc-tab="${name}"]`).hidden);
+
+/* Files is the one part of the server tab that reads configs off disk, so it
+   has its own permission; the console's never opened it. */
+test('console.view alone shows the server tab without its Files view', async () => {
+    const { doc, calls, run } = setup({
+        activeTab: 'minecraft',
+        activeView: 'files',
+        fetchImpl: () => json({ username: 'ops', superuser: false, roles: ['ops'],
+                                permissions: ['panel.access', 'console.view'] }),
+    });
+    await run('loadAccessMe()');
+
+    assert.equal(doc.querySelector('.tab[data-tab="minecraft"]').hidden, false);
+    assert.deepEqual(mcHidden(doc), ['files']);
+    assert.equal(doc.getElementById('mcOverview').hidden, false);
+    // Sitting on Files, which it cannot use, it is moved to the first view it can.
+    assert.deepEqual(calls.switched, ['console']);
+});
+
+test('console.files alone shows only the Files view, without the console header', async () => {
+    const { doc, calls, run } = setup({
+        activeTab: 'minecraft',
+        activeView: 'console',
+        fetchImpl: () => json({ username: 'builder', superuser: false, roles: ['builder'],
+                                permissions: ['panel.access', 'console.files'] }),
+    });
+    await run('loadAccessMe()');
+
+    assert.equal(doc.querySelector('.tab[data-tab="minecraft"]').hidden, false);
+    assert.deepEqual(mcHidden(doc), ['console', 'players']);
+    assert.equal(doc.getElementById('mcOverview').hidden, true);
+    assert.deepEqual(calls.switched, ['files']);
+});
+
+/* Re-entering is what closes a console stream opened before access was known. */
+test('an account that keeps its view is still re-routed once access is known', async () => {
+    const { calls, run } = setup({
+        activeTab: 'minecraft',
+        activeView: 'players',
+        fetchImpl: () => json({ username: 'ops', superuser: false, roles: ['ops'],
+                                permissions: ['console.view', 'console.files'] }),
+    });
+    await run('loadAccessMe()');
+    assert.deepEqual(calls.switched, ['players']);
 });
 
 test('a superuser sees every tab', async () => {
@@ -152,6 +219,7 @@ test('a superuser sees every tab', async () => {
     for (const name of TABS) {
         assert.equal(doc.querySelector(`.tab[data-tab="${name}"]`).hidden, false, name);
     }
+    assert.deepEqual(mcHidden(doc), []);
 });
 
 /* If the page cannot learn what the account holds it must not guess: hiding

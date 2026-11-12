@@ -120,6 +120,10 @@ async fn console_routes_reject_anonymous_callers() {
         // an already-cached page may still ask for.
         "/api/admin/console/item-texture/minecraft/diamond_sword",
         "/api/admin/console/item-texture/minecraft/diamond_sword.png",
+        // The file browser reads anything under the server directory.
+        "/api/admin/console/files",
+        "/api/admin/console/files/view?path=server.properties",
+        "/api/admin/console/files/download?path=server.properties",
     ] {
         let req = test::TestRequest::get().uri(uri).to_request();
         let resp = test::call_service(&app, req).await;
@@ -140,6 +144,22 @@ async fn console_routes_reject_anonymous_callers() {
         StatusCode::UNAUTHORIZED,
         "POST /api/admin/console/command must require an admin session"
     );
+
+    // Writes to the server's files.
+    let req = test::TestRequest::put()
+        .uri("/api/admin/console/files/content")
+        .insert_header(("x-rd-panel", "1"))
+        .set_json(serde_json::json!({ "path": "server.properties", "content": "", "version": "" }))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "PUT files/content needs a session");
+
+    let req = test::TestRequest::post()
+        .uri("/api/admin/console/files/upload?path=config")
+        .insert_header(("x-rd-panel", "1"))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "POST files/upload needs a session");
 
     // Power control reaches the sidecar, so an unauthenticated caller must not
     // be able to queue anything — including an unrecognised verb.
@@ -1611,4 +1631,355 @@ async fn the_is_admin_migration_runs_once() {
         .await
         .unwrap();
     pool.close().await;
+}
+
+/// The file browser reads the server directory, which holds the RCON password
+/// and every player's credentials. Pins down, end to end: it needs its own
+/// permission (`console.view` is not enough), credential stores are refused,
+/// secrets are masked in both the viewer and downloads, downloads can never
+/// render on this origin, and every read is attributed.
+#[actix_web::test]
+async fn server_files_need_their_own_permission_and_never_leak_secrets() {
+    let Some(pool) = shared_pool().await else {
+        eprintln!("skipping server_files_need_their_own_permission_and_never_leak_secrets: TEST_DATABASE_URL not set");
+        return;
+    };
+    let _serialized = DB_TEST_LOCK.lock().await;
+
+    let clean = |pool: MySqlPool| async move {
+        sqlx::query(r"DELETE FROM users WHERE username LIKE 'filestest\_%'")
+            .execute(&pool)
+            .await
+            .expect("clear test accounts");
+        sqlx::query(r"DELETE FROM roles WHERE name LIKE 'filestest-%'")
+            .execute(&pool)
+            .await
+            .expect("clear test roles");
+        sqlx::query(r"DELETE FROM console_audit WHERE username LIKE 'filestest\_%'")
+            .execute(&pool)
+            .await
+            .expect("clear test audit rows");
+    };
+    clean(pool.clone()).await;
+
+    for (id, username, role, permission) in [
+        ("filestest-viewer-id", "filestest_viewer", "filestest-viewer", "console.view"),
+        ("filestest-files-id", "filestest_files", "filestest-files", "console.files"),
+    ] {
+        sqlx::query("INSERT INTO users (id, username, password_hash) VALUES (?, ?, 'x')")
+            .bind(id)
+            .bind(username)
+            .execute(&pool)
+            .await
+            .expect("create test account");
+        sqlx::query("INSERT INTO roles (name, description, is_system) VALUES (?, '', FALSE)")
+            .bind(role)
+            .execute(&pool)
+            .await
+            .expect("create test role");
+        sqlx::query(
+            "INSERT INTO role_permissions (role_id, permission)
+             SELECT id, ? FROM roles WHERE name = ?",
+        )
+        .bind(permission)
+        .bind(role)
+        .execute(&pool)
+        .await
+        .expect("grant test permission");
+        grant_role(&pool, id, role).await;
+    }
+
+    let dir = std::env::temp_dir().join(format!("apird-files-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("logs")).unwrap();
+    std::fs::write(dir.join("server.properties"), "rcon.port=29875\nrcon.password=hunter2\n").unwrap();
+    std::fs::write(dir.join("authedPlayers.json"), "{\"uuid\":{\"password\":\"x\"}}").unwrap();
+    std::fs::write(dir.join("logs/page.html"), "<script>alert(1)</script>").unwrap();
+
+    let mut state = test_state(pool.clone());
+    state.config.minecraft_server_dir = dir.to_string_lossy().into_owned();
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(state))
+            .configure(configure_api),
+    )
+    .await;
+
+    let viewer = session_cookie("filestest_viewer", "filestest-viewer-id");
+    let reader = session_cookie("filestest_files", "filestest-files-id");
+    let get = |uri: &str, who: &actix_web::cookie::Cookie<'static>| {
+        test::TestRequest::get().uri(uri).cookie(who.clone()).to_request()
+    };
+
+    // console.view alone opens none of it.
+    for uri in [
+        "/api/admin/console/files",
+        "/api/admin/console/files/view?path=server.properties",
+        "/api/admin/console/files/download?path=server.properties",
+    ] {
+        let resp = test::call_service(&app, get(uri, &viewer)).await;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN, "GET {uri} with console.view only");
+    }
+
+    let resp = test::call_service(&app, get("/api/admin/console/files", &reader)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let listing: serde_json::Value = test::read_body_json(resp).await;
+    let entries = listing["entries"].as_array().unwrap();
+    let creds = entries.iter().find(|e| e["name"] == "authedPlayers.json").unwrap();
+    assert!(creds["restricted"].is_string() && creds.get("size").is_none(), "{creds}");
+
+    let resp = test::call_service(&app, get("/api/admin/console/files/view?path=server.properties", &reader)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.headers().get("cache-control").unwrap(), "no-store");
+    let preview: serde_json::Value = test::read_body_json(resp).await;
+    let text = preview["text"].as_str().unwrap();
+    assert!(!text.contains("hunter2") && text.contains("rcon.password=********"), "{text}");
+    assert_eq!(preview["masked"], 1);
+
+    for (uri, status) in [
+        ("/api/admin/console/files/view?path=authedPlayers.json", StatusCode::FORBIDDEN),
+        ("/api/admin/console/files/download?path=authedPlayers.json", StatusCode::FORBIDDEN),
+        ("/api/admin/console/files/view?path=../etc/passwd", StatusCode::BAD_REQUEST),
+        ("/api/admin/console/files/download?path=%2E%2E/%2E%2E/etc/passwd", StatusCode::BAD_REQUEST),
+        ("/api/admin/console/files/view?path=nope.txt", StatusCode::NOT_FOUND),
+    ] {
+        let resp = test::call_service(&app, get(uri, &reader)).await;
+        assert_eq!(resp.status(), status, "GET {uri}");
+    }
+
+    let resp = test::call_service(&app, get("/api/admin/console/files/download?path=server.properties", &reader)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = test::read_body(resp).await;
+    assert_eq!(&body[..], b"rcon.port=29875\nrcon.password=********\n");
+
+    let resp = test::call_service(&app, get("/api/admin/console/files/download?path=logs/page.html", &reader)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let h = resp.headers();
+    assert_eq!(h.get("content-type").unwrap(), "application/octet-stream");
+    assert!(h.get("content-disposition").unwrap().to_str().unwrap().starts_with("attachment"));
+    assert_eq!(h.get("x-content-type-options").unwrap(), "nosniff");
+    assert!(h.get("content-security-policy").unwrap().to_str().unwrap().contains("sandbox"));
+
+    // One view and two downloads, all attributed; the refusals are not.
+    let reads: Vec<(String, String)> = sqlx::query_as(
+        "SELECT command, outcome FROM console_audit
+         WHERE username = 'filestest_files' AND kind = 'file' ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        reads,
+        [
+            ("view server.properties".to_string(), "ok".to_string()),
+            ("download server.properties".to_string(), "ok".to_string()),
+            ("download logs/page.html".to_string(), "ok".to_string()),
+        ]
+    );
+
+    clean(pool).await;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A multipart body carrying one file in the `file` field.
+fn multipart_file(name: &str, bytes: &[u8]) -> (String, Vec<u8>) {
+    let boundary = "----apirdtestboundary";
+    let mut body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\n\
+         Content-Type: application/octet-stream\r\n\r\n"
+    )
+    .into_bytes();
+    body.extend_from_slice(bytes);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    (format!("multipart/form-data; boundary={boundary}"), body)
+}
+
+/// Editing and uploading, end to end: each needs its own permission, only
+/// the panel's own requests are accepted, masked secrets survive a save,
+/// locked keys and existing secrets cannot change, stale saves are refused,
+/// code cannot be uploaded, and every attempt -- refused ones included -- is
+/// attributed.
+#[actix_web::test]
+async fn server_file_writes_are_gated_attributed_and_keep_secrets() {
+    let Some(pool) = shared_pool().await else {
+        eprintln!("skipping server_file_writes_are_gated_attributed_and_keep_secrets: TEST_DATABASE_URL not set");
+        return;
+    };
+    let _serialized = DB_TEST_LOCK.lock().await;
+
+    let clean = |pool: MySqlPool| async move {
+        sqlx::query(r"DELETE FROM users WHERE username LIKE 'fileswtest\_%'")
+            .execute(&pool)
+            .await
+            .expect("clear test accounts");
+        sqlx::query(r"DELETE FROM roles WHERE name LIKE 'fileswtest-%'")
+            .execute(&pool)
+            .await
+            .expect("clear test roles");
+        sqlx::query(r"DELETE FROM console_audit WHERE username LIKE 'fileswtest\_%'")
+            .execute(&pool)
+            .await
+            .expect("clear test audit rows");
+    };
+    clean(pool.clone()).await;
+
+    for (id, username, role, permissions) in [
+        ("fileswtest-reader-id", "fileswtest_reader", "fileswtest-reader", &["console.files"][..]),
+        ("fileswtest-editor-id", "fileswtest_editor", "fileswtest-editor", &["console.files", "console.edit"][..]),
+        ("fileswtest-upload-id", "fileswtest_upload", "fileswtest-upload", &["console.files", "console.upload"][..]),
+    ] {
+        sqlx::query("INSERT INTO users (id, username, password_hash) VALUES (?, ?, 'x')")
+            .bind(id)
+            .bind(username)
+            .execute(&pool)
+            .await
+            .expect("create test account");
+        sqlx::query("INSERT INTO roles (name, description, is_system) VALUES (?, '', FALSE)")
+            .bind(role)
+            .execute(&pool)
+            .await
+            .expect("create test role");
+        for permission in permissions {
+            sqlx::query(
+                "INSERT INTO role_permissions (role_id, permission)
+                 SELECT id, ? FROM roles WHERE name = ?",
+            )
+            .bind(permission)
+            .bind(role)
+            .execute(&pool)
+            .await
+            .expect("grant test permission");
+        }
+        grant_role(&pool, id, role).await;
+    }
+
+    let base = std::env::temp_dir().join(format!("apird-filesw-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let dir = base.join("server");
+    std::fs::create_dir_all(dir.join("config")).unwrap();
+    let props = "motd=Hello\nrcon.password=hunter2\nonline-mode=true\n";
+    std::fs::write(dir.join("server.properties"), props).unwrap();
+
+    let mut state = test_state(pool.clone());
+    state.config.minecraft_server_dir = dir.to_string_lossy().into_owned();
+    state.config.server_files_backup_dir = base.join("backups").to_string_lossy().into_owned();
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(state))
+            .configure(configure_api),
+    )
+    .await;
+
+    let reader = session_cookie("fileswtest_reader", "fileswtest-reader-id");
+    let editor = session_cookie("fileswtest_editor", "fileswtest-editor-id");
+    let uploader = session_cookie("fileswtest_upload", "fileswtest-upload-id");
+
+    let req = test::TestRequest::get()
+        .uri("/api/admin/console/files/view?path=server.properties")
+        .cookie(editor.clone())
+        .to_request();
+    let preview: serde_json::Value = test::read_body_json(test::call_service(&app, req).await).await;
+    assert_eq!(preview["editable"], true, "{preview}");
+    let version = preview["version"].as_str().unwrap().to_string();
+    let masked = preview["text"].as_str().unwrap().to_string();
+    assert!(masked.contains("rcon.password=********"));
+
+    let save = |who: &actix_web::cookie::Cookie<'static>, content: &str, version: &str| {
+        test::TestRequest::put()
+            .uri("/api/admin/console/files/content")
+            .cookie(who.clone())
+            .insert_header(("x-rd-panel", "1"))
+            .set_json(serde_json::json!({ "path": "server.properties", "content": content, "version": version }))
+    };
+    let edited = masked.replace("motd=Hello", "motd=Welcome");
+
+    // Reading is not editing.
+    let resp = test::call_service(&app, save(&reader, &edited, &version).to_request()).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Not from the panel: no header, or a cross-site fetch carrying one.
+    let req = test::TestRequest::put()
+        .uri("/api/admin/console/files/content")
+        .cookie(editor.clone())
+        .set_json(serde_json::json!({ "path": "server.properties", "content": edited, "version": version }))
+        .to_request();
+    assert_eq!(test::call_service(&app, req).await.status(), StatusCode::FORBIDDEN);
+    let req = save(&editor, &edited, &version).insert_header(("sec-fetch-site", "same-site")).to_request();
+    assert_eq!(test::call_service(&app, req).await.status(), StatusCode::FORBIDDEN);
+
+    // A locked key, then a changed secret: refused, file untouched.
+    for bad in [
+        masked.replace("online-mode=true", "online-mode=false"),
+        masked.replace("rcon.password=********", "rcon.password=mine"),
+    ] {
+        let resp = test::call_service(&app, save(&editor, &bad, &version).to_request()).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+    assert_eq!(std::fs::read_to_string(dir.join("server.properties")).unwrap(), props);
+
+    // The real save keeps the password it never saw.
+    let resp = test::call_service(&app, save(&editor, &edited, &version).to_request()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        std::fs::read_to_string(dir.join("server.properties")).unwrap(),
+        props.replace("motd=Hello", "motd=Welcome")
+    );
+
+    // The old version is now stale.
+    let resp = test::call_service(&app, save(&editor, &masked, &version).to_request()).await;
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+
+    let upload = |who: &actix_web::cookie::Cookie<'static>, uri: &str, name: &str, bytes: &[u8]| {
+        let (content_type, body) = multipart_file(name, bytes);
+        test::TestRequest::post()
+            .uri(uri)
+            .cookie(who.clone())
+            .insert_header(("x-rd-panel", "1"))
+            .insert_header(("content-type", content_type))
+            .set_payload(body)
+            .to_request()
+    };
+    let uri = "/api/admin/console/files/upload?path=config";
+    let resp = test::call_service(&app, upload(&editor, uri, "a.toml", b"x = 1\n")).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN, "editing is not uploading");
+    let resp = test::call_service(&app, upload(&uploader, uri, "a.toml", b"x = 1\n")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(std::fs::read_to_string(dir.join("config/a.toml")).unwrap(), "x = 1\n");
+    let resp = test::call_service(&app, upload(&uploader, uri, "a.toml", b"x = 2\n")).await;
+    assert_eq!(resp.status(), StatusCode::CONFLICT, "never replaced unasked");
+    let resp = test::call_service(
+        &app,
+        upload(&uploader, "/api/admin/console/files/upload?path=config&overwrite=true", "a.toml", b"x = 2\n"),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN, "replacing needs console.edit");
+    let resp = test::call_service(&app, upload(&uploader, uri, "evil.jar", b"PK\x03\x04")).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert!(!dir.join("config/evil.jar").exists());
+
+    let rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT username, command, outcome FROM console_audit
+         WHERE username LIKE 'fileswtest\\_%' AND kind = 'file' AND command NOT LIKE 'view %'
+         ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let rows: Vec<(&str, &str, &str)> =
+        rows.iter().map(|(u, c, o)| (u.as_str(), c.as_str(), o.as_str())).collect();
+    assert_eq!(
+        rows,
+        [
+            ("fileswtest_editor", "edit server.properties", "failed"),
+            ("fileswtest_editor", "edit server.properties", "failed"),
+            ("fileswtest_editor", "edit server.properties", "ok"),
+            ("fileswtest_editor", "edit server.properties", "failed"),
+            ("fileswtest_upload", "upload config/a.toml", "ok"),
+            ("fileswtest_upload", "upload config/a.toml", "failed"),
+            ("fileswtest_upload", "upload config/evil.jar", "failed"),
+        ]
+    );
+
+    clean(pool).await;
+    let _ = std::fs::remove_dir_all(&base);
 }

@@ -69,6 +69,18 @@ pub enum Permission {
     ConsolePower,
     /// Op, kick, ban and change the vitals of in-game players.
     ConsolePlayers,
+    /// Browse, view and download the game server's files. Separate from
+    /// `ConsoleView` because those files include world data, configs and mod
+    /// settings that the console never shows.
+    ConsoleFiles,
+    /// Edit the game server's text config files. High trust: configs decide
+    /// how the server and its mods behave. What stays locked regardless --
+    /// code, op/whitelist/ban lists, RCON settings, existing secrets -- is in
+    /// `console::files_write`.
+    ConsoleEdit,
+    /// Upload new config files and images to the game server. Replacing an
+    /// existing file also needs `ConsoleEdit`.
+    ConsoleUpload,
     /// Open, extend and end polls.
     PollsManage,
     /// Edit the AI group chat's pop-up prompt.
@@ -78,7 +90,7 @@ pub enum Permission {
 }
 
 impl Permission {
-    pub const ALL: [Permission; 16] = [
+    pub const ALL: [Permission; 19] = [
         Permission::PanelAccess,
         Permission::UsersView,
         Permission::UsersModerate,
@@ -92,6 +104,9 @@ impl Permission {
         Permission::ConsoleCommand,
         Permission::ConsolePower,
         Permission::ConsolePlayers,
+        Permission::ConsoleFiles,
+        Permission::ConsoleEdit,
+        Permission::ConsoleUpload,
         Permission::PollsManage,
         Permission::ChatPromptManage,
         Permission::WikiEdit,
@@ -112,6 +127,9 @@ impl Permission {
             Permission::ConsoleCommand => "console.command",
             Permission::ConsolePower => "console.power",
             Permission::ConsolePlayers => "console.players",
+            Permission::ConsoleFiles => "console.files",
+            Permission::ConsoleEdit => "console.edit",
+            Permission::ConsoleUpload => "console.upload",
             Permission::PollsManage => "polls.manage",
             Permission::ChatPromptManage => "chat_prompt.manage",
             Permission::WikiEdit => "wiki.edit",
@@ -138,6 +156,11 @@ impl Permission {
             Permission::ConsoleCommand => "Run any command on the game server",
             Permission::ConsolePower => "Start, stop and restart the game server",
             Permission::ConsolePlayers => "Op, kick, ban, heal and feed in-game players",
+            Permission::ConsoleFiles => "Browse, view and download the game server's files",
+            Permission::ConsoleEdit => {
+                "Edit the game server's config files (high trust: configs control how mods behave)"
+            }
+            Permission::ConsoleUpload => "Upload new config files and images to the game server",
             Permission::PollsManage => "Open, extend and end polls",
             Permission::ChatPromptManage => "Edit the AI group chat pop-up",
             Permission::WikiEdit => "Edit the history wiki",
@@ -158,7 +181,10 @@ impl Permission {
             Permission::ConsoleView
             | Permission::ConsoleCommand
             | Permission::ConsolePower
-            | Permission::ConsolePlayers => "Game server",
+            | Permission::ConsolePlayers
+            | Permission::ConsoleFiles
+            | Permission::ConsoleEdit
+            | Permission::ConsoleUpload => "Game server",
             Permission::PollsManage | Permission::ChatPromptManage | Permission::WikiEdit => {
                 "Community"
             }
@@ -320,6 +346,9 @@ pub mod perm {
         ConsoleCommand,
         ConsolePower,
         ConsolePlayers,
+        ConsoleFiles,
+        ConsoleEdit,
+        ConsoleUpload,
         PollsManage,
         ChatPromptManage,
         WikiEdit,
@@ -355,6 +384,9 @@ mod tests {
                 "console.command",
                 "console.power",
                 "console.players",
+                "console.files",
+                "console.edit",
+                "console.upload",
                 "polls.manage",
                 "chat_prompt.manage",
                 "wiki.edit",

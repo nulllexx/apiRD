@@ -38,3 +38,8 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+
+# Already in the tree through tokio and friends. Used directly for the
+# O_NOFOLLOW / O_NONBLOCK flags the server file browser opens with.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

@@ -54,6 +54,9 @@ pub enum Kind {
     Power,
     /// An offline edit of a player's saved file.
     Vitals,
+    /// A server file read through the file browser: viewed or downloaded.
+    /// Listings are not recorded; reading a file's contents is.
+    File,
 }
 
 impl Kind {
@@ -63,6 +66,7 @@ impl Kind {
             Kind::Player => "player",
             Kind::Power => "power",
             Kind::Vitals => "vitals",
+            Kind::File => "file",
         }
     }
 }
@@ -321,6 +325,7 @@ mod tests {
         assert_eq!(Kind::Player.as_str(), "player");
         assert_eq!(Kind::Power.as_str(), "power");
         assert_eq!(Kind::Vitals.as_str(), "vitals");
+        assert_eq!(Kind::File.as_str(), "file");
 
         assert_eq!(Outcome::Pending.as_str(), "pending");
         assert_eq!(Outcome::Ok.as_str(), "ok");
