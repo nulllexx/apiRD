@@ -1159,6 +1159,23 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_upload_creates_an_empty_file_under_the_same_rules() {
+        let s = Scratch::new();
+        s.write("config/existing.toml", b"x = 1\n");
+        let files = s.files();
+        let made = files.upload("config", "new.yml", b"", false).unwrap();
+        assert_eq!((made.path.as_str(), made.size, made.replaced), ("config/new.yml", 0, false));
+        assert_eq!(s.read("config/new.yml"), "");
+        assert!(files.preview("config/new.yml").unwrap().editable, "it opens straight in the editor");
+
+        assert!(matches!(files.upload("config", "existing.toml", b"", false), Err(FileError::Exists)));
+        assert_eq!(s.read("config/existing.toml"), "x = 1\n");
+        assert!(matches!(files.upload("config", "run.sh", b"", false), Err(FileError::Rejected(_))));
+        fs::create_dir_all(s.0.join("server/mods")).unwrap();
+        assert!(matches!(files.upload("mods", "a.toml", b"", false), Err(FileError::ReadOnly(_))));
+    }
+
+    #[test]
     fn uploads_refuse_code_bad_names_and_impostor_images() {
         let s = Scratch::new();
         fs::create_dir_all(s.0.join("server/plugins")).unwrap();

@@ -2402,6 +2402,9 @@
                 <nav id="filesCrumbs" aria-label="Current folder"></nav>
                 <span class="spacer"></span>
                 <input type="text" id="filesFilter" placeholder="Filter this folder&hellip;" aria-label="Filter this folder">
+                <button type="button" id="filesNew" hidden>
+                    <i class="fas fa-file-circle-plus" aria-hidden="true"></i> New file
+                </button>
                 <button type="button" id="filesUpload" hidden>
                     <i class="fas fa-upload" aria-hidden="true"></i> Upload
                 </button>
@@ -2414,7 +2417,7 @@
                 Credential stores are never served, and values of keys that look like passwords,
                 tokens or secrets are masked &mdash; in the viewer, in downloads, and in the editor,
                 where they are kept as they are when you save. Code, logs, and op, whitelist and ban
-                lists are read-only. Every file you open, edit, upload or download is recorded in
+                lists are read-only. Every file you open, create, edit, upload or download is recorded in
                 the console audit log, and edited files are backed up first.
             </p>
             <p id="filesNote" class="page-hint" style="display: none;"></p>
@@ -3904,9 +3907,9 @@
             const action = space === -1 ? command : command.slice(0, space);
             command = space === -1 ? '' : command.slice(space + 1);
             const done = { view: 'viewed', download: 'downloaded', edit: 'edited',
-                           upload: 'uploaded', replace: 'replaced' }[action] || 'opened';
+                           upload: 'uploaded', replace: 'replaced', create: 'created' }[action] || 'opened';
             const tried = { view: 'view', download: 'download', edit: 'edit',
-                            upload: 'upload', replace: 'replace' }[action] || 'open';
+                            upload: 'upload', replace: 'replace', create: 'create' }[action] || 'open';
             verb = entry.outcome === 'failed' ? ` tried to ${tried} ` :
                    entry.outcome === 'pending' ? ` is changing ` : ` ${done} `;
         }
@@ -5612,6 +5615,7 @@
     const fileEditorHighlight = document.getElementById('fileEditorHighlight');
     const fileEditorInput = document.getElementById('fileEditorInput');
     const filesUploadButton = document.getElementById('filesUpload');
+    const filesNewButton = document.getElementById('filesNew');
     const filesUploadInput = document.getElementById('filesUploadInput');
     const filesTableWrap = document.getElementById('filesTableWrap');
     const filesDrop = document.getElementById('filesDrop');
@@ -6075,6 +6079,7 @@
 
     function applyFilesPermissions() {
         if (filesUploadButton) filesUploadButton.hidden = !canAccess('console.upload');
+        if (filesNewButton) filesNewButton.hidden = !canAccess('console.upload');
         updateViewerButtons();
     }
 
@@ -6305,9 +6310,9 @@
 
     /* --- Uploads */
 
-    async function uploadOne(file, overwrite) {
+    async function uploadOne(file, overwrite, name = file.name) {
         const form = new FormData();
-        form.append('file', file, file.name);
+        form.append('file', file, name);
         const url = `${FILES_API}/upload?path=${encodeURIComponent(filesPath)}${overwrite ? '&overwrite=true' : ''}`;
         const res = await fetch(url, {
             method: 'POST',
@@ -6368,6 +6373,45 @@
         }
     }
 
+    /* A new, empty file in the open folder. Sent as an empty upload, so the
+       server applies every upload rule -- formats, read-only folders, names --
+       and never replaces an existing file. Opens in the editor when allowed. */
+    async function createFile() {
+        if (!canAccess('console.upload')) return;
+        const where = filesPath || 'the server folder';
+        const entered = await askPrompt({
+            title: 'New file',
+            body: `Create an empty file in ${where}. Text and config formats only, e.g. .yml, .toml, .json, .properties, .txt.`,
+            placeholder: 'config.yml',
+            confirmLabel: 'Create'
+        });
+        if (entered === null) return;
+        const name = entered.trim();
+        if (!name) {
+            setFilesNote('A file name is needed.', true);
+            return;
+        }
+        if (name.includes('/') || name.includes('\\')) {
+            setFilesNote('Give just a name; the file is created in the folder you are in.', true);
+            return;
+        }
+        if (!(await confirmDiscard())) return;
+
+        setFilesNote(`Creating ${name}…`);
+        try {
+            const { res, data } = await uploadOne(new Blob([], { type: 'text/plain' }), false, name);
+            if (!res.ok) {
+                throw new Error((data && (data.error || data.message)) || `Could not create the file (${res.status})`);
+            }
+            await loadFiles(filesPath);
+            setFilesNote(`Created ${name}.`);
+            await openFile(data.path || joinPath(filesPath, name), { force: true });
+            if (canAccess('console.edit') && viewed && viewed.editable) startEdit();
+        } catch (err) {
+            setFilesNote(`${name}: ${err.message || 'could not create the file'}`, true);
+        }
+    }
+
     function dragHasFiles(e) {
         return !!(e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files'));
     }
@@ -6421,6 +6465,7 @@
             });
         }
 
+        if (filesNewButton) filesNewButton.addEventListener('click', createFile);
         if (filesUploadButton && filesUploadInput) {
             filesUploadButton.addEventListener('click', () => filesUploadInput.click());
             filesUploadInput.addEventListener('change', () => {

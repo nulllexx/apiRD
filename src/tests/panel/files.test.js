@@ -73,6 +73,7 @@ function buildPage() {
     el('textarea', 'fileEditorInput', editor);
     el('button', 'filesRefresh', view);
     el('button', 'filesUpload', view).hidden = true;
+    el('button', 'filesNew', view).hidden = true;
     el('input', 'filesUploadInput', view);
     el('div', 'filesTableWrap', view);
     el('div', 'filesDrop', view).hidden = true;
@@ -86,7 +87,7 @@ const json = (body, status = 200) => ({
 });
 
 function setup(fetchImpl = () => json({ path: '', entries: [], total: 0, truncated: false }),
-               { permissions = null, confirm = true } = {}) {
+               { permissions = null, confirm = true, prompt = null } = {}) {
     const doc = buildPage();
     const requests = [];
     const calls = { confirms: [], sent: [] };
@@ -110,6 +111,8 @@ function setup(fetchImpl = () => json({ path: '', entries: [], total: 0, truncat
         minecraftTabActive: () => true,
         canAccess: (p) => permissions === null || permissions.includes(p),
         askConfirm: async (opts) => { calls.confirms.push(opts); return confirm; },
+        askPrompt: async (opts) => { calls.prompts = (calls.prompts || []).concat([opts]); return prompt; },
+        Blob,
         FormData: class { constructor() { this.parts = []; } append(...a) { this.parts.push(a); } },
         fetch: async (url, init = {}) => {
             requests.push(url);
@@ -453,13 +456,53 @@ test('unsaved edits are not thrown away without asking', async () => {
 
 /* ---------------------------------------------------------------- uploads */
 
-test('the Upload button follows console.upload', () => {
+test('the Upload and New file buttons follow console.upload', () => {
     const allowed = setup();
     allowed.run('applyFilesPermissions()');
     assert.equal(allowed.doc.getElementById('filesUpload').hidden, false);
+    assert.equal(allowed.doc.getElementById('filesNew').hidden, false);
     const denied = setup(undefined, { permissions: ['console.files'] });
     denied.run('applyFilesPermissions()');
     assert.equal(denied.doc.getElementById('filesUpload').hidden, true);
+    assert.equal(denied.doc.getElementById('filesNew').hidden, true);
+});
+
+test('New file creates an empty file in the open folder and opens it for editing', async () => {
+    const blank = Object.assign({}, editable, { path: 'config/new.yml', name: 'new.yml', size: 0, masked: 0, text: '' });
+    const { calls, run } = setup((url, init) => {
+        if (init.method === 'POST') return json({ path: 'config/new.yml', size: 0, replaced: false });
+        if (url.includes('/view')) return json(blank);
+        return json({ path: 'config', entries: [] });
+    }, { prompt: '  new.yml ' });
+    await run(`loadFiles('config')`);
+    await run('createFile()');
+
+    const post = calls.sent.find(c => c.init.method === 'POST');
+    assert.equal(post.url, '/api/admin/console/files/upload?path=config', 'never with overwrite');
+    assert.equal(post.init.headers['X-RD-Panel'], '1');
+    const [field, blob, name] = post.init.body.parts[0];
+    assert.deepEqual([field, blob.size, name], ['file', 0, 'new.yml']);
+    assert.equal(run('filesOpen'), 'config/new.yml');
+    assert.equal(run('editing'), true);
+});
+
+test('New file refuses paths, does nothing on cancel, and reports the server\'s refusal', async () => {
+    const withSlash = setup(undefined, { prompt: '../evil.yml' });
+    await withSlash.run('createFile()');
+    assert.equal(withSlash.calls.sent.filter(c => c.init.method === 'POST').length, 0);
+
+    const cancelled = setup(undefined, { prompt: null });
+    await cancelled.run('createFile()');
+    assert.equal(cancelled.calls.sent.length, 0);
+
+    const refused = setup((url, init) => init.method === 'POST'
+        ? json({ error: '`.sh` files can\'t be uploaded' }, 400)
+        : json({ path: '', entries: [] }), { prompt: 'run.sh' });
+    await refused.run('createFile()');
+    const note = refused.doc.getElementById('filesNote');
+    assert.match(note.textContent, /run\.sh: `\.sh` files can't be uploaded/);
+    assert.ok(note.classList.contains('error'));
+    assert.equal(refused.run('filesOpen'), null);
 });
 
 test('uploads go to the open folder with the panel header, and replacing asks first', async () => {

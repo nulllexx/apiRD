@@ -1326,7 +1326,14 @@ async fn upload_file(
     crate::console::files_write::check_upload_name(&name)?;
 
     let shown = crate::console::files::join(&folder, &name);
-    let verb = if overwrite { "replace" } else { "upload" };
+    // The panel's "New file" button is an empty upload; recorded as what it is.
+    let verb = if overwrite {
+        "replace"
+    } else if bytes.is_empty() {
+        "create"
+    } else {
+        "upload"
+    };
     let record =
         audit_or_refuse(&state, &admin, Kind::File, &format!("{verb} {shown}"), Some(&shown)).await?;
     let files = server_files(&state);
