@@ -95,6 +95,9 @@ pub struct Plan {
     pub minecraft: Option<String>,
     /// World folders that go in, e.g. `world`, `world_nether`.
     pub worlds: Vec<String>,
+    /// Dimensions stored inside those folders (vanilla/Forge layout), e.g.
+    /// `world/DIM-1 (Nether)`. Archived and removed with their world.
+    pub dimensions: Vec<String>,
     pub files: u64,
     pub bytes: u64,
     pub mods: Vec<ModInfo>,
@@ -152,6 +155,7 @@ pub fn plan(cfg: &AppConfig) -> Result<Plan, String> {
 
     let base = main_world_name(cfg, &info);
     let mut worlds = Vec::new();
+    let mut dimensions = Vec::new();
     let mut items = Vec::new();
     for name in [base.clone(), format!("{base}_nether"), format!("{base}_the_end")] {
         let path = root.join(&name);
@@ -160,6 +164,10 @@ pub fn plan(cfg: &AppConfig) -> Result<Plan, String> {
             continue;
         }
         walk(&root, &path, &name, &prefix, &browser, &mut items)?;
+        if name == base {
+            // world_nether/DIM-1 is just Bukkit's layout inside its own folder.
+            dimensions.extend(dimensions_in(&path, &name));
+        }
         worlds.push(name);
     }
     if worlds.is_empty() {
@@ -206,7 +214,39 @@ pub fn plan(cfg: &AppConfig) -> Result<Plan, String> {
         zip_name,
         items,
         worlds,
+        dimensions,
     })
+}
+
+/// The dimensions kept inside a world folder: vanilla's `DIM-1` and `DIM1`,
+/// and mods' `dimensions/<namespace>/<name>`. Bukkit keeps the Nether and End
+/// in sibling folders instead; those are listed as worlds.
+fn dimensions_in(world: &Path, name: &str) -> Vec<String> {
+    let is_dir = |p: &Path| fs::symlink_metadata(p).is_ok_and(|m| m.is_dir());
+    let mut out = Vec::new();
+    for (dir, label) in [("DIM-1", "Nether"), ("DIM1", "The End")] {
+        if is_dir(&world.join(dir)) {
+            out.push(format!("{name}/{dir} ({label})"));
+        }
+    }
+    let mut modded = Vec::new();
+    if let Ok(namespaces) = fs::read_dir(world.join("dimensions")) {
+        for ns in namespaces.flatten() {
+            if !is_dir(&ns.path()) {
+                continue;
+            }
+            let ns_name = ns.file_name().to_string_lossy().into_owned();
+            let Ok(dims) = fs::read_dir(ns.path()) else { continue };
+            for dim in dims.flatten() {
+                if is_dir(&dim.path()) {
+                    modded.push(format!("{name}/dimensions/{ns_name}/{}", dim.file_name().to_string_lossy()));
+                }
+            }
+        }
+    }
+    modded.sort();
+    out.extend(modded);
+    out
 }
 
 /// Every regular file under `dir`, never following a symlink.
@@ -278,6 +318,7 @@ impl EndRequest {
             ended: self.ended,
             minecraft_version: None,
             has_world: true,
+            world_url: None,
             mods: Vec::new(),
             additional_info: self.additional_info.clone(),
         };
@@ -701,6 +742,7 @@ async fn run_steps(
         ended: request.ended,
         minecraft_version: plan.minecraft.clone(),
         has_world: true,
+        world_url: None,
         mods,
         additional_info: request.additional_info,
     };
@@ -877,6 +919,10 @@ mod tests {
         let s = Scratch::new();
         s.write("server/plugins/ServerSideUtils/season.json", br#"{"season":9,"theme":"S8 reboot","minecraft":"1.21.1","world":"world"}"#);
         s.write("server/world/level.dat", b"level");
+        for d in ["server/world/DIM1/region", "server/world/dimensions/twilightforest/twilight_forest/region"] {
+            fs::create_dir_all(s.0.join(d)).unwrap();
+        }
+        s.write("server/world/DIM1/region/r.0.0.mca", b"end");
         s.write("server/world/session.lock", b"lock");
         s.write("server/world/region/r.0.0.mca", &[7u8; 5000]);
         s.write("server/world_nether/DIM-1/x.mca", b"nether");
@@ -899,12 +945,14 @@ mod tests {
         let plan = plan(&s.config()).unwrap();
         assert_eq!((plan.season, plan.theme.as_str()), (9, "S8 reboot"));
         assert_eq!(plan.worlds, ["world", "world_nether"]);
+        assert_eq!(plan.dimensions, ["world/DIM1 (The End)", "world/dimensions/twilightforest/twilight_forest"]);
         let mut names: Vec<&str> = plan.items.iter().map(|i| i.name.as_str()).collect();
         names.sort();
         assert_eq!(
             names,
             [
                 "Season_9/mods/thing-1.21.1-2.3.4.jar",
+                "Season_9/world/DIM1/region/r.0.0.mca",
                 "Season_9/world/level.dat",
                 "Season_9/world/region/r.0.0.mca",
                 "Season_9/world_nether/DIM-1/x.mca",
@@ -954,7 +1002,7 @@ mod tests {
         finish(&job, None);
 
         let mut zip = zip::ZipArchive::new(File::open(&tmp).unwrap()).unwrap();
-        assert_eq!(zip.len(), 4);
+        assert_eq!(zip.len(), 5);
         let mut region = Vec::new();
         zip.by_name("Season_9/world/region/r.0.0.mca").unwrap().read_to_end(&mut region).unwrap();
         assert_eq!(region, vec![7u8; 5000]);

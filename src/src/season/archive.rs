@@ -55,7 +55,7 @@ pub struct Archive {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorldFile {
-    /// Always `Season_<n>.zip`.
+    /// The file name at the end of `url`, e.g. `Season_9.zip`.
     pub file: String,
     pub url: String,
     /// Bytes, when the file is on disk.
@@ -79,12 +79,61 @@ pub struct ArchiveInput {
     pub started: Option<NaiveDate>,
     pub ended: Option<NaiveDate>,
     pub minecraft_version: Option<String>,
-    /// Whether the season has a `Season_<n>.zip` download. The file name and
-    /// URL follow from the season; they are not free text, so a record cannot
-    /// point a download link anywhere else.
+    /// Whether the season has a world download.
     pub has_world: bool,
+    /// Where the download is, when it isn't this site's own
+    /// `/raindrippy/content/Season_<n>.zip`: a path on this site or an
+    /// http(s) link. Empty or absent means the default.
+    #[serde(default)]
+    pub world_url: Option<String>,
     pub mods: Vec<ModEntry>,
     pub additional_info: String,
+}
+
+pub fn default_world_url(season: u32) -> String {
+    format!("{CONTENT_URL}/{}", zip_name(season))
+}
+
+/// A download link a person typed: a path on this site (`/...`) or an
+/// `http(s)://` link. Nothing that a browser would run (`javascript:`,
+/// `data:`), no protocol-relative `//host`, no credentials in the link.
+pub fn check_world_url(url: &str) -> Result<String, String> {
+    const MAX: usize = 500;
+    let bad = || "The download link must be a path on this site (starting with /) or an http(s):// link".to_string();
+    if url.len() > MAX {
+        return Err(format!("The download link can be at most {MAX} characters"));
+    }
+    if url.chars().any(|c| c.is_whitespace() || c.is_control() || matches!(c, '"' | '<' | '>' | '\\' | '`')) {
+        return Err("The download link can't contain spaces, quotes or angle brackets".to_string());
+    }
+    if let Some(rest) = url.strip_prefix('/') {
+        if rest.starts_with('/') {
+            return Err(bad());
+        }
+        return Ok(url.to_string());
+    }
+    let lower = url.to_ascii_lowercase();
+    let rest = lower
+        .strip_prefix("https://")
+        .or_else(|| lower.strip_prefix("http://"))
+        .ok_or_else(bad)?;
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if host.is_empty() || host.contains('@') {
+        return Err(bad());
+    }
+    Ok(url.to_string())
+}
+
+/// The file name a link ends in, or `fallback`.
+fn file_of(url: &str, fallback: String) -> String {
+    let path = url.split(['?', '#']).next().unwrap_or("");
+    let path = path.split_once("://").map_or(path, |(_, rest)| rest.split_once('/').map_or("", |(_, p)| p));
+    path.rsplit('/')
+        .next()
+        .filter(|name| !name.is_empty())
+        .map(|name| urlencoding::decode(name).map(|n| n.into_owned()).unwrap_or_else(|_| name.to_string()))
+        .filter(|name| !name.chars().any(char::is_control))
+        .unwrap_or(fallback)
 }
 
 pub fn zip_name(season: u32) -> String {
@@ -157,6 +206,12 @@ pub fn validate(input: &ArchiveInput) -> Result<ArchiveInput, String> {
         ended: input.ended,
         minecraft_version,
         has_world: input.has_world,
+        world_url: match input.world_url.as_deref().map(str::trim) {
+            Some(url) if input.has_world && !url.is_empty() && url != default_world_url(input.season) => {
+                Some(check_world_url(url)?)
+            }
+            _ => None,
+        },
         mods,
         additional_info,
     })
@@ -253,6 +308,20 @@ impl ArchiveStore {
             .filter(|m| m.is_file())
             .map(|m| m.len());
         WorldFile { url: format!("{CONTENT_URL}/{file}"), file, size }
+    }
+
+    /// The download for `season` at `url` (`None` for the default). Sized
+    /// from disk when it is one of this site's own downloads.
+    pub fn world_at(&self, season: u32, url: Option<&str>) -> WorldFile {
+        let Some(url) = url else { return self.world_for(season) };
+        let size = url
+            .strip_prefix(CONTENT_URL)
+            .and_then(|rest| rest.strip_prefix('/'))
+            .filter(|name| !name.is_empty() && !name.contains(['/', '\\']) && *name != "..")
+            .and_then(|name| fs::symlink_metadata(self.content_dir.join(name)).ok())
+            .filter(|m| m.is_file())
+            .map(|m| m.len());
+        WorldFile { file: file_of(url, zip_name(season)), url: url.to_string(), size }
     }
 
     pub fn list(&self) -> Result<Vec<Listed>, StoreError> {
@@ -355,7 +424,7 @@ impl ArchiveStore {
             started: input.started,
             ended: input.ended,
             minecraft_version: input.minecraft_version,
-            world: input.has_world.then(|| self.world_for(input.season)),
+            world: input.has_world.then(|| self.world_at(input.season, input.world_url.as_deref())),
             mods: input.mods,
             additional_info: input.additional_info,
             created_at,
@@ -450,12 +519,58 @@ mod tests {
             ended: NaiveDate::from_ymd_opt(2026, 3, 1),
             minecraft_version: Some("1.21.1".into()),
             has_world: true,
+            world_url: None,
             mods: vec![
                 ModEntry { name: "zeta".into(), version: "1.0".into() },
                 ModEntry { name: "Alpha".into(), version: " 2.0 ".into() },
             ],
             additional_info: "Line one\r\nLine two".into(),
         }
+    }
+
+    #[test]
+    fn download_links_are_paths_or_web_links_only() {
+        for ok in ["/raindrippy/content/Old_S3.zip", "https://drive.example.com/file/d/abc?usp=sharing", "http://host:8080/w.zip"] {
+            assert_eq!(check_world_url(ok).unwrap(), ok);
+        }
+        for bad in [
+            "javascript:alert(1)", "data:text/html,x", "//evil.example/w.zip", "ftp://host/w.zip",
+            "https://user:pw@host/w.zip", "https://", "relative/w.zip", "/a b.zip", "/a\"b", "/<x>",
+        ] {
+            assert!(check_world_url(bad).is_err(), "{bad}");
+        }
+        assert!(check_world_url(&format!("/{}", "a".repeat(500))).is_err());
+    }
+
+    #[test]
+    fn a_typed_link_is_kept_and_named_after_its_file() {
+        let s = Scratch::new();
+        let store = s.store();
+        fs::write(s.0.join("content/Season_3_final.zip"), b"12345").unwrap();
+
+        let mut old = input(3);
+        old.world_url = Some(" /raindrippy/content/Season_3_final.zip ".into());
+        let saved = store.save(&old, None, true, "bako").unwrap();
+        let world = saved.world.unwrap();
+        assert_eq!((world.file.as_str(), world.url.as_str(), world.size), ("Season_3_final.zip", "/raindrippy/content/Season_3_final.zip", Some(5)));
+
+        let mut ext = input(2);
+        ext.world_url = Some("https://cdn.example.com/worlds/Season%202.zip?dl=1".into());
+        let world = store.save(&ext, None, true, "bako").unwrap().world.unwrap();
+        assert_eq!((world.file.as_str(), world.size), ("Season 2.zip", None));
+
+        // The default link is the same as no link; no download, no link.
+        let mut same = input(4);
+        same.world_url = Some(default_world_url(4));
+        assert_eq!(validate(&same).unwrap().world_url, None);
+        let mut none = input(5);
+        none.has_world = false;
+        none.world_url = Some("https://x.example/w.zip".into());
+        assert!(store.save(&none, None, true, "bako").unwrap().world.is_none());
+
+        let mut bad = input(6);
+        bad.world_url = Some("javascript:alert(1)".into());
+        assert!(validate(&bad).is_err());
     }
 
     const KEYS: [&str; 13] = [
@@ -489,6 +604,7 @@ mod tests {
             ended: None,
             minecraft_version: None,
             has_world: false,
+            world_url: None,
             mods: vec![],
             additional_info: String::new(),
         };

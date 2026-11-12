@@ -51,7 +51,7 @@ function buildPage() {
     el('h2', 'archiveEditorTitle', editor);
     el('p', 'archiveEditorMeta', editor);
     const form = el('form', 'archiveForm', editor);
-    for (const id of ['archiveSeason', 'archiveTheme', 'archiveStarted', 'archiveEnded', 'archiveMinecraft', 'archiveHasWorld', 'archiveInfo']) {
+    for (const id of ['archiveSeason', 'archiveTheme', 'archiveStarted', 'archiveEnded', 'archiveMinecraft', 'archiveHasWorld', 'archiveWorldUrl', 'archiveInfo']) {
         el('input', id, form);
     }
     el('p', 'archiveWorldInfo', form);
@@ -140,8 +140,9 @@ test('without season.archives the records are not requested', async () => {
 
 test('the editor sends exactly the fields the server accepts, with the version', async () => {
     const { doc, sent, run } = setup((url, init) => {
-        if (init.method === 'PUT') return json({ archive: record(), version: 'v2' });
-        if (url.endsWith('/archives/9')) return json({ archive: record(), version: 'v1' });
+        const own = record({ world: { file: 'Season_9.zip', url: '/raindrippy/content/Season_9.zip', size: 1234 } });
+        if (init.method === 'PUT') return json({ archive: own, version: 'v2' });
+        if (url.endsWith('/archives/9')) return json({ archive: own, version: 'v1' });
         return json({ archives: [] });
     });
     await run('openArchive(9)');
@@ -159,7 +160,8 @@ test('the editor sends exactly the fields the server accepts, with the version',
     assert.deepEqual(Object.keys(body), ['archive', 'version']);
     assert.equal(body.version, 'v1');
     assert.deepEqual(Object.keys(body.archive),
-        ['season', 'theme', 'started', 'ended', 'minecraft_version', 'has_world', 'mods', 'additional_info']);
+        ['season', 'theme', 'started', 'ended', 'minecraft_version', 'has_world', 'world_url', 'mods', 'additional_info']);
+    assert.equal(body.archive.world_url, null, 'the default link is sent as none');
     assert.equal(body.archive.theme, 'S8 Reboot');
     assert.equal(body.archive.has_world, true);
     assert.deepEqual(body.archive.mods, [{ name: 'Mekanism', version: '10.7.7' }, { name: 'Create', version: '6.0.4' }]);
@@ -175,8 +177,23 @@ test('a new record is created with create=true, and a bad season is caught first
     assert.match(doc.getElementById('archiveError').textContent, /whole number/);
 
     doc.getElementById('archiveSeason').value = '3';
+    doc.getElementById('archiveHasWorld').checked = true;
+    run('updateWorldInfo()');
+    assert.equal(doc.getElementById('archiveWorldUrl').hidden, false, 'the link field shows with the checkbox');
+    assert.equal(doc.getElementById('archiveWorldUrl').placeholder, '/raindrippy/content/Season_3.zip');
+    doc.getElementById('archiveWorldUrl').value = ' https://cdn.example.com/s3.zip ';
     await run('saveArchive()');
-    assert.equal(sent.find(s => s.init.method === 'PUT').url, '/api/admin/season/archives/3?create=true');
+    const put = sent.find(s => s.init.method === 'PUT');
+    assert.equal(put.url, '/api/admin/season/archives/3?create=true');
+    assert.equal(JSON.parse(put.init.body).archive.world_url, 'https://cdn.example.com/s3.zip');
+});
+
+test('a record with its own link opens with that link filled in', async () => {
+    const { doc, run } = setup(() => json({
+        archive: record({ world: { file: 'w.zip', url: 'https://cdn.example.com/w.zip', size: null } }), version: 'v1' }));
+    await run('openArchive(9)');
+    assert.equal(doc.getElementById('archiveWorldUrl').value, 'https://cdn.example.com/w.zip');
+    assert.equal(doc.getElementById('archiveWorldUrl').hidden, false);
 });
 
 test('a refused save keeps the form open with the reason', async () => {
@@ -194,6 +211,7 @@ const plan = (over = {}) => Object.assign({
     files: 1200, bytes: 500000, mods: [{ name: '<i>Mek</i>', version: '10.7.7', file: 'm.jar' }],
     zip_name: 'Season_9.zip', zip_url: '/raindrippy/content/Season_9.zip', record_url: '/archives/Season_9.json',
     zip_exists: false, record_exists: false, free_bytes: 9e9, enough_space: true,
+    dimensions: ['world/DIM-1 (Nether)', 'world/DIM1 (The End)'],
     next_season: 10, current_seed: '-417', kept_worlds: ['eventhub', 'testing'], server_state: 'running',
 }, over);
 
@@ -206,11 +224,11 @@ test('End season shows the plan, needs the acknowledgement, and sends the detail
     await run('openSeasonEnd()');
     assert.ok(doc.getElementById('seasonEndOverlay').classList.contains('open'));
     assert.equal(doc.getElementById('seasonEndTitle').textContent, 'End season 9?');
-    assert.match(doc.getElementById('seasonEndSummary').textContent, /S8 reboot.*1\.21\.1.*world, world_nether.*eventhub, testing.*stopped/s);
+    assert.match(doc.getElementById('seasonEndSummary').textContent, /S8 reboot.*1\.21\.1.*world, world_nether.*Including.*world\/DIM-1 \(Nether\), world\/DIM1 \(The End\).*eventhub, testing.*stopped/s);
     assert.equal(doc.getElementById('seasonEndMods').querySelectorAll('i').length, 0, 'mod names are text');
     assert.equal(doc.getElementById('seasonEndNextSeason').value, '10');
     assert.match(doc.getElementById('seasonEndSeedHint').textContent, /-417/);
-    assert.match(doc.getElementById('seasonEndAckText').textContent, /world, world_nether are deleted.*eventhub, testing are kept/);
+    assert.match(doc.getElementById('seasonEndAckText').textContent, /world, world_nether \(with the dimensions inside it\) are deleted.*eventhub, testing are kept/);
     const confirm = doc.getElementById('seasonEndConfirm');
     assert.equal(confirm.disabled, true, 'not until acknowledged');
 

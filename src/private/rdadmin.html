@@ -1019,6 +1019,16 @@
             font-size: 0.85rem;
         }
         .season-end-heading { margin: 14px 0 8px; font-size: 0.95rem; }
+        .season-end-warning {
+            margin: 14px 0 10px;
+            padding: 10px 12px;
+            border-left: 3px solid var(--warn) !important;
+            background: var(--bg-raised, transparent) !important;
+            color: var(--text) !important;
+            font-size: 0.88rem;
+        }
+        #archiveWorldGroup { grid-column: 1 / -1; }
+        #archiveWorldUrl { margin-top: 6px; }
         .season-end-hint { display: block; margin-top: 4px; color: var(--text-muted) !important; font-size: 0.8rem; }
         #seasonEndButtons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
         #seasonEndConfirm.danger { background: var(--danger) !important; border-color: var(--danger) !important; color: #ffffff !important; }
@@ -2635,7 +2645,7 @@
             </div>
             <p class="page-hint">
                 Each season's record is published at <code>/archives/Season_N.json</code>, and its world
-                download at <code>/raindrippy/content/Season_N.zip</code>. Every record has the same
+                download at <code>/raindrippy/content/Season_N.zip</code> unless the record links elsewhere. Every record has the same
                 fields; add records for old seasons or fix typos here.
             </p>
 
@@ -2696,12 +2706,15 @@
                             <label for="archiveMinecraft">Minecraft version <span class="poll-optional">(optional)</span></label>
                             <input type="text" id="archiveMinecraft" class="form-control" maxlength="32" placeholder="1.21.1">
                         </div>
-                        <div class="form-group">
+                        <div class="form-group" id="archiveWorldGroup">
                             <label class="poll-check">
                                 <input type="checkbox" id="archiveHasWorld">
                                 <span>Has a world download</span>
                             </label>
-                            <p class="poll-optional" id="archiveWorldInfo"></p>
+                            <input type="text" id="archiveWorldUrl" class="form-control" maxlength="500"
+                                   autocomplete="off" spellcheck="false" aria-label="Download link"
+                                   aria-describedby="archiveWorldInfo" hidden>
+                            <small class="season-end-hint" id="archiveWorldInfo"></small>
                         </div>
                     </div>
 
@@ -2946,9 +2959,10 @@
                        spellcheck="false" placeholder="Leave empty for a random seed" aria-describedby="seasonEndSeedHint">
                 <small id="seasonEndSeedHint" class="season-end-hint"></small>
             </div>
+            <p id="seasonEndAckText" class="season-end-warning"></p>
             <label class="poll-check">
                 <input type="checkbox" id="seasonEndAck">
-                <span id="seasonEndAckText"></span>
+                <span>I understand. The old world can only be recovered from the zip.</span>
             </label>
         </div>
         <p id="seasonEndError" class="archive-error" role="alert" style="display: none;"></p>
@@ -7013,9 +7027,16 @@
         const info = byId('archiveWorldInfo');
         if (!info) return;
         const season = Number(byId('archiveSeason').value);
-        info.textContent = byId('archiveHasWorld').checked && season > 0
-            ? `Links to ${zipUrl(season)}`
-            : '';
+        const has = byId('archiveHasWorld').checked;
+        const url = byId('archiveWorldUrl');
+        if (url) {
+            url.hidden = !has;
+            url.placeholder = season > 0 ? zipUrl(season) : '/raindrippy/content/Season_N.zip';
+        }
+        info.textContent = !has ? ''
+            : url && url.value.trim() ? 'A path on this site (starting with /) or an http(s):// link.'
+            : season > 0 ? `Leave empty to link to ${zipUrl(season)}, or paste another link.`
+            : 'Leave empty to link to this season\'s zip, or paste another link.';
     }
 
     function fillArchiveForm(record, mode) {
@@ -7033,6 +7054,7 @@
         byId('archiveEnded').value = record.ended || '';
         byId('archiveMinecraft').value = record.minecraft_version || '';
         byId('archiveHasWorld').checked = !!record.world;
+        byId('archiveWorldUrl').value = record.world && record.world.url !== zipUrl(record.season) ? record.world.url : '';
         byId('archiveInfo').value = record.additional_info || '';
         if (archiveModsBody) archiveModsBody.textContent = '';
         for (const mod of record.mods || []) addModRow(mod.name, mod.version);
@@ -7078,6 +7100,7 @@
             ended: byId('archiveEnded').value || null,
             minecraft_version: byId('archiveMinecraft').value.trim() || null,
             has_world: !!byId('archiveHasWorld').checked,
+            world_url: (byId('archiveHasWorld').checked && byId('archiveWorldUrl').value.trim()) || null,
             mods,
             additional_info: byId('archiveInfo').value
         };
@@ -7148,6 +7171,7 @@
             ['Theme', plan.theme || '—'],
             ['Minecraft', plan.minecraft || 'unknown'],
             ['Archived, then deleted', (plan.worlds || []).join(', ')],
+            ...((plan.dimensions || []).length ? [['Including', plan.dimensions.join(', ')]] : []),
             ['Kept as they are', (plan.kept_worlds || []).length ? plan.kept_worlds.join(', ') : 'no other worlds'],
             ['Server', plan.server_state === 'running' ? 'running — it will be stopped' : plan.server_state],
             ['Contents', `${plan.files} files, ${formatBytes(plan.bytes)} before compression`],
@@ -7183,8 +7207,9 @@
             ? `This season's seed was ${plan.current_seed}.`
             : 'This season has a random seed.';
         const kept = (plan.kept_worlds || []).length ? ` ${plan.kept_worlds.join(', ')} ${plan.kept_worlds.length === 1 ? 'is' : 'are'} kept.` : '';
+        const dims = (plan.dimensions || []).length ? ` (with ${plan.dimensions.length === 1 ? 'the dimension' : 'the dimensions'} inside it)` : '';
         byId('seasonEndAckText').textContent =
-            `The server is stopped while the world is zipped. Then ${(plan.worlds || []).join(', ')} ${(plan.worlds || []).length === 1 ? 'is' : 'are'} deleted ` +
+            `The server is stopped while the world is zipped. Then ${(plan.worlds || []).join(', ')}${dims} ${(plan.worlds || []).length === 1 ? 'is' : 'are'} deleted ` +
             `and the server starts on a new world. Players lose their inventories and progress.${kept}`;
         const problems = byId('seasonEndProblems');
         problems.textContent = '';
@@ -7361,7 +7386,7 @@
                 const row = addModRow();
                 if (row) row.querySelector('input').focus();
             });
-            for (const id of ['archiveHasWorld', 'archiveSeason']) {
+            for (const id of ['archiveHasWorld', 'archiveSeason', 'archiveWorldUrl']) {
                 const el = byId(id);
                 if (el) el.addEventListener('input', updateWorldInfo);
                 if (el) el.addEventListener('change', updateWorldInfo);
