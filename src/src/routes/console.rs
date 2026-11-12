@@ -185,7 +185,7 @@ async fn run_command(
 /// nothing in practice — `Require` is itself resolved by a database query, so
 /// a database that cannot be reached has already turned every one of these
 /// routes into an error.
-async fn audit_or_refuse(
+pub(crate) async fn audit_or_refuse(
     state: &AppState,
     admin: &Principal,
     kind: Kind,
@@ -245,6 +245,14 @@ async fn power(
     let action = PowerAction::parse(&path).ok_or_else(|| {
         AppError::BadRequest("Unknown action; expected start, stop or restart".to_string())
     })?;
+
+    // Ending a season stops and starts the server itself, and deletes the
+    // world while it is down; a start from here in the middle would race it.
+    if crate::season::end::is_running() {
+        return Err(AppError::Conflict(
+            "A season is being ended; the server is started again when that finishes".to_string(),
+        ));
+    }
 
     log::info!("console power action by {}: {}", admin.username, action.as_str());
 
@@ -1064,7 +1072,7 @@ fn server_files(state: &AppState) -> ServerFiles {
 /// another origin cannot send one without a CORS preflight, and CORS here
 /// allows no custom headers at all. `Sec-Fetch-Site`, where the browser sends
 /// it, must also say same-origin.
-fn require_panel_request(req: &actix_web::HttpRequest) -> Result<(), AppError> {
+pub(crate) fn require_panel_request(req: &actix_web::HttpRequest) -> Result<(), AppError> {
     let headers = req.headers();
     let marked = headers.get("x-rd-panel").and_then(|v| v.to_str().ok()) == Some("1");
     let site = headers.get("sec-fetch-site").and_then(|v| v.to_str().ok());

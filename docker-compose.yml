@@ -53,7 +53,13 @@ services:
       - /home/useradmin/mcserver:/home/useradmin/mcserver
       - /home/useradmin/api/mainapi/data:/home/useradmin/api/mainapi/data
       - /home/useradmin/api:/home/useradmin/api
-      - /usr/share/nginx/html/raindrippy/content:/usr/share/nginx/html/raindrippy/content:ro
+      # Season downloads (Season_<n>.zip). Writable so "End season" in the
+      # admin panel can publish the new one; it only ever adds a file, never
+      # replaces one.
+      - /usr/share/nginx/html/raindrippy/content:/usr/share/nginx/html/raindrippy/content:rw
+      # Season archive records (Season_<n>.json), served at /archives/. The
+      # website's deploy rsyncs without --delete, so these survive deploys.
+      - /usr/share/nginx/html/archives:/usr/share/nginx/html/archives:rw
       - /usr/share/nginx/html/raindrippy/projects/public:/usr/share/nginx/html/raindrippy/projects/public:rw
     network_mode: "host"
 

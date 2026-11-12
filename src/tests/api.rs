@@ -161,6 +161,27 @@ async fn console_routes_reject_anonymous_callers() {
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "POST files/upload needs a session");
 
+    // Ending a season writes to the public website.
+    for (method, uri) in [
+        ("GET", "/api/admin/season/current"),
+        ("POST", "/api/admin/season/end"),
+        ("GET", "/api/admin/season/end/status"),
+        ("GET", "/api/admin/season/archives"),
+        ("GET", "/api/admin/season/archives/9"),
+        ("PUT", "/api/admin/season/archives/9"),
+    ] {
+        let req = match method {
+            "GET" => test::TestRequest::get(),
+            "POST" => test::TestRequest::post(),
+            _ => test::TestRequest::put(),
+        }
+        .uri(uri)
+        .insert_header(("x-rd-panel", "1"))
+        .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "{method} {uri} needs a session");
+    }
+
     // Power control reaches the sidecar, so an unauthenticated caller must not
     // be able to queue anything — including an unrecognised verb.
     for action in ["start", "stop", "restart", "bogus"] {
@@ -1981,5 +2002,293 @@ async fn server_file_writes_are_gated_attributed_and_keep_secrets() {
     );
 
     clean(pool).await;
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Ending a season end to end, against a scratch server the sidecar reports
+/// as stopped (so no RCON is needed): the zip and record appear where the
+/// website serves them, a second end of the same season is refused, and the
+/// archive editor is gated on its own permission.
+#[actix_web::test]
+async fn ending_a_season_publishes_the_zip_and_record() {
+    let Some(pool) = shared_pool().await else {
+        eprintln!("skipping ending_a_season_publishes_the_zip_and_record: TEST_DATABASE_URL not set");
+        return;
+    };
+    let _serialized = DB_TEST_LOCK.lock().await;
+
+    let clean = |pool: MySqlPool| async move {
+        sqlx::query(r"DELETE FROM users WHERE username LIKE 'seasontest\_%'").execute(&pool).await.unwrap();
+        sqlx::query(r"DELETE FROM roles WHERE name LIKE 'seasontest-%'").execute(&pool).await.unwrap();
+        sqlx::query(r"DELETE FROM console_audit WHERE username LIKE 'seasontest\_%'").execute(&pool).await.unwrap();
+    };
+    clean(pool.clone()).await;
+    for (id, username, role, permission) in [
+        ("seasontest-ender-id", "seasontest_ender", "seasontest-ender", "season.end"),
+        ("seasontest-editor-id", "seasontest_editor", "seasontest-editor", "season.archives"),
+    ] {
+        sqlx::query("INSERT INTO users (id, username, password_hash) VALUES (?, ?, 'x')")
+            .bind(id).bind(username).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO roles (name, description, is_system) VALUES (?, '', FALSE)")
+            .bind(role).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO role_permissions (role_id, permission) SELECT id, ? FROM roles WHERE name = ?")
+            .bind(permission).bind(role).execute(&pool).await.unwrap();
+        grant_role(&pool, id, role).await;
+    }
+
+    let base = std::env::temp_dir().join(format!("apird-season-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    for dir in ["server/world/region", "server/mods", "server/plugins/ServerSideUtils", "content", "control"] {
+        std::fs::create_dir_all(base.join(dir)).unwrap();
+    }
+    std::fs::write(
+        base.join("server/plugins/ServerSideUtils/season.json"),
+        r#"{"season":9,"theme":"S8 reboot","minecraft":"1.21.1","world":"world"}"#,
+    )
+    .unwrap();
+    std::fs::write(base.join("server/world/level.dat"), b"level").unwrap();
+    std::fs::write(base.join("server/world/region/r.0.0.mca"), vec![1u8; 4096]).unwrap();
+    std::fs::write(base.join("server/mods/thing-1.21.1-2.3.4.jar"), b"jar").unwrap();
+    std::fs::write(base.join("control/status"), "false\n").unwrap();
+
+    let (sidecar, _) = fake_sidecar(base.join("control"));
+    let mut state = test_state(pool.clone());
+    let path = |rel: &str| base.join(rel).to_string_lossy().into_owned();
+    state.config.season_override_path = path("server/plugins/ServerSideUtils/season-override.json");
+    state.config.minecraft_server_dir = path("server");
+    state.config.mods_dir = path("server/mods");
+    state.config.season_info_path = path("server/plugins/ServerSideUtils/season.json");
+    state.config.server_properties_path = path("server/server.properties");
+    state.config.seasons_path = path("content");
+    state.config.archives_dir = path("archives");
+    state.config.control_dir = path("control");
+    let app = test::init_service(App::new().app_data(web::Data::new(state)).configure(configure_api)).await;
+
+    let ender = session_cookie("seasontest_ender", "seasontest-ender-id");
+    let editor = session_cookie("seasontest_editor", "seasontest-editor-id");
+    let get = |uri: &str, who: &actix_web::cookie::Cookie<'static>| {
+        test::TestRequest::get().uri(uri).cookie(who.clone()).to_request()
+    };
+
+    let resp = test::call_service(&app, get("/api/admin/season/current", &ender)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let plan: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!((plan["season"].as_u64(), plan["theme"].as_str()), (Some(9), Some("S8 reboot")));
+    assert_eq!(plan["mods"][0]["version"], "2.3.4");
+
+    let end = |who: &actix_web::cookie::Cookie<'static>, season: u32| {
+        test::TestRequest::post()
+            .uri("/api/admin/season/end")
+            .cookie(who.clone())
+            .insert_header(("x-rd-panel", "1"))
+            .set_json(serde_json::json!({
+                "season": season, "started": "2026-08-01", "ended": "2026-11-12", "additional_info": "GG",
+                "next_season": season + 1, "next_theme": "Glacier", "seed": "42"
+            }))
+            .to_request()
+    };
+    assert_eq!(test::call_service(&app, end(&editor, 9)).await.status(), StatusCode::FORBIDDEN, "editing is not ending");
+    assert_eq!(test::call_service(&app, end(&ender, 9)).await.status(), StatusCode::ACCEPTED);
+
+    let mut job = serde_json::Value::Null;
+    for _ in 0..100 {
+        let resp = test::call_service(&app, get("/api/admin/season/end/status", &ender)).await;
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        job = body["job"].clone();
+        if job["state"] != "running" {
+            break;
+        }
+        actix_web::rt::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(job["state"], "done", "{job}");
+    assert_eq!(job["percent"].as_f64(), Some(100.0));
+    assert!(base.join("content/Season_9.zip").is_file());
+    let record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(base.join("archives/Season_9.json")).unwrap()).unwrap();
+    assert_eq!(record["theme"], "S8 reboot");
+    assert_eq!(record["additional_info"], "GG");
+    assert_eq!(record["mods"], serde_json::json!([{ "name": "thing", "version": "2.3.4" }]));
+    assert_eq!(record["world"]["url"], "/raindrippy/content/Season_9.zip");
+    assert!(!base.join("server/world").exists(), "the old world is gone");
+    assert!(std::fs::read_to_string(base.join("server/server.properties")).unwrap().contains("level-seed=42"));
+
+    // Ending it again (the plugin not yet restarted, a world present) finds
+    // the zip and record already there and does nothing.
+    std::fs::create_dir_all(base.join("server/world")).unwrap();
+    std::fs::write(base.join("server/world/level.dat"), b"new").unwrap();
+    assert_eq!(test::call_service(&app, end(&ender, 9)).await.status(), StatusCode::ACCEPTED);
+    for _ in 0..50 {
+        let resp = test::call_service(&app, get("/api/admin/season/end/status", &ender)).await;
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        job = body["job"].clone();
+        if job["state"] != "running" { break; }
+        actix_web::rt::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(job["state"], "failed");
+    assert!(job["error"].as_str().unwrap().contains("already exists"), "{job}");
+
+    // The editor: the ender can't, the editor can, with the version.
+    assert_eq!(test::call_service(&app, get("/api/admin/season/archives", &ender)).await.status(), StatusCode::FORBIDDEN);
+    let resp = test::call_service(&app, get("/api/admin/season/archives/9", &editor)).await;
+    let loaded: serde_json::Value = test::read_body_json(resp).await;
+    let version = loaded["version"].as_str().unwrap().to_string();
+    let mut input = serde_json::json!({
+        "season": 9, "theme": "S8 Reboot", "started": "2026-08-01", "ended": "2026-11-12",
+        "minecraft_version": "1.21.1", "has_world": true,
+        "mods": [{ "name": "thing", "version": "2.3.4" }], "additional_info": "GG"
+    });
+    let put = |body: serde_json::Value, uri: &str| {
+        test::TestRequest::put().uri(uri).cookie(editor.clone()).insert_header(("x-rd-panel", "1")).set_json(body).to_request()
+    };
+    let resp = test::call_service(&app, put(serde_json::json!({ "archive": input, "version": version }), "/api/admin/season/archives/9")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = test::call_service(&app, put(serde_json::json!({ "archive": input, "version": version }), "/api/admin/season/archives/9")).await;
+    assert_eq!(resp.status(), StatusCode::CONFLICT, "the old version is stale");
+    input["season"] = serde_json::json!(4);
+    input["has_world"] = serde_json::json!(false);
+    let resp = test::call_service(&app, put(serde_json::json!({ "archive": input }), "/api/admin/season/archives/4?create=true")).await;
+    assert_eq!(resp.status(), StatusCode::OK, "an old season can be added by hand");
+    input["extra"] = serde_json::json!("x");
+    let resp = test::call_service(&app, put(serde_json::json!({ "archive": input }), "/api/admin/season/archives/5?create=true")).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "unknown fields are refused");
+
+    sidecar.abort();
+    clean(pool).await;
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A stand-in for the mc-control sidecar: answers every command queued in
+/// `control`, keeps the status file in step, and records the order.
+fn fake_sidecar(control: std::path::PathBuf) -> (tokio::task::JoinHandle<()>, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let log = seen.clone();
+    let task = tokio::spawn(async move {
+        loop {
+            if let Ok(entries) = std::fs::read_dir(control.join("queue")) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().is_some_and(|e| e == "cmd") {
+                        let cmd = std::fs::read_to_string(&path).unwrap();
+                        std::fs::remove_file(&path).unwrap();
+                        let id = path.file_stem().unwrap().to_string_lossy().into_owned();
+                        std::fs::create_dir_all(control.join("result")).unwrap();
+                        let status = if cmd == "stop" { "stopped" } else { "running" };
+                        std::fs::write(control.join("status"), status).unwrap();
+                        std::fs::write(control.join("result").join(id), "0\nok\n").unwrap();
+                        log.lock().unwrap().push(cmd);
+                    }
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    });
+    (task, seen)
+}
+
+/// The End-season pipeline itself -- check, stop, zip, record, publish,
+/// configure the next season, reset the world, start -- run directly, with
+/// no database.
+#[actix_web::test]
+async fn the_end_season_job_runs_without_a_database() {
+    let base = std::env::temp_dir().join(format!("apird-season-job-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    for dir in ["server/world/region", "server/world/playerdata", "server/world_the_end", "server/eventhub/region", "server/testing", "server/mods", "server/plugins/ServerSideUtils", "content", "control"] {
+        std::fs::create_dir_all(base.join(dir)).unwrap();
+    }
+    std::fs::write(base.join("server/plugins/ServerSideUtils/season.json"), r#"{"season":12,"theme":"Ocean","minecraft":"1.21.1"}"#).unwrap();
+    std::fs::write(base.join("server/server.properties"), "level-name=world\nlevel-seed=111\nrcon.password=hunter2\n").unwrap();
+    std::fs::write(base.join("server/world/level.dat"), b"level").unwrap();
+    std::fs::write(base.join("server/world/region/r.0.0.mca"), vec![3u8; 100_000]).unwrap();
+    std::fs::write(base.join("server/world_the_end/level.dat"), b"end").unwrap();
+    std::fs::write(base.join("server/eventhub/level.dat"), b"hub").unwrap();
+    std::fs::write(base.join("server/eventhub/region/r.0.0.mca"), b"hub region").unwrap();
+    std::fs::write(base.join("server/testing/level.dat"), b"test").unwrap();
+    std::fs::write(base.join("server/mods/create-1.21.1-6.0.4.jar"), b"jar").unwrap();
+    std::fs::write(base.join("control/status"), "running\n").unwrap();
+
+    let (sidecar, seen) = fake_sidecar(base.join("control"));
+
+    let mut state = lazy_state();
+    let path = |rel: &str| base.join(rel).to_string_lossy().into_owned();
+    state.config.minecraft_server_dir = path("server");
+    state.config.mods_dir = path("server/mods");
+    state.config.season_info_path = path("server/plugins/ServerSideUtils/season.json");
+    state.config.season_override_path = path("server/plugins/ServerSideUtils/season-override.json");
+    state.config.server_properties_path = path("server/server.properties");
+    state.config.seasons_path = path("content");
+    state.config.archives_dir = path("archives");
+    state.config.control_dir = path("control");
+    let state = web::Data::new(state);
+
+    let request: api_rd::season::end::EndRequest = serde_json::from_value(serde_json::json!({
+        "season": 12, "started": null, "ended": "2026-11-12", "additional_info": "Thanks all",
+        "next_season": 13, "next_theme": "Glacier", "seed": "-4172144997902289642"
+    }))
+    .unwrap();
+    let job = api_rd::season::end::begin(12, "tester").expect("no job running");
+    assert!(api_rd::season::end::begin(12, "other").is_none(), "one job at a time");
+    assert!(api_rd::season::end::is_running());
+    api_rd::season::end::run(state.clone(), job.clone(), request, "tester".into()).await;
+    sidecar.abort();
+
+    let p = job.lock().unwrap().clone();
+    assert_eq!(p.state, "done", "{:?} {:?}", p.error, p.notes);
+    assert!(!api_rd::season::end::is_running());
+    assert_eq!(p.percent, 100.0);
+    assert_eq!(p.files_done, 4);
+    assert_eq!(*seen.lock().unwrap(), ["stop", "start"], "stopped before zipping, started after");
+    assert!(std::fs::read_dir(base.join("content")).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().starts_with('.')), "no partial file left");
+
+    let mut zip = zip::ZipArchive::new(std::fs::File::open(base.join("content/Season_12.zip")).unwrap()).unwrap();
+    let mut names: Vec<String> = (0..zip.len()).map(|i| zip.by_index(i).unwrap().name().to_string()).collect();
+    names.sort();
+    assert_eq!(names, [
+        "Season_12/mods/create-1.21.1-6.0.4.jar",
+        "Season_12/world/level.dat",
+        "Season_12/world/region/r.0.0.mca",
+        "Season_12/world_the_end/level.dat",
+    ], "the event hub and test world are not archived");
+
+    let text = std::fs::read_to_string(base.join("archives/Season_12.json")).unwrap();
+    let record: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(record["season"], 12);
+    assert_eq!(record["theme"], "Ocean");
+    assert_eq!(record["started"], serde_json::Value::Null);
+    assert_eq!(record["ended"], "2026-11-12");
+    assert_eq!(record["minecraft_version"], "1.21.1");
+    assert_eq!(record["mods"], serde_json::json!([{ "name": "create", "version": "6.0.4" }]));
+    assert_eq!(record["world"]["file"], "Season_12.zip");
+    assert!(record["world"]["size"].as_u64().unwrap() > 0);
+    assert_eq!(record["created_by"], "tester");
+
+    // The next season: new seed, nothing else in server.properties changed,
+    // the plugin's override written, and only the main world gone.
+    assert_eq!(
+        std::fs::read_to_string(base.join("server/server.properties")).unwrap(),
+        "level-name=world\nrcon.password=hunter2\nlevel-seed=-4172144997902289642\n"
+    );
+    let over: serde_json::Value = serde_json::from_slice(&std::fs::read(base.join("server/plugins/ServerSideUtils/season-override.json")).unwrap()).unwrap();
+    assert_eq!(over, serde_json::json!({ "season": 13, "theme": "Glacier" }));
+    assert!(!base.join("server/world").exists() && !base.join("server/world_the_end").exists());
+    assert_eq!(std::fs::read(base.join("server/eventhub/region/r.0.0.mca")).unwrap(), b"hub region");
+    assert!(base.join("server/testing/level.dat").is_file());
+    let leftovers: Vec<String> = std::fs::read_dir(base.join("server")).unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with('.'))
+        .collect();
+    assert!(leftovers.is_empty(), "the old world is deleted, not left aside: {leftovers:?}");
+
+    // Ending the same season again is refused before the server is touched.
+    let again: api_rd::season::end::EndRequest = serde_json::from_value(serde_json::json!({
+        "season": 12, "started": null, "ended": null, "additional_info": "",
+        "next_season": 13, "next_theme": "Glacier"
+    }))
+    .unwrap();
+    let job = api_rd::season::end::begin(12, "tester").unwrap();
+    api_rd::season::end::run(state.clone(), job.clone(), again, "tester".into()).await;
+    let p = job.lock().unwrap().clone();
+    assert_eq!(p.state, "failed");
+    assert_eq!(seen.lock().unwrap().len(), 2, "no further stop or start");
+
     let _ = std::fs::remove_dir_all(&base);
 }

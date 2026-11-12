@@ -4,6 +4,7 @@ pub mod projects;
 pub mod api_keys;
 pub mod api;
 pub mod console;
+pub mod season;
 pub mod polls;
 pub mod chat_prompt;
 pub mod util;

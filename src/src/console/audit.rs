@@ -57,6 +57,8 @@ pub enum Kind {
     /// A server file read through the file browser: viewed or downloaded.
     /// Listings are not recorded; reading a file's contents is.
     File,
+    /// Ending a season, or changing a season's archive record.
+    Season,
 }
 
 impl Kind {
@@ -67,6 +69,7 @@ impl Kind {
             Kind::Power => "power",
             Kind::Vitals => "vitals",
             Kind::File => "file",
+            Kind::Season => "season",
         }
     }
 }
@@ -326,6 +329,7 @@ mod tests {
         assert_eq!(Kind::Power.as_str(), "power");
         assert_eq!(Kind::Vitals.as_str(), "vitals");
         assert_eq!(Kind::File.as_str(), "file");
+        assert_eq!(Kind::Season.as_str(), "season");
 
         assert_eq!(Outcome::Pending.as_str(), "pending");
         assert_eq!(Outcome::Ok.as_str(), "ok");

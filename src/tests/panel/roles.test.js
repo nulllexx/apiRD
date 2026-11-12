@@ -39,7 +39,7 @@ assert.ok(
 const source = html.slice(start, end);
 
 const TABS = ['users', 'roles', 'status', 'minecraft', 'polls', 'chatprompt'];
-const MC_VIEWS = ['console', 'players', 'files'];
+const MC_VIEWS = ['console', 'players', 'files', 'archives'];
 
 function buildPage(activeTab = 'users', activeView = 'console') {
     const doc = createDocument();
@@ -178,7 +178,7 @@ test('console.view alone shows the server tab without its Files view', async () 
     await run('loadAccessMe()');
 
     assert.equal(doc.querySelector('.tab[data-tab="minecraft"]').hidden, false);
-    assert.deepEqual(mcHidden(doc), ['files']);
+    assert.deepEqual(mcHidden(doc), ['files', 'archives']);
     assert.equal(doc.getElementById('mcOverview').hidden, false);
     // Sitting on Files, which it cannot use, it is moved to the first view it can.
     assert.deepEqual(calls.switched, ['console']);
@@ -194,9 +194,25 @@ test('console.files alone shows only the Files view, without the console header'
     await run('loadAccessMe()');
 
     assert.equal(doc.querySelector('.tab[data-tab="minecraft"]').hidden, false);
-    assert.deepEqual(mcHidden(doc), ['console', 'players']);
+    assert.deepEqual(mcHidden(doc), ['console', 'players', 'archives']);
     assert.equal(doc.getElementById('mcOverview').hidden, true);
     assert.deepEqual(calls.switched, ['files']);
+});
+
+/* Either season permission opens the tab and its Archives view, and nothing else in it. */
+test('a season permission alone shows only the Archives view', async () => {
+    for (const permission of ['season.end', 'season.archives']) {
+        const { doc, calls, run } = setup({
+            activeTab: 'minecraft',
+            activeView: 'console',
+            fetchImpl: () => json({ username: 'arch', superuser: false, roles: ['arch'],
+                                    permissions: ['panel.access', permission] }),
+        });
+        await run('loadAccessMe()');
+        assert.equal(doc.querySelector('.tab[data-tab="minecraft"]').hidden, false, permission);
+        assert.deepEqual(mcHidden(doc), ['console', 'players', 'files'], permission);
+        assert.deepEqual(calls.switched, ['archives'], permission);
+    }
 });
 
 /* Re-entering is what closes a console stream opened before access was known. */

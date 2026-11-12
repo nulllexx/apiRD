@@ -611,7 +611,7 @@ pub fn locked_keys_in(rel: &str, text: &str) -> Vec<String> {
 /// Matters because a simpler reading is a bypass: `rcon\u002Epassword=x`, or
 /// `rcon.pass\` continued onto a line starting `word=x`, are both
 /// `rcon.password` to Java.
-fn java_properties(text: &str) -> Vec<(String, String)> {
+pub(crate) fn java_properties(text: &str) -> Vec<(String, String)> {
     let text = text.replace("\r\n", "\n").replace('\r', "\n");
     let mut out = Vec::new();
     let mut logical = String::new();

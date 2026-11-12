@@ -81,6 +81,11 @@ pub enum Permission {
     /// Upload new config files and images to the game server. Replacing an
     /// existing file also needs `ConsoleEdit`.
     ConsoleUpload,
+    /// End the season: archive the world and mods to the website and write
+    /// its archive record.
+    SeasonEnd,
+    /// Create and edit season archive records by hand.
+    SeasonArchives,
     /// Open, extend and end polls.
     PollsManage,
     /// Edit the AI group chat's pop-up prompt.
@@ -90,7 +95,7 @@ pub enum Permission {
 }
 
 impl Permission {
-    pub const ALL: [Permission; 19] = [
+    pub const ALL: [Permission; 21] = [
         Permission::PanelAccess,
         Permission::UsersView,
         Permission::UsersModerate,
@@ -107,6 +112,8 @@ impl Permission {
         Permission::ConsoleFiles,
         Permission::ConsoleEdit,
         Permission::ConsoleUpload,
+        Permission::SeasonEnd,
+        Permission::SeasonArchives,
         Permission::PollsManage,
         Permission::ChatPromptManage,
         Permission::WikiEdit,
@@ -130,6 +137,8 @@ impl Permission {
             Permission::ConsoleFiles => "console.files",
             Permission::ConsoleEdit => "console.edit",
             Permission::ConsoleUpload => "console.upload",
+            Permission::SeasonEnd => "season.end",
+            Permission::SeasonArchives => "season.archives",
             Permission::PollsManage => "polls.manage",
             Permission::ChatPromptManage => "chat_prompt.manage",
             Permission::WikiEdit => "wiki.edit",
@@ -161,6 +170,10 @@ impl Permission {
                 "Edit the game server's config files (high trust: configs control how mods behave)"
             }
             Permission::ConsoleUpload => "Upload new config files and images to the game server",
+            Permission::SeasonEnd => {
+                "End the season: publish the world and mods as a download and record the archive"
+            }
+            Permission::SeasonArchives => "Create and edit season archive records",
             Permission::PollsManage => "Open, extend and end polls",
             Permission::ChatPromptManage => "Edit the AI group chat pop-up",
             Permission::WikiEdit => "Edit the history wiki",
@@ -185,6 +198,7 @@ impl Permission {
             | Permission::ConsoleFiles
             | Permission::ConsoleEdit
             | Permission::ConsoleUpload => "Game server",
+            Permission::SeasonEnd | Permission::SeasonArchives => "Seasons",
             Permission::PollsManage | Permission::ChatPromptManage | Permission::WikiEdit => {
                 "Community"
             }
@@ -349,6 +363,8 @@ pub mod perm {
         ConsoleFiles,
         ConsoleEdit,
         ConsoleUpload,
+        SeasonEnd,
+        SeasonArchives,
         PollsManage,
         ChatPromptManage,
         WikiEdit,
@@ -387,6 +403,8 @@ mod tests {
                 "console.files",
                 "console.edit",
                 "console.upload",
+                "season.end",
+                "season.archives",
                 "polls.manage",
                 "chat_prompt.manage",
                 "wiki.edit",

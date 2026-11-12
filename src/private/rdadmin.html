@@ -962,6 +962,147 @@
         #askOk.danger { background: var(--danger) !important; border-color: var(--danger) !important; color: #ffffff !important; }
         #askOk.danger:hover { filter: brightness(1.1); }
 
+        /* End season dialog: the ask dialog's frame, wider. */
+        #seasonEndOverlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(6, 8, 12, 0.72) !important;
+            backdrop-filter: blur(2px);
+            z-index: 1300;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        #seasonEndOverlay.open { display: flex; }
+        #seasonEndDialog {
+            background: var(--bg-panel) !important;
+            border: 1px solid var(--line) !important;
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            padding: 24px;
+            width: 100%;
+            max-width: 600px;
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+        }
+        #seasonEndDialog [hidden] { display: none !important; }
+        #seasonEndTitle { margin: 0 0 12px; font-size: 1.1rem; }
+        #seasonEndSummary {
+            display: grid;
+            grid-template-columns: max-content minmax(0, 1fr);
+            gap: 6px 14px;
+            margin: 0 0 12px;
+            font-size: 0.88rem;
+        }
+        #seasonEndSummary dt { color: var(--text-muted) !important; }
+        #seasonEndSummary dd { margin: 0; overflow-wrap: anywhere; }
+        #seasonEndModsBox { margin: 0 0 12px; font-size: 0.85rem; }
+        #seasonEndModsBox summary { cursor: pointer; color: var(--accent) !important; }
+        #seasonEndMods {
+            max-height: 180px;
+            overflow-y: auto;
+            margin: 8px 0 0;
+            padding-left: 18px;
+            columns: 2;
+            font-size: 0.8rem;
+        }
+        #seasonEndMods li { color: var(--text) !important; break-inside: avoid; }
+        #seasonEndMods .mod-version { color: var(--text-muted) !important; }
+        #seasonEndProblems { margin: 0 0 12px; padding: 0; list-style: none; }
+        #seasonEndProblems li {
+            background: var(--danger-soft) !important;
+            color: var(--danger) !important;
+            padding: 8px 10px;
+            border-radius: var(--radius-sm);
+            margin-bottom: 6px;
+            font-size: 0.85rem;
+        }
+        .season-end-heading { margin: 14px 0 8px; font-size: 0.95rem; }
+        .season-end-hint { display: block; margin-top: 4px; color: var(--text-muted) !important; font-size: 0.8rem; }
+        #seasonEndButtons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+        #seasonEndConfirm.danger { background: var(--danger) !important; border-color: var(--danger) !important; color: #ffffff !important; }
+        #seasonEndConfirm:disabled { opacity: 0.5; cursor: not-allowed; }
+        .archive-error {
+            background: var(--danger-soft) !important;
+            color: var(--danger) !important;
+            padding: 8px 10px;
+            border-radius: var(--radius-sm);
+            font-size: 0.85rem;
+        }
+
+        /* Archives view */
+        #archivesToolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+        #archivesToolbar h2 { margin: 0; }
+        #archivesToolbar .spacer { flex: 1; }
+        #archivesNote.error { color: var(--danger) !important; }
+        #archiveTableWrap {
+            background: var(--bg-panel) !important;
+            border: 1px solid var(--line) !important;
+            border-radius: var(--radius);
+            overflow-x: auto;
+            margin-bottom: 18px;
+        }
+        #archiveTable td.muted { color: var(--text-muted) !important; }
+        #archiveTable td.invalid { color: var(--danger) !important; }
+        #archiveTable td:last-child { text-align: right; white-space: nowrap; }
+        #archiveTable td button, #archiveTable td a.btn { margin: 0 0 0 4px; padding: 4px 10px; font-size: 0.8rem; text-decoration: none; }
+
+        #seasonJob { padding: 18px 20px; }
+        #seasonJobHead { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+        #seasonJobPercent { font-variant-numeric: tabular-nums; color: var(--text-muted) !important; }
+        #seasonJobBar {
+            height: 10px;
+            border-radius: 999px;
+            background: var(--bg-raised) !important;
+            border: 1px solid var(--line) !important;
+            overflow: hidden;
+        }
+        #seasonJobFill {
+            height: 100%;
+            width: 0;
+            background: var(--accent) !important;
+            transition: width 0.4s ease;
+        }
+        #seasonJob.done #seasonJobFill { background: var(--ok) !important; }
+        #seasonJob.failed #seasonJobFill { background: var(--danger) !important; }
+        #seasonJobDetail {
+            margin: 8px 0 10px;
+            font-size: 0.8rem;
+            color: var(--text-muted) !important;
+            font-variant-numeric: tabular-nums;
+            overflow-wrap: anywhere;
+        }
+        #seasonJobStages { margin: 0; padding: 0; list-style: none; font-size: 0.85rem; }
+        #seasonJobStages li { display: flex; align-items: center; gap: 8px; padding: 2px 0; color: var(--text-faint) !important; }
+        #seasonJobStages li i { width: 16px; text-align: center; }
+        #seasonJobStages li.done { color: var(--text-muted) !important; }
+        #seasonJobStages li.done i { color: var(--ok) !important; }
+        #seasonJobStages li.current { color: var(--text) !important; font-weight: 600; }
+        #seasonJobStages li.current i { color: var(--accent) !important; }
+        #seasonJobStages li.failed { color: var(--danger) !important; }
+        #seasonJobNotes { margin: 8px 0 0; padding-left: 18px; font-size: 0.8rem; }
+        #seasonJobNotes li { color: var(--warn) !important; }
+        #seasonJobResult { margin: 10px 0 0; font-size: 0.88rem; }
+        #seasonJobResult a { margin-right: 14px; }
+        #seasonJob.failed #seasonJobResult { color: var(--danger) !important; }
+
+        .archive-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 14px; }
+        #archiveModsWrap {
+            max-height: 360px;
+            overflow-y: auto;
+            border: 1px solid var(--line) !important;
+            border-radius: var(--radius-sm);
+            margin-bottom: 8px;
+        }
+        #archiveMods thead th { position: sticky; top: 0; z-index: 1; }
+        #archiveMods th, #archiveMods td { padding: 4px 6px; }
+        #archiveMods input { margin: 0; padding: 6px 8px; font-size: 0.85rem; }
+        #archiveMods td:last-child { width: 1%; }
+        #archiveMods td button { margin: 0; padding: 4px 8px; }
+        .archive-actions { display: flex; gap: 8px; }
+        #archiveEditor[hidden], #seasonJob[hidden] { display: none !important; }
+
         /* Item tooltip, drawn the way the game draws one.
 
            Replaces a `title` attribute, which had two problems: it cannot show
@@ -2330,6 +2471,7 @@
             <div class="tab active" data-mc-tab="console" role="tab" tabindex="0">Console</div>
             <div class="tab" data-mc-tab="players" role="tab" tabindex="0">Players</div>
             <div class="tab" data-mc-tab="files" role="tab" tabindex="0">Files</div>
+            <div class="tab" data-mc-tab="archives" role="tab" tabindex="0">Archives</div>
         </div>
 
         <!-- CONSOLE VIEW -->
@@ -2477,6 +2619,116 @@
                 </section>
             </div>
         </div><!-- /mc-files -->
+
+        <!-- ARCHIVES VIEW: ending a season, and every season's archive record -->
+        <div class="mc-view" id="mc-archives">
+            <div id="archivesToolbar">
+                <h2>Season archives</h2>
+                <span class="spacer"></span>
+                <button type="button" id="seasonEndOpen" class="btn-danger" hidden>
+                    <i class="fas fa-flag-checkered" aria-hidden="true"></i> End season&hellip;
+                </button>
+                <button type="button" id="archiveNew" hidden>
+                    <i class="fas fa-plus" aria-hidden="true"></i> New record
+                </button>
+                <button type="button" id="archivesRefresh">Refresh</button>
+            </div>
+            <p class="page-hint">
+                Each season's record is published at <code>/archives/Season_N.json</code>, and its world
+                download at <code>/raindrippy/content/Season_N.zip</code>. Every record has the same
+                fields; add records for old seasons or fix typos here.
+            </p>
+
+            <section id="seasonJob" class="card" hidden aria-live="polite">
+                <div id="seasonJobHead">
+                    <strong id="seasonJobTitle"></strong>
+                    <span id="seasonJobPercent"></span>
+                </div>
+                <div id="seasonJobBar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-labelledby="seasonJobTitle">
+                    <div id="seasonJobFill"></div>
+                </div>
+                <p id="seasonJobDetail"></p>
+                <ol id="seasonJobStages"></ol>
+                <ul id="seasonJobNotes"></ul>
+                <p id="seasonJobResult"></p>
+            </section>
+
+            <p id="archivesNote" class="page-hint" style="display: none;"></p>
+
+            <div id="archiveTableWrap">
+                <table id="archiveTable">
+                    <thead>
+                        <tr>
+                            <th>Season</th>
+                            <th>Theme</th>
+                            <th>Ended</th>
+                            <th>Download</th>
+                            <th>Mods</th>
+                            <th><span class="sr-only">Actions</span></th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+
+            <section id="archiveEditor" class="card" hidden>
+                <h2 class="card-title" id="archiveEditorTitle">Archive record</h2>
+                <p class="page-hint" id="archiveEditorMeta"></p>
+                <form id="archiveForm" autocomplete="off" novalidate>
+                    <div class="archive-grid">
+                        <div class="form-group">
+                            <label for="archiveSeason">Season</label>
+                            <input type="number" id="archiveSeason" class="form-control" min="1" max="100000" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="archiveTheme">Theme</label>
+                            <input type="text" id="archiveTheme" class="form-control" maxlength="200">
+                        </div>
+                        <div class="form-group">
+                            <label for="archiveStarted">Started <span class="poll-optional">(optional)</span></label>
+                            <input type="date" id="archiveStarted" class="form-control">
+                        </div>
+                        <div class="form-group">
+                            <label for="archiveEnded">Ended <span class="poll-optional">(optional)</span></label>
+                            <input type="date" id="archiveEnded" class="form-control">
+                        </div>
+                        <div class="form-group">
+                            <label for="archiveMinecraft">Minecraft version <span class="poll-optional">(optional)</span></label>
+                            <input type="text" id="archiveMinecraft" class="form-control" maxlength="32" placeholder="1.21.1">
+                        </div>
+                        <div class="form-group">
+                            <label class="poll-check">
+                                <input type="checkbox" id="archiveHasWorld">
+                                <span>Has a world download</span>
+                            </label>
+                            <p class="poll-optional" id="archiveWorldInfo"></p>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Mods</label>
+                        <div id="archiveModsWrap">
+                            <table id="archiveMods">
+                                <thead><tr><th>Name</th><th>Version</th><th><span class="sr-only">Remove</span></th></tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                        <button type="button" id="archiveAddMod"><i class="fas fa-plus" aria-hidden="true"></i> Add mod</button>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="archiveInfo">Additional info <span class="poll-optional">(optional)</span></label>
+                        <textarea id="archiveInfo" class="form-control" rows="5" maxlength="20000"></textarea>
+                    </div>
+
+                    <p id="archiveError" class="archive-error" role="alert" style="display: none;"></p>
+                    <div class="archive-actions">
+                        <button type="submit" id="archiveSave" class="btn-primary">Save record</button>
+                        <button type="button" id="archiveCancel">Cancel</button>
+                    </div>
+                </form>
+            </section>
+        </div><!-- /mc-archives -->
     </div><!-- /minecraft-tab -->
 
     <!-- POLLS TAB -->
@@ -2650,6 +2902,63 @@
 </div>
 
 <!-- Confirmation dialog, driven by ask(). Replaces confirm() and prompt(). -->
+<!-- End season: what will happen, the details to add, and a confirmation. -->
+<div id="seasonEndOverlay">
+    <div id="seasonEndDialog" role="dialog" aria-modal="true" aria-labelledby="seasonEndTitle">
+        <h3 id="seasonEndTitle">End the season</h3>
+        <p id="seasonEndLoading">Checking the season&hellip;</p>
+        <div id="seasonEndBody" hidden>
+            <dl id="seasonEndSummary"></dl>
+            <details id="seasonEndModsBox">
+                <summary id="seasonEndModsLabel"></summary>
+                <ul id="seasonEndMods"></ul>
+            </details>
+            <ul id="seasonEndProblems" role="alert"></ul>
+            <div class="archive-grid">
+                <div class="form-group">
+                    <label for="seasonEndStarted">Started <span class="poll-optional">(optional)</span></label>
+                    <input type="date" id="seasonEndStarted" class="form-control">
+                </div>
+                <div class="form-group">
+                    <label for="seasonEndEnded">Ended</label>
+                    <input type="date" id="seasonEndEnded" class="form-control">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="seasonEndInfo">Additional info <span class="poll-optional">(optional)</span></label>
+                <textarea id="seasonEndInfo" class="form-control" rows="4" maxlength="20000"
+                          placeholder="Winners, highlights, what made the season&hellip;"></textarea>
+            </div>
+            <h4 class="season-end-heading">Next season</h4>
+            <div class="archive-grid">
+                <div class="form-group">
+                    <label for="seasonEndNextSeason">Season number</label>
+                    <input type="number" id="seasonEndNextSeason" class="form-control" min="1" max="100000" step="1">
+                </div>
+                <div class="form-group">
+                    <label for="seasonEndNextTheme">Theme</label>
+                    <input type="text" id="seasonEndNextTheme" class="form-control" maxlength="64" autocomplete="off">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="seasonEndSeed">World seed <span class="poll-optional">(optional)</span></label>
+                <input type="text" id="seasonEndSeed" class="form-control" maxlength="64" autocomplete="off"
+                       spellcheck="false" placeholder="Leave empty for a random seed" aria-describedby="seasonEndSeedHint">
+                <small id="seasonEndSeedHint" class="season-end-hint"></small>
+            </div>
+            <label class="poll-check">
+                <input type="checkbox" id="seasonEndAck">
+                <span id="seasonEndAckText"></span>
+            </label>
+        </div>
+        <p id="seasonEndError" class="archive-error" role="alert" style="display: none;"></p>
+        <div id="seasonEndButtons">
+            <button type="button" id="seasonEndCancel">Cancel</button>
+            <button type="button" id="seasonEndConfirm" class="danger" disabled>End season and reset world</button>
+        </div>
+    </div>
+</div>
+
 <div id="askOverlay">
     <div id="askDialog" role="dialog" aria-modal="true" aria-labelledby="askTitle" aria-describedby="askBody">
         <h3 id="askTitle"></h3>
@@ -3901,15 +4210,15 @@
         let verb = entry.outcome === 'failed' ? ' tried to run ' :
                    entry.outcome === 'pending' ? ' is running ' : ' ran ';
         let command = entry.command || '';
-        // File actions are recorded as "<action> <path>".
-        if (entry.kind === 'file') {
+        // File and season actions are recorded as "<action> <what>".
+        if (entry.kind === 'file' || entry.kind === 'season') {
             const space = command.indexOf(' ');
             const action = space === -1 ? command : command.slice(0, space);
             command = space === -1 ? '' : command.slice(space + 1);
-            const done = { view: 'viewed', download: 'downloaded', edit: 'edited',
-                           upload: 'uploaded', replace: 'replaced', create: 'created' }[action] || 'opened';
-            const tried = { view: 'view', download: 'download', edit: 'edit',
-                            upload: 'upload', replace: 'replace', create: 'create' }[action] || 'open';
+            const done = { view: 'viewed', download: 'downloaded', edit: 'edited', upload: 'uploaded',
+                           replace: 'replaced', create: 'created', end: 'ended' }[action] || 'changed';
+            const tried = { view: 'view', download: 'download', edit: 'edit', upload: 'upload',
+                            replace: 'replace', create: 'create', end: 'end' }[action] || 'change';
             verb = entry.outcome === 'failed' ? ` tried to ${tried} ` :
                    entry.outcome === 'pending' ? ` is changing ` : ` ${done} `;
         }
@@ -6515,6 +6824,567 @@
         if (file) openFile(file);
     }
 
+    /* --------------------------------------------------------- Season Archives */
+
+    /* Ending a season, and every season's archive record.
+
+       Records are edited through a form, never as raw JSON: the server owns
+       their shape (season/archive.rs), refuses anything else, and this form
+       can only produce what it accepts. Links are built here from the season
+       number, not taken from a record -- a file edited by hand on disk could
+       hold any URL, and the panel must not turn one into a link. Everything
+       shown is set with textContent. */
+    const SEASON_API = '/api/admin/season';
+    const archiveTableBody = document.querySelector('#archiveTable tbody');
+    const archiveTableWrap = document.getElementById('archiveTableWrap');
+    const archivesNote = document.getElementById('archivesNote');
+    const seasonEndOpenButton = document.getElementById('seasonEndOpen');
+    const archiveNewButton = document.getElementById('archiveNew');
+    const archiveEditor = document.getElementById('archiveEditor');
+    const archiveForm = document.getElementById('archiveForm');
+    const archiveModsBody = document.querySelector('#archiveMods tbody');
+    const seasonJobBox = document.getElementById('seasonJob');
+    const seasonEndOverlay = document.getElementById('seasonEndOverlay');
+
+    let archivesInited = false;
+    /* What the editor holds: { create, season, version }, or null. */
+    let archiveEditing = null;
+    let seasonPlan = null;
+    let seasonJobTimer = null;
+    let seasonJobState = null;
+    let seasonEndFocus = null;
+
+    const byId = (id) => document.getElementById(id);
+
+    function zipUrl(season) { return `/raindrippy/content/Season_${season}.zip`; }
+    function recordUrl(season) { return `/archives/Season_${season}.json`; }
+
+    async function seasonFetch(url, init = {}) {
+        const res = await fetch(url, Object.assign({ credentials: 'include' }, init));
+        let data = null;
+        try { data = await res.json(); } catch (_) { /* empty body */ }
+        if (!res.ok) {
+            const err = new Error((data && (data.error || data.message)) || `Request failed (${res.status})`);
+            err.status = res.status;
+            throw err;
+        }
+        return data;
+    }
+
+    /* Writes carry the header the server requires of panel requests. */
+    function seasonWrite(url, method, body) {
+        return seasonFetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json', 'X-RD-Panel': '1' },
+            body: JSON.stringify(body)
+        });
+    }
+
+    function setArchivesNote(message, isError = false) {
+        if (!archivesNote) return;
+        archivesNote.textContent = message || '';
+        archivesNote.style.display = message ? '' : 'none';
+        archivesNote.classList.toggle('error', !!isError);
+    }
+
+    function showError(el, message) {
+        if (!el) return;
+        el.textContent = message || '';
+        el.style.display = message ? '' : 'none';
+    }
+
+    function applyArchivesPermissions() {
+        if (seasonEndOpenButton) seasonEndOpenButton.hidden = !canAccess('season.end');
+        if (archiveNewButton) archiveNewButton.hidden = !canAccess('season.archives');
+        if (archiveTableWrap) archiveTableWrap.hidden = !canAccess('season.archives');
+    }
+
+    function addCell(tr, text, className) {
+        const td = document.createElement('td');
+        td.textContent = text;
+        if (className) td.className = className;
+        tr.appendChild(td);
+        return td;
+    }
+
+    function renderArchives(list) {
+        if (!archiveTableBody) return;
+        archiveTableBody.textContent = '';
+        for (const item of list) {
+            const season = Number(item.season);
+            const record = item.archive;
+            const tr = document.createElement('tr');
+            addCell(tr, `Season ${season}`);
+            if (!record) {
+                addCell(tr, item.error || 'Not a valid record', 'invalid').colSpan = 4;
+            } else {
+                addCell(tr, record.theme || '—', record.theme ? '' : 'muted');
+                addCell(tr, record.ended || '—', record.ended ? '' : 'muted');
+                const download = document.createElement('td');
+                if (record.world) {
+                    const link = document.createElement('a');
+                    link.href = zipUrl(season);
+                    link.textContent = `Season_${season}.zip`;
+                    download.appendChild(link);
+                    const size = document.createElement('span');
+                    size.className = 'poll-optional';
+                    size.textContent = record.world.size != null ? ` ${formatBytes(record.world.size)}` : ' (file missing)';
+                    download.appendChild(size);
+                } else {
+                    download.textContent = '—';
+                    download.className = 'muted';
+                }
+                tr.appendChild(download);
+                addCell(tr, String((record.mods || []).length));
+            }
+            const actions = document.createElement('td');
+            const view = document.createElement('a');
+            view.className = 'btn btn-outline';
+            view.href = recordUrl(season);
+            view.target = '_blank';
+            view.rel = 'noopener';
+            view.textContent = 'JSON';
+            actions.appendChild(view);
+            const edit = document.createElement('button');
+            edit.type = 'button';
+            edit.className = 'btn-outline';
+            edit.textContent = record ? 'Edit' : 'Repair';
+            edit.addEventListener('click', () => openArchive(season, !record));
+            actions.appendChild(edit);
+            tr.appendChild(actions);
+            archiveTableBody.appendChild(tr);
+        }
+    }
+
+    async function loadArchives() {
+        if (!canAccess('season.archives')) {
+            if (archiveTableBody) archiveTableBody.textContent = '';
+            setArchivesNote('Viewing and editing records needs the season.archives permission.');
+            return;
+        }
+        try {
+            const data = await seasonFetch(`${SEASON_API}/archives`);
+            const list = Array.isArray(data.archives) ? data.archives : [];
+            renderArchives(list);
+            setArchivesNote(list.length ? '' : 'No records yet. End a season, or add a record for an old one.');
+        } catch (err) {
+            setArchivesNote(err.message || 'Could not load the records', true);
+        }
+    }
+
+    /* --- Record editor */
+
+    function blankArchive(season) {
+        return { season, theme: '', started: null, ended: null, minecraft_version: null,
+                 world: null, mods: [], additional_info: '' };
+    }
+
+    function addModRow(name = '', version = '') {
+        if (!archiveModsBody) return;
+        const tr = document.createElement('tr');
+        for (const [value, max, label] of [[name, 120, 'Mod name'], [version, 60, 'Mod version']]) {
+            const td = document.createElement('td');
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'form-control';
+            input.maxLength = max;
+            input.value = value;
+            input.setAttribute('aria-label', label);
+            td.appendChild(input);
+            tr.appendChild(td);
+        }
+        const td = document.createElement('td');
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.title = 'Remove';
+        remove.setAttribute('aria-label', 'Remove this mod');
+        const icon = document.createElement('i');
+        icon.className = 'fas fa-xmark';
+        icon.setAttribute('aria-hidden', 'true');
+        remove.appendChild(icon);
+        remove.addEventListener('click', () => tr.remove());
+        td.appendChild(remove);
+        tr.appendChild(td);
+        archiveModsBody.appendChild(tr);
+        return tr;
+    }
+
+    function updateWorldInfo() {
+        const info = byId('archiveWorldInfo');
+        if (!info) return;
+        const season = Number(byId('archiveSeason').value);
+        info.textContent = byId('archiveHasWorld').checked && season > 0
+            ? `Links to ${zipUrl(season)}`
+            : '';
+    }
+
+    function fillArchiveForm(record, mode) {
+        archiveEditing = mode;
+        archiveEditor.hidden = false;
+        byId('archiveEditorTitle').textContent = mode.create ? 'New archive record' : `Season ${record.season}`;
+        byId('archiveEditorMeta').textContent = record.created_at
+            ? `Created ${formatWhen(record.created_at)} by ${record.created_by}. Last changed ${formatWhen(record.updated_at)} by ${record.updated_by}.`
+            : (mode.create ? '' : 'This record could not be read; saving rewrites it with the fields below.');
+        const season = byId('archiveSeason');
+        season.value = record.season ? String(record.season) : '';
+        season.readOnly = !mode.create;
+        byId('archiveTheme').value = record.theme || '';
+        byId('archiveStarted').value = record.started || '';
+        byId('archiveEnded').value = record.ended || '';
+        byId('archiveMinecraft').value = record.minecraft_version || '';
+        byId('archiveHasWorld').checked = !!record.world;
+        byId('archiveInfo').value = record.additional_info || '';
+        if (archiveModsBody) archiveModsBody.textContent = '';
+        for (const mod of record.mods || []) addModRow(mod.name, mod.version);
+        updateWorldInfo();
+        showError(byId('archiveError'), '');
+        if (typeof archiveEditor.scrollIntoView === 'function') archiveEditor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function closeArchiveEditor() {
+        archiveEditing = null;
+        if (archiveEditor) archiveEditor.hidden = true;
+    }
+
+    async function openArchive(season, repair = false) {
+        try {
+            const data = await seasonFetch(`${SEASON_API}/archives/${season}`);
+            fillArchiveForm(data.archive, { create: false, season, version: data.version });
+        } catch (err) {
+            if (repair && err.status === 400) {
+                fillArchiveForm(blankArchive(season), { create: false, season, version: null });
+                return;
+            }
+            setArchivesNote(err.message || 'Could not open the record', true);
+        }
+    }
+
+    function newArchive() {
+        fillArchiveForm(blankArchive(null), { create: true, season: null, version: null });
+        byId('archiveSeason').focus();
+    }
+
+    /* The form as the server's ArchiveInput: exactly these fields. */
+    function collectArchive() {
+        const mods = [];
+        for (const row of archiveModsBody ? archiveModsBody.querySelectorAll('tr') : []) {
+            const [name, version] = Array.from(row.querySelectorAll('input'), i => i.value.trim());
+            if (name || version) mods.push({ name, version });
+        }
+        return {
+            season: Number(byId('archiveSeason').value),
+            theme: byId('archiveTheme').value.trim(),
+            started: byId('archiveStarted').value || null,
+            ended: byId('archiveEnded').value || null,
+            minecraft_version: byId('archiveMinecraft').value.trim() || null,
+            has_world: !!byId('archiveHasWorld').checked,
+            mods,
+            additional_info: byId('archiveInfo').value
+        };
+    }
+
+    async function saveArchive(e) {
+        if (e && typeof e.preventDefault === 'function') e.preventDefault();
+        if (!archiveEditing) return;
+        const record = collectArchive();
+        if (!Number.isInteger(record.season) || record.season < 1) {
+            showError(byId('archiveError'), 'Season must be a whole number, 1 or more.');
+            return;
+        }
+        const mode = archiveEditing;
+        const save = byId('archiveSave');
+        if (save) save.disabled = true;
+        try {
+            await seasonWrite(
+                `${SEASON_API}/archives/${record.season}${mode.create ? '?create=true' : ''}`,
+                'PUT',
+                { archive: record, version: mode.version }
+            );
+            closeArchiveEditor();
+            setArchivesNote(`Saved the record for season ${record.season}.`);
+            await loadArchives();
+        } catch (err) {
+            showError(byId('archiveError'), err.status === 409 && !mode.create
+                ? `${err.message} Your edits are still in the form.`
+                : (err.message || 'Could not save'));
+        } finally {
+            if (save) save.disabled = false;
+        }
+    }
+
+    /* --- End season */
+
+    function seasonProblems(plan) {
+        const problems = [];
+        if (plan.zip_exists) problems.push(`${plan.zip_name} already exists, so this season looks ended already.`);
+        if (plan.record_exists) problems.push(`Season ${plan.season} already has an archive record.`);
+        if (!plan.enough_space) problems.push(`Not enough free disk space: the zip may need up to ${formatBytes(plan.bytes)}.`);
+        if (plan.server_state === 'unknown') problems.push('Server control isn\'t reporting whether the server is running, so it can\'t be stopped and restarted safely.');
+        return problems;
+    }
+
+    function updateSeasonConfirm() {
+        const confirm = byId('seasonEndConfirm');
+        if (!confirm) return;
+        confirm.disabled = !seasonPlan
+            || seasonProblems(seasonPlan).length > 0
+            || !byId('seasonEndAck').checked
+            || !byId('seasonEndEnded').value
+            || !(Number(byId('seasonEndNextSeason').value) > seasonPlan.season)
+            || !byId('seasonEndNextTheme').value.trim();
+    }
+
+    function todayIso() {
+        const now = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    }
+
+    function renderSeasonPlan(plan) {
+        byId('seasonEndTitle').textContent = `End season ${plan.season}?`;
+        const summary = byId('seasonEndSummary');
+        summary.textContent = '';
+        const rows = [
+            ['Theme', plan.theme || '—'],
+            ['Minecraft', plan.minecraft || 'unknown'],
+            ['Archived, then deleted', (plan.worlds || []).join(', ')],
+            ['Kept as they are', (plan.kept_worlds || []).length ? plan.kept_worlds.join(', ') : 'no other worlds'],
+            ['Server', plan.server_state === 'running' ? 'running — it will be stopped' : plan.server_state],
+            ['Contents', `${plan.files} files, ${formatBytes(plan.bytes)} before compression`],
+            ['Download', plan.zip_url],
+            ['Record', plan.record_url],
+            ['Free space', plan.free_bytes != null ? formatBytes(plan.free_bytes) : 'unknown']
+        ];
+        for (const [term, value] of rows) {
+            const dt = document.createElement('dt');
+            dt.textContent = term;
+            const dd = document.createElement('dd');
+            dd.textContent = value;
+            summary.appendChild(dt);
+            summary.appendChild(dd);
+        }
+        const mods = plan.mods || [];
+        byId('seasonEndModsLabel').textContent = `${mods.length} mod${mods.length === 1 ? '' : 's'} will be listed`;
+        const list = byId('seasonEndMods');
+        list.textContent = '';
+        for (const mod of mods) {
+            const li = document.createElement('li');
+            li.appendChild(document.createTextNode(`${mod.name} `));
+            const version = document.createElement('span');
+            version.className = 'mod-version';
+            version.textContent = mod.version;
+            li.appendChild(version);
+            list.appendChild(li);
+        }
+        byId('seasonEndNextSeason').value = String(plan.next_season || plan.season + 1);
+        byId('seasonEndNextTheme').value = '';
+        byId('seasonEndSeed').value = '';
+        byId('seasonEndSeedHint').textContent = plan.current_seed
+            ? `This season's seed was ${plan.current_seed}.`
+            : 'This season has a random seed.';
+        const kept = (plan.kept_worlds || []).length ? ` ${plan.kept_worlds.join(', ')} ${plan.kept_worlds.length === 1 ? 'is' : 'are'} kept.` : '';
+        byId('seasonEndAckText').textContent =
+            `The server is stopped while the world is zipped. Then ${(plan.worlds || []).join(', ')} ${(plan.worlds || []).length === 1 ? 'is' : 'are'} deleted ` +
+            `and the server starts on a new world. Players lose their inventories and progress.${kept}`;
+        const problems = byId('seasonEndProblems');
+        problems.textContent = '';
+        for (const problem of seasonProblems(plan)) {
+            const li = document.createElement('li');
+            li.textContent = problem;
+            problems.appendChild(li);
+        }
+    }
+
+    async function openSeasonEnd() {
+        if (!canAccess('season.end') || !seasonEndOverlay) return;
+        seasonPlan = null;
+        seasonEndFocus = document.activeElement;
+        seasonEndOverlay.classList.add('open');
+        byId('seasonEndTitle').textContent = 'End the season';
+        byId('seasonEndLoading').hidden = false;
+        byId('seasonEndBody').hidden = true;
+        byId('seasonEndAck').checked = false;
+        byId('seasonEndStarted').value = '';
+        byId('seasonEndEnded').value = todayIso();
+        byId('seasonEndInfo').value = '';
+        showError(byId('seasonEndError'), '');
+        updateSeasonConfirm();
+        byId('seasonEndCancel').focus();
+        try {
+            const plan = await seasonFetch(`${SEASON_API}/current`);
+            if (!seasonEndOverlay.classList.contains('open')) return;
+            seasonPlan = plan;
+            renderSeasonPlan(plan);
+            byId('seasonEndLoading').hidden = true;
+            byId('seasonEndBody').hidden = false;
+            byId('seasonEndStarted').focus();
+        } catch (err) {
+            byId('seasonEndLoading').hidden = true;
+            showError(byId('seasonEndError'), err.message || 'Could not check the season');
+        }
+        updateSeasonConfirm();
+    }
+
+    function closeSeasonEnd() {
+        if (!seasonEndOverlay) return;
+        seasonEndOverlay.classList.remove('open');
+        seasonPlan = null;
+        if (seasonEndFocus && typeof seasonEndFocus.focus === 'function') seasonEndFocus.focus();
+    }
+
+    async function confirmSeasonEnd() {
+        const confirm = byId('seasonEndConfirm');
+        if (!seasonPlan || confirm.disabled) return;
+        confirm.disabled = true;
+        showError(byId('seasonEndError'), '');
+        try {
+            const job = await seasonWrite(`${SEASON_API}/end`, 'POST', {
+                season: seasonPlan.season,
+                started: byId('seasonEndStarted').value || null,
+                ended: byId('seasonEndEnded').value || null,
+                additional_info: byId('seasonEndInfo').value,
+                next_season: Number(byId('seasonEndNextSeason').value),
+                next_theme: byId('seasonEndNextTheme').value.trim(),
+                seed: byId('seasonEndSeed').value.trim() || null
+            });
+            closeSeasonEnd();
+            renderSeasonJob(job);
+            scheduleSeasonPoll(job);
+        } catch (err) {
+            showError(byId('seasonEndError'), err.message || 'Could not start');
+            updateSeasonConfirm();
+        }
+    }
+
+    /* --- Progress */
+
+    function renderSeasonJob(job) {
+        if (!seasonJobBox || !job) return;
+        seasonJobBox.hidden = false;
+        seasonJobBox.classList.toggle('done', job.state === 'done');
+        seasonJobBox.classList.toggle('failed', job.state === 'failed');
+
+        byId('seasonJobTitle').textContent =
+            job.state === 'running' ? `Ending season ${job.season}: ${job.stage_label}…`
+            : job.state === 'done' ? `Season ${job.season} has ended`
+            : `Ending season ${job.season} failed`;
+        const percent = Math.max(0, Math.min(100, Math.round(job.percent || 0)));
+        byId('seasonJobPercent').textContent = `${percent}%`;
+        byId('seasonJobFill').style.width = `${percent}%`;
+        byId('seasonJobBar').setAttribute('aria-valuenow', String(percent));
+
+        const detail = [];
+        if (job.state === 'running' && job.bytes_total) {
+            detail.push(`${formatBytes(job.bytes_done)} of ${formatBytes(job.bytes_total)}`);
+            detail.push(`${job.files_done} of ${job.files_total} files`);
+        }
+        if (job.state === 'running' && job.current_file) detail.push(job.current_file);
+        if (job.state !== 'running') {
+            detail.push(`Started by ${job.started_by}, ${formatWhen(job.started_at)}`);
+        }
+        byId('seasonJobDetail').textContent = detail.join(' · ');
+
+        const stages = byId('seasonJobStages');
+        stages.textContent = '';
+        (job.stages || []).forEach((label, i) => {
+            const li = document.createElement('li');
+            const icon = document.createElement('i');
+            icon.setAttribute('aria-hidden', 'true');
+            let state = 'pending';
+            if (job.state === 'done' || i < job.stage_index) state = 'done';
+            else if (i === job.stage_index) state = job.state === 'failed' ? 'failed' : 'current';
+            li.className = state;
+            icon.className = 'fas ' + { done: 'fa-check', current: 'fa-spinner fa-spin', failed: 'fa-xmark', pending: 'fa-circle-dot' }[state];
+            li.appendChild(icon);
+            li.appendChild(document.createTextNode(label));
+            stages.appendChild(li);
+        });
+
+        const notes = byId('seasonJobNotes');
+        notes.textContent = '';
+        for (const message of job.notes || []) {
+            const li = document.createElement('li');
+            li.textContent = message;
+            notes.appendChild(li);
+        }
+
+        const result = byId('seasonJobResult');
+        result.textContent = '';
+        if (job.state === 'failed') result.textContent = job.error || 'Something went wrong.';
+        for (const [shown, label, url] of [[job.zip_url, 'Download the world', zipUrl(job.season)],
+                                           [job.record_url, 'View the record', recordUrl(job.season)]]) {
+            if (!shown) continue;
+            const link = document.createElement('a');
+            link.href = url;
+            link.target = '_blank';
+            link.rel = 'noopener';
+            link.textContent = label;
+            result.appendChild(link);
+        }
+
+        if (seasonJobState === 'running' && job.state !== 'running') loadArchives();
+        seasonJobState = job.state;
+    }
+
+    function scheduleSeasonPoll(job) {
+        clearTimeout(seasonJobTimer);
+        seasonJobTimer = null;
+        if (job && job.state === 'running') seasonJobTimer = setTimeout(refreshSeasonJob, 1000);
+    }
+
+    async function refreshSeasonJob() {
+        if (!canAccess('season.end')) return;
+        try {
+            const data = await seasonFetch(`${SEASON_API}/end/status`);
+            if (data.job) renderSeasonJob(data.job);
+            scheduleSeasonPoll(data.job);
+        } catch (_) {
+            // A blip in polling should not end it while a job may be running.
+            if (seasonJobState === 'running') seasonJobTimer = setTimeout(refreshSeasonJob, 3000);
+        }
+    }
+
+    /* Called each time the Archives view is shown. */
+    function archivesInit() {
+        applyArchivesPermissions();
+        if (!archivesInited) {
+            archivesInited = true;
+            if (seasonEndOpenButton) seasonEndOpenButton.addEventListener('click', openSeasonEnd);
+            if (archiveNewButton) archiveNewButton.addEventListener('click', newArchive);
+            const refresh = byId('archivesRefresh');
+            if (refresh) refresh.addEventListener('click', () => { loadArchives(); refreshSeasonJob(); });
+            if (archiveForm) archiveForm.addEventListener('submit', saveArchive);
+            const cancel = byId('archiveCancel');
+            if (cancel) cancel.addEventListener('click', closeArchiveEditor);
+            const addMod = byId('archiveAddMod');
+            if (addMod) addMod.addEventListener('click', () => {
+                const row = addModRow();
+                if (row) row.querySelector('input').focus();
+            });
+            for (const id of ['archiveHasWorld', 'archiveSeason']) {
+                const el = byId(id);
+                if (el) el.addEventListener('input', updateWorldInfo);
+                if (el) el.addEventListener('change', updateWorldInfo);
+            }
+            for (const id of ['seasonEndAck', 'seasonEndEnded', 'seasonEndNextSeason', 'seasonEndNextTheme']) {
+                const el = byId(id);
+                if (el) el.addEventListener('input', updateSeasonConfirm);
+                if (el) el.addEventListener('change', updateSeasonConfirm);
+            }
+            const endCancel = byId('seasonEndCancel');
+            if (endCancel) endCancel.addEventListener('click', closeSeasonEnd);
+            const endConfirm = byId('seasonEndConfirm');
+            if (endConfirm) endConfirm.addEventListener('click', confirmSeasonEnd);
+            if (seasonEndOverlay) {
+                seasonEndOverlay.addEventListener('keydown', e => {
+                    if (e.key === 'Escape') closeSeasonEnd();
+                });
+            }
+        }
+        loadArchives();
+        refreshSeasonJob();
+    }
+
     /* --------------------------------------------------------- Roles & Permissions */
 
     /* What the signed-in account may do, from /api/access/me. null until it
@@ -6536,7 +7406,7 @@
         status: 'status.manage',
         // Any one of these makes the tab worth showing; each view inside it is
         // gated on its own below.
-        minecraft: ['console.view', 'console.files'],
+        minecraft: ['console.view', 'console.files', 'season.end', 'season.archives'],
         polls: 'polls.manage',
         chatprompt: 'chat_prompt.manage'
     };
@@ -6554,7 +7424,8 @@
     const MC_VIEW_PERMISSIONS = {
         console: 'console.view',
         players: 'console.view',
-        files: 'console.files'
+        files: 'console.files',
+        archives: ['season.archives', 'season.end']
     };
 
     function canAccess(permission) {
@@ -6620,7 +7491,7 @@
 
         let firstView = null;
         document.querySelectorAll('#minecraft-tab [data-mc-tab]').forEach(tab => {
-            const visible = canAccess(MC_VIEW_PERMISSIONS[tab.dataset.mcTab]);
+            const visible = canAccessAny(MC_VIEW_PERMISSIONS[tab.dataset.mcTab]);
             tab.hidden = !visible;
             if (visible && !firstView) firstView = tab.dataset.mcTab;
         });
@@ -7966,7 +8837,7 @@
     /* The Minecraft Server tab's views. Each is also a page name of its own,
        so ?page=console and ?page=players -- the tabs these used to be --
        still land in the right place. */
-    const MC_VIEWS = ['console', 'players', 'files'];
+    const MC_VIEWS = ['console', 'players', 'files', 'archives'];
     let mcView = 'console';
 
     function showMcView(view) {
@@ -7981,6 +8852,7 @@
         });
 
         if (mcView === 'files') initFiles();
+        if (mcView === 'archives') archivesInit();
         // Lines that arrived while the console was hidden left it scrolled
         // short of the bottom.
         if (mcView === 'console' && consoleOutput && autoscroll && autoscroll.checked) {

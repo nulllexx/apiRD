@@ -84,6 +84,15 @@ pub struct AppConfig {
     pub upload_logs_path: String,
     pub content_path: String,
     pub seasons_path: String,
+    /// Where ServerSideUtils publishes the current season number, theme,
+    /// Minecraft version and main world (`season.json`).
+    pub season_info_path: String,
+    /// The season number and theme ServerSideUtils uses in place of its
+    /// built-in ones (`season-override.json`). Written by "End season" for the
+    /// season that follows.
+    pub season_override_path: String,
+    /// Season archive records, served by the website at `/archives/`.
+    pub archives_dir: String,
     pub media_path: String,
     pub cors_origin: String,
     pub private_dir: String,
@@ -209,6 +218,15 @@ impl AppConfig {
                 "SEASONS_PATH",
                 "/usr/share/nginx/html/raindrippy/content",
             ),
+            season_info_path: optional(
+                "SEASON_INFO_PATH",
+                "/mcserver/plugins/ServerSideUtils/season.json",
+            ),
+            season_override_path: optional(
+                "SEASON_OVERRIDE_PATH",
+                "/mcserver/plugins/ServerSideUtils/season-override.json",
+            ),
+            archives_dir: optional("ARCHIVES_DIR", "/usr/share/nginx/html/archives"),
             media_path: optional("MEDIA_PATH", "C:/server/media"),
             cors_origin: optional("CORS_ORIGIN", "https://bakosmp.go.ro"),
             private_dir: optional("PRIVATE_DIR", "private"),

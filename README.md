@@ -36,6 +36,22 @@ Whoever holds them, these hold (`src/src/console/files_write.rs`):
 - **Nothing is lost.** Writes are atomic, refused if the file changed since it was opened, and backed up first to `SERVER_FILES_BACKUP_DIR` (outside the server directory; writes are refused if it isn't). If the backup fails, nothing is written.
 - **Panel only, and attributed.** Writes need an `X-RD-Panel` header, which pages on other origins can't send, and every attempt, refused ones included, is in the audit log.
 
+## Seasons
+The **Minecraft Server → Archives** view ends seasons and keeps a record of each one (`src/src/season/`).
+
+- **End season** (`season.end`) reads the season number, theme, Minecraft version and main world that ServerSideUtils publishes to `plugins/ServerSideUtils/season.json` on start-up, shows what will happen, and asks for the start/end dates, any additional info, and the next season's number, theme and (optional) world seed. Then, with progress shown live:
+  1. Players are warned, the world is saved, and the server is stopped through the `mc-control` sidecar. Console power actions are refused until the job finishes.
+  2. The main world, its `_nether` and `_the_end`, and `mods/*.jar` are zipped into `Season_<n>.zip`, and the zip's contents are checked against what was written. Other worlds (`eventhub`, `testing`, `authhub`, …) are not archived.
+  3. The record is written to `ARCHIVES_DIR/Season_<n>.json` (served at `/archives/`; the folder is created if missing), then the zip is published in `SEASONS_PATH` (served at `/raindrippy/content/`).
+  4. `level-seed` is set in `server.properties` (blank for random; nothing else in the file changes) and `SEASON_OVERRIDE_PATH` is written with the next season's number and theme.
+  5. Only the archived world folders are deleted; every other world is left untouched.
+  6. The server is started and generates the new world.
+
+  Nothing is deleted unless every earlier step succeeded. A failure before step 5 undoes what was done (the new record is removed, the settings are put back) and starts the server again. It never replaces an existing zip or record, checks free space first, never follows symlinks and skips anything on the file browser's deny list.
+- **Records** (`season.archives`) can be created for old seasons and edited (typos, details) from a form. Every record has exactly the same fields, written in the same order with `null` for anything unknown; the server refuses any other shape. Mods are listed by name with their version shortened (`1.21.1-10.7.7.64` becomes `10.7.7`).
+
+ServerSideUtils reads the season number and theme from `plugins/ServerSideUtils/season-override.json` on start-up, falling back to the defaults in its `Main.java` if the file is missing or invalid, so a new season needs no plugin rebuild.
+
 ## Deployment
 Locally, you need to create a `.env` file (see the structure of the env example file) in the src folder & run `cargo run`.
 For production purposes, we use a GitHub actions workflow that builds the Docker image, pushes it to GHCR and uploads & updates it to our server.

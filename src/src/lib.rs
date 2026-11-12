@@ -18,6 +18,7 @@ pub mod middleware;
 pub mod models;
 pub mod polls;
 pub mod rcon;
+pub mod season;
 pub mod routes;
 
 use config::AppConfig;
@@ -70,6 +71,7 @@ pub fn configure_api(cfg: &mut web::ServiceConfig) {
             .configure(routes::api_keys::configure)
             .configure(routes::api::configure)
             .configure(routes::console::configure)
+            .configure(routes::season::configure)
             .configure(routes::polls::configure)
             .configure(routes::chat_prompt::configure)
             .configure(routes::roles::configure)
