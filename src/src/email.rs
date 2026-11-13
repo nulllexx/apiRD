@@ -1,4 +1,5 @@
-//! Outgoing email, through Resend (https://resend.com/docs/api-reference/emails/send-email).
+//! Outgoing email, through the Gmail API
+//! (https://developers.google.com/gmail/api/reference/rest/v1/users.messages/send).
 //!
 //! Three things live here:
 //!
@@ -9,17 +10,26 @@
 //! * The helpers the account routes share: address validation, single-use
 //!   tokens, and the global send budget.
 //!
-//! Email is off unless both `RESEND_API_KEY` and `EMAIL_FROM` are set (see
-//! [`AppConfig::email_enabled`]). The routes check that before doing anything
-//! that would leave a user waiting for a message that never comes.
+//! The server sends as one Google account, using an OAuth refresh token that
+//! account granted the `gmail.send` scope. Each send trades the refresh token
+//! for a short-lived access token (cached until shortly before it expires),
+//! then posts the message as raw MIME.
+//!
+//! Email is off unless `GMAIL_REFRESH_TOKEN`, the OAuth client credentials and
+//! `EMAIL_FROM` are all set (see [`AppConfig::email_enabled`]). The routes
+//! check that before doing anything that would leave a user waiting for a
+//! message that never comes.
 
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::LazyLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use base64::Engine as _;
 use rand::Rng;
+use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use tokio::sync::Mutex;
 
 use crate::config::AppConfig;
 use crate::middleware::rate_limit::RateLimiter;
@@ -46,7 +56,7 @@ static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
 /// someone cycling through many usernames would get past them. Behind nginx
 /// every request arrives from the same peer address, so a per-IP limit would
 /// be a global one anyway; this just says so. 40 per 10 minutes is far above
-/// what real users need and well inside Resend's quotas.
+/// what real users need and well inside Gmail's daily sending limits.
 static SEND_BUDGET: LazyLock<RateLimiter> = LazyLock::new(|| RateLimiter::new(40, 600));
 
 /// Takes one send from the global budget. False means the budget is spent.
@@ -66,30 +76,154 @@ pub struct Message {
 /// response, so it is not meant for the person who asked.
 pub async fn send(config: &AppConfig, to: &str, message: &Message) -> Result<(), String> {
     if !config.email_enabled() {
-        return Err("email is not configured (RESEND_API_KEY / EMAIL_FROM)".to_string());
+        return Err(
+            "email is not configured (GMAIL_REFRESH_TOKEN / GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET / EMAIL_FROM)"
+                .to_string(),
+        );
     }
 
+    let token = access_token(config).await?;
+    let raw = base64::engine::general_purpose::URL_SAFE
+        .encode(build_mime(&config.email_from, to, message));
+
     let response = CLIENT
-        .post(&config.resend_api_url)
-        .bearer_auth(&config.resend_api_key)
-        .json(&json!({
-            "from": config.email_from,
-            "to": [to],
-            "subject": message.subject,
-            "html": message.html,
-            "text": message.text,
-        }))
+        .post(&config.gmail_send_url)
+        .bearer_auth(&token)
+        .json(&json!({ "raw": raw }))
         .send()
         .await
-        .map_err(|e| format!("request to Resend failed: {e}"))?;
+        .map_err(|e| format!("request to Gmail failed: {e}"))?;
 
     if response.status().is_success() {
         return Ok(());
     }
 
     let status = response.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        // Revoked or expired early: fetch a fresh one next time.
+        *ACCESS_TOKEN.lock().await = None;
+    }
     let body = response.text().await.unwrap_or_default();
-    Err(format!("Resend answered {status}: {}", body.chars().take(300).collect::<String>()))
+    Err(format!("Gmail answered {status}: {}", body.chars().take(300).collect::<String>()))
+}
+
+// ─── Gmail access token ──────────────────────────────────────────────────────
+
+struct CachedToken {
+    /// Which credentials and endpoint it came from, so a config change (or a
+    /// test pointing elsewhere) never reuses a token minted for another.
+    key: String,
+    token: String,
+    expires_at: Instant,
+}
+
+static ACCESS_TOKEN: LazyLock<Mutex<Option<CachedToken>>> = LazyLock::new(|| Mutex::new(None));
+
+#[derive(Deserialize)]
+struct TokenResponse {
+    access_token: String,
+    #[serde(default)]
+    expires_in: Option<u64>,
+}
+
+/// An access token for the Gmail API, from the cache or freshly exchanged for
+/// the refresh token. Held under a lock so concurrent sends share one refresh.
+async fn access_token(config: &AppConfig) -> Result<String, String> {
+    let key = format!(
+        "{}\n{}\n{}",
+        config.gmail_token_url,
+        config.gmail_client_id,
+        hash_token(&config.gmail_refresh_token)
+    );
+    let mut cached = ACCESS_TOKEN.lock().await;
+    if let Some(c) = cached.as_ref() {
+        if c.key == key && Instant::now() < c.expires_at {
+            return Ok(c.token.clone());
+        }
+    }
+
+    let response = CLIENT
+        .post(&config.gmail_token_url)
+        .form(&[
+            ("client_id", config.gmail_client_id.as_str()),
+            ("client_secret", config.gmail_client_secret.as_str()),
+            ("refresh_token", config.gmail_refresh_token.as_str()),
+            ("grant_type", "refresh_token"),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("request for a Gmail access token failed: {e}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "Google refused the refresh token ({status}): {}",
+            body.chars().take(300).collect::<String>()
+        ));
+    }
+
+    let parsed: TokenResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("unreadable token response from Google: {e}"))?;
+    // A minute's margin so a token never expires between here and the send.
+    let lifetime = parsed.expires_in.unwrap_or(3600).saturating_sub(60);
+    *cached = Some(CachedToken {
+        key,
+        token: parsed.access_token.clone(),
+        expires_at: Instant::now() + Duration::from_secs(lifetime),
+    });
+    Ok(parsed.access_token)
+}
+
+// ─── MIME ────────────────────────────────────────────────────────────────────
+
+/// Drops CR and LF, so no value can add a header of its own.
+fn header_value(value: &str) -> String {
+    value.chars().filter(|c| *c != '\r' && *c != '\n').collect()
+}
+
+/// RFC 2047-encodes a header value that is not plain ASCII.
+fn encode_header_text(value: &str) -> String {
+    let value = header_value(value);
+    if value.is_ascii() {
+        value
+    } else {
+        format!("=?UTF-8?B?{}?=", base64::engine::general_purpose::STANDARD.encode(value))
+    }
+}
+
+/// Base64 in 76-character lines, as MIME bodies want it.
+fn base64_lines(data: &str) -> String {
+    let encoded = base64::engine::general_purpose::STANDARD.encode(data);
+    encoded
+        .as_bytes()
+        .chunks(76)
+        .map(|line| std::str::from_utf8(line).expect("base64 is ASCII"))
+        .collect::<Vec<_>>()
+        .join("\r\n")
+}
+
+/// The whole message, plain-text and HTML alternatives, as Gmail's `raw`
+/// field takes it (before its own base64url).
+fn build_mime(from: &str, to: &str, message: &Message) -> String {
+    let random: [u8; 16] = rand::thread_rng().gen();
+    let boundary = format!("rd-{}", hex(&random));
+    let part = |content_type: &str, body: &str| {
+        format!(
+            "--{boundary}\r\nContent-Type: {content_type}; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n{}\r\n",
+            base64_lines(body)
+        )
+    };
+    format!(
+        "From: {from}\r\nTo: {to}\r\nSubject: {subject}\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=\"{boundary}\"\r\n\r\n{text}{html}--{boundary}--\r\n",
+        from = header_value(from),
+        to = header_value(to),
+        subject = encode_header_text(&message.subject),
+        text = part("text/plain", &message.text),
+        html = part("text/html", &message.html),
+    )
 }
 
 /// Sends in the background and logs a failure.
@@ -404,5 +538,23 @@ mod tests {
         assert!(!message.html.contains("<img"));
         assert!(message.html.contains("&lt;img"));
         assert!(message.html.contains("https://bakosmp.go.ro/reset-pwd?token=tok"));
+    }
+
+    #[test]
+    fn mime_carries_both_bodies_and_refuses_header_injection() {
+        let message = Message {
+            subject: "Caf\u{e9}\r\nBcc: victim@example.com".to_string(),
+            html: "<p>hi</p>".to_string(),
+            text: "hi".to_string(),
+        };
+        let mime = build_mime("RainDrippy <no-reply@example.com>", "alice@example.com", &message);
+        let (head, body) = mime.split_once("\r\n\r\n").unwrap();
+        assert!(head.contains("To: alice@example.com\r\n"));
+        assert!(head.contains("Subject: =?UTF-8?B?"));
+        assert!(!head.contains("\r\nBcc:"), "{head}");
+        assert!(body.contains("text/plain") && body.contains("text/html"));
+        let b64 = base64::engine::general_purpose::STANDARD;
+        assert!(body.contains(&b64.encode("hi")));
+        assert!(body.contains(&b64.encode("<p>hi</p>")));
     }
 }

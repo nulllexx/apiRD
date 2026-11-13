@@ -20,9 +20,13 @@ services:
       - DB_NAME=${DB_NAME}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
-      # Resend API key for account emails (address confirmation, password
-      # resets). Blank leaves email off; the API keeps working without it.
-      - RESEND_API_KEY=${RESEND_API_KEY}
+      # Gmail API credentials for account emails (address confirmation,
+      # password resets). A blank client ID/secret falls back to the Google
+      # sign-in client above; a blank refresh token leaves email off, and the
+      # API keeps working without it.
+      - GMAIL_CLIENT_ID=${GMAIL_CLIENT_ID}
+      - GMAIL_CLIENT_SECRET=${GMAIL_CLIENT_SECRET}
+      - GMAIL_REFRESH_TOKEN=${GMAIL_REFRESH_TOKEN}
       # Console commands go over RCON directly (network_mode: host reaches the
       # published port below), so the API needs no Docker access for them.
       #

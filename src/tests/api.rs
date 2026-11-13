@@ -2334,7 +2334,7 @@ async fn account_email_routes_reject_anonymous_callers() {
     }
 }
 
-/// With no Resend key the server says email is unavailable rather than
+/// With no Gmail credentials the server says email is unavailable rather than
 /// claiming a link is on its way -- and it says so before looking anyone up.
 #[actix_web::test]
 async fn password_reset_by_email_says_when_email_is_off() {
@@ -2359,13 +2359,16 @@ async fn password_reset_by_email_says_when_email_is_off() {
     }
 }
 
-/// A stand-in for Resend's send endpoint. Answers every request with success
-/// and keeps the JSON body, so a test can read the link out of the message.
-async fn fake_resend() -> (String, Arc<std::sync::Mutex<Vec<serde_json::Value>>>) {
+/// A stand-in for Google's token endpoint and Gmail's send endpoint.
+///
+/// `POST /token` hands out an access token; `POST /send` checks it, decodes
+/// the raw MIME message and keeps it as `{to: [..], subject, text, html}`, so
+/// a test can read the link out of the message. Returns the two URLs.
+async fn fake_gmail() -> (String, String, Arc<std::sync::Mutex<Vec<serde_json::Value>>>) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}/emails", listener.local_addr().unwrap());
+    let base = format!("http://{}", listener.local_addr().unwrap());
     let outbox = Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = Arc::clone(&outbox);
 
@@ -2394,13 +2397,33 @@ async fn fake_resend() -> (String, Arc<std::sync::Mutex<Vec<serde_json::Value>>>
                     if n == 0 { break; }
                     buf.extend_from_slice(&chunk[..n]);
                 }
-                if let Ok(json) = serde_json::from_slice(&buf[body_start..]) {
-                    sink.lock().unwrap().push(json);
-                }
-                let reply = "{\"id\":\"test\"}";
+                let body = &buf[body_start..];
+
+                let (status, reply) = if head.starts_with("post /token ") {
+                    let form = String::from_utf8_lossy(body);
+                    if form.contains("grant_type=refresh_token") && form.contains("refresh_token=1%2F%2Ftest") {
+                        ("200 OK", r#"{"access_token":"ya29.test","expires_in":3599,"token_type":"Bearer"}"#)
+                    } else {
+                        ("400 Bad Request", r#"{"error":"invalid_grant"}"#)
+                    }
+                } else if head.starts_with("post /send ") {
+                    if !head.contains("authorization: bearer ya29.test") {
+                        ("401 Unauthorized", r#"{"error":"unauthenticated"}"#)
+                    } else if let Some(mail) = serde_json::from_slice::<serde_json::Value>(body)
+                        .ok()
+                        .and_then(|json| json["raw"].as_str().map(decode_mime))
+                    {
+                        sink.lock().unwrap().push(mail);
+                        ("200 OK", r#"{"id":"test","threadId":"test","labelIds":["SENT"]}"#)
+                    } else {
+                        ("400 Bad Request", r#"{"error":"bad raw"}"#)
+                    }
+                } else {
+                    ("404 Not Found", "{}")
+                };
                 let _ = socket
                     .write_all(format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
                         reply.len()
                     ).as_bytes())
                     .await;
@@ -2408,7 +2431,69 @@ async fn fake_resend() -> (String, Arc<std::sync::Mutex<Vec<serde_json::Value>>>
         }
     });
 
-    (url, outbox)
+    (format!("{base}/token"), format!("{base}/send"), outbox)
+}
+
+/// Reads back the MIME message the server builds: the To and Subject headers
+/// and its base64 text and HTML parts.
+fn decode_mime(raw: &str) -> serde_json::Value {
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let bytes = base64::engine::general_purpose::URL_SAFE.decode(raw).expect("raw is base64url");
+    let mime = String::from_utf8(bytes).expect("MIME is ASCII");
+    let (head, body) = mime.split_once("\r\n\r\n").expect("headers then body");
+    let header = |name: &str| {
+        head.lines()
+            .find_map(|l| l.strip_prefix(&format!("{name}: ")))
+            .unwrap_or_default()
+            .to_string()
+    };
+    let part = |content_type: &str| {
+        let start = body.find(&format!("Content-Type: {content_type};")).expect("part present");
+        let rest = &body[start..];
+        let data_start = rest.find("\r\n\r\n").unwrap() + 4;
+        let data = &rest[data_start..rest[data_start..].find("\r\n--").unwrap() + data_start];
+        String::from_utf8(b64.decode(data.replace("\r\n", "")).unwrap()).unwrap()
+    };
+    serde_json::json!({
+        "to": [header("To")],
+        "from": header("From"),
+        "subject": header("Subject"),
+        "text": part("text/plain"),
+        "html": part("text/html"),
+    })
+}
+
+/// The Gmail path end to end, no database needed: the refresh token is
+/// exchanged, the access token is sent as a bearer, and the message arrives
+/// as MIME with both bodies. A refused refresh token is reported, not hidden.
+#[actix_web::test]
+async fn gmail_send_exchanges_the_refresh_token_and_posts_mime() {
+    let (token_url, send_url, outbox) = fake_gmail().await;
+    let mut config = lazy_state().config.clone();
+    config.gmail_client_id = "gmail-client".to_string();
+    config.gmail_client_secret = "gmail-secret".to_string();
+    config.gmail_refresh_token = "1//test".to_string();
+    config.gmail_token_url = token_url;
+    config.gmail_send_url = send_url;
+    config.email_from = "RainDrippy <no-reply@example.com>".to_string();
+    config.public_site_url = "https://site.example".to_string();
+
+    for _ in 0..2 {
+        let message = api_rd::email::reset_message(&config, "someone", "abc123");
+        api_rd::email::send(&config, "someone@example.com", &message).await.expect("sent");
+    }
+    let mail = wait_for_mail(&outbox, 2).await;
+    assert_eq!(mail[0]["to"][0], "someone@example.com");
+    assert_eq!(mail[0]["from"], "RainDrippy <no-reply@example.com>");
+    assert_eq!(mail[0]["subject"], "Reset your password");
+    assert!(mail[0]["text"].as_str().unwrap().contains("https://site.example/reset-pwd?token=abc123"));
+    assert!(mail[0]["html"].as_str().unwrap().contains("https://site.example/reset-pwd?token=abc123"));
+
+    config.gmail_refresh_token = "1//revoked".to_string();
+    let message = api_rd::email::reset_message(&config, "someone", "abc123");
+    let err = api_rd::email::send(&config, "someone@example.com", &message).await.unwrap_err();
+    assert!(err.contains("invalid_grant"), "{err}");
 }
 
 /// Waits for the outbox to reach `count` messages. Resets are sent in the
@@ -2474,11 +2559,14 @@ async fn an_address_is_confirmed_by_email_and_then_resets_the_password() {
             .expect("create test account");
     }
 
-    let (url, outbox) = fake_resend().await;
+    let (token_url, send_url, outbox) = fake_gmail().await;
     let mut state = test_state(pool.clone());
-    state.config.resend_api_key = "re_test".to_string();
+    state.config.gmail_client_id = "gmail-client".to_string();
+    state.config.gmail_client_secret = "gmail-secret".to_string();
+    state.config.gmail_refresh_token = "1//test".to_string();
+    state.config.gmail_token_url = token_url;
+    state.config.gmail_send_url = send_url;
     state.config.email_from = "RainDrippy <no-reply@example.com>".to_string();
-    state.config.resend_api_url = url;
     state.config.public_site_url = "https://site.example".to_string();
 
     let app = test::init_service(
@@ -2529,6 +2617,8 @@ async fn an_address_is_confirmed_by_email_and_then_resets_the_password() {
     assert_eq!(status, StatusCode::OK, "{body}");
     let mail = wait_for_mail(&outbox, 1).await;
     assert_eq!(mail[0]["to"][0], "mailtest.a@example.com");
+    assert_eq!(mail[0]["from"], "RainDrippy <no-reply@example.com>");
+    assert!(mail[0]["html"].as_str().unwrap().contains("https://site.example/verify-email?token="));
     assert!(mail[0]["text"].as_str().unwrap().contains("https://site.example/verify-email?token="));
     let verify_token = link_token(&mail[0]);
 

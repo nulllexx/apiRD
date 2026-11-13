@@ -101,14 +101,24 @@ pub struct AppConfig {
     pub google_redirect_uri: String,
     pub oauth_signup_redirect: String,
     pub oauth_success_redirect: String,
-    /// Resend API key. Empty turns email off: verification and reset links
-    /// cannot be sent, and the API says so instead of failing at boot.
-    pub resend_api_key: String,
-    /// Where messages are posted. Only overridden by tests, which point it at
-    /// a local stand-in so nothing ever reaches the real service.
-    pub resend_api_url: String,
-    /// The sender, e.g. `RainDrippy <no-reply@example.com>`. Its domain must be
-    /// verified in Resend. Empty also turns email off.
+    /// OAuth client used to send mail through the Gmail API. Falls back to the
+    /// Google sign-in client when `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET`
+    /// are unset; either way the refresh token must come from this client.
+    pub gmail_client_id: String,
+    pub gmail_client_secret: String,
+    /// Refresh token of the sending Google account, granted the
+    /// `https://www.googleapis.com/auth/gmail.send` scope. Empty turns email
+    /// off: verification and reset links cannot be sent, and the API says so
+    /// instead of failing at boot.
+    pub gmail_refresh_token: String,
+    /// Where the refresh token is exchanged and where messages are posted.
+    /// Only overridden by tests, which point them at a local stand-in so
+    /// nothing ever reaches the real service.
+    pub gmail_token_url: String,
+    pub gmail_send_url: String,
+    /// The sender, e.g. `RainDrippy <no-reply@example.com>`. Gmail sends from
+    /// the authorised account, so the address must be that account or one of
+    /// its verified "Send mail as" aliases. Empty also turns email off.
     pub email_from: String,
     /// Base URL of the website, used to build the links in emails.
     pub public_site_url: String,
@@ -241,6 +251,16 @@ impl AppConfig {
             media_path: optional("MEDIA_PATH", "C:/server/media"),
             cors_origin: optional("CORS_ORIGIN", "https://bakosmp.go.ro"),
             private_dir: optional("PRIVATE_DIR", "private"),
+            gmail_client_id: get("GMAIL_CLIENT_ID")
+                .or_else(|| get("GOOGLE_CLIENT_ID"))
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
+            gmail_client_secret: get("GMAIL_CLIENT_SECRET")
+                .or_else(|| get("GOOGLE_CLIENT_SECRET"))
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
             google_client_id: get("GOOGLE_CLIENT_ID").unwrap_or_default(),
             google_client_secret: get("GOOGLE_CLIENT_SECRET").unwrap_or_default(),
             google_redirect_uri: get("GOOGLE_REDIRECT_URI").unwrap_or_default(),
@@ -252,8 +272,12 @@ impl AppConfig {
                 "OAUTH_SUCCESS_REDIRECT",
                 "https://bakosmp.go.ro/dashboard",
             ),
-            resend_api_key: get("RESEND_API_KEY").unwrap_or_default().trim().to_string(),
-            resend_api_url: optional("RESEND_API_URL", "https://api.resend.com/emails"),
+            gmail_refresh_token: get("GMAIL_REFRESH_TOKEN").unwrap_or_default().trim().to_string(),
+            gmail_token_url: optional("GMAIL_TOKEN_URL", "https://oauth2.googleapis.com/token"),
+            gmail_send_url: optional(
+                "GMAIL_SEND_URL",
+                "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+            ),
             email_from: get("EMAIL_FROM").unwrap_or_default().trim().to_string(),
             public_site_url: optional("PUBLIC_SITE_URL", "https://bakosmp.go.ro")
                 .trim_end_matches('/')
@@ -263,7 +287,10 @@ impl AppConfig {
 
     /// Whether emails can be sent at all.
     pub fn email_enabled(&self) -> bool {
-        !self.resend_api_key.is_empty() && !self.email_from.is_empty()
+        !self.gmail_refresh_token.is_empty()
+            && !self.gmail_client_id.is_empty()
+            && !self.gmail_client_secret.is_empty()
+            && !self.email_from.is_empty()
     }
 
     pub fn database_url(&self) -> String {
@@ -462,15 +489,23 @@ mod tests {
     }
 
     #[test]
-    fn email_is_off_until_both_key_and_sender_are_set() {
+    fn email_is_off_until_credentials_and_sender_are_set() {
         let cfg = AppConfig::build(lookup(&required_pairs())).unwrap();
         assert!(!cfg.email_enabled());
-        assert_eq!(cfg.resend_api_url, "https://api.resend.com/emails");
+        assert_eq!(cfg.gmail_token_url, "https://oauth2.googleapis.com/token");
+        assert_eq!(cfg.gmail_send_url, "https://gmail.googleapis.com/gmail/v1/users/me/messages/send");
         assert_eq!(cfg.public_site_url, "https://bakosmp.go.ro");
 
         let mut pairs = required_pairs();
-        pairs.push(("RESEND_API_KEY", "re_test"));
+        pairs.push(("GMAIL_REFRESH_TOKEN", "1//test"));
         assert!(!AppConfig::build(lookup(&pairs)).unwrap().email_enabled());
+        // The sign-in client stands in when no Gmail-specific one is given.
+        pairs.push(("GOOGLE_CLIENT_ID", "signin-id"));
+        pairs.push(("GOOGLE_CLIENT_SECRET", "signin-secret"));
+        assert_eq!(AppConfig::build(lookup(&pairs)).unwrap().gmail_client_id, "signin-id");
+        assert!(!AppConfig::build(lookup(&pairs)).unwrap().email_enabled());
+        pairs.push(("GMAIL_CLIENT_ID", "gmail-id"));
+        assert_eq!(AppConfig::build(lookup(&pairs)).unwrap().gmail_client_id, "gmail-id");
 
         pairs.push(("EMAIL_FROM", "RainDrippy <no-reply@example.com>"));
         pairs.push(("PUBLIC_SITE_URL", "https://example.com/"));

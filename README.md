@@ -53,7 +53,7 @@ The **Minecraft Server → Archives** view ends seasons and keeps a record of ea
 ServerSideUtils reads the season number and theme from `plugins/ServerSideUtils/season-override.json` on start-up, falling back to the defaults in its `Main.java` if the file is missing or invalid, so a new season needs no plugin rebuild.
 
 ## Account email and password resets
-Accounts can hold one email address, used to send password reset links (`src/src/routes/auth/email.rs`, `src/src/email.rs`). Mail goes out through [Resend](https://resend.com).
+Accounts can hold one email address, used to send password reset links (`src/src/routes/auth/email.rs`, `src/src/email.rs`). Mail goes out through the [Gmail API](https://developers.google.com/gmail/api/reference/rest/v1/users.messages/send), sent as one Google account.
 
 - **Only confirmed addresses count.** `users.email` holds an address only once its owner has opened a link sent to it (or Google has vouched for it). Until then it waits in `email_tokens`. This matters beyond resets: a Google sign-in is linked to an existing account by matching *confirmed* addresses, so storing a typed-in one would let whoever owns that inbox into the account.
 - **Changing or removing the address needs the current password**, when the account has one, so a stolen session cannot swap in the thief's inbox.
@@ -80,7 +80,7 @@ New passwords need at least 8 characters, and at most 72 bytes (bcrypt ignores t
 
 **Fallback.** Accounts without an address can't use any of this, so the old way stays: staff with `users.reset_password` generate a one-time link in the admin panel (`/api/admin/gen-pwd-reset`), and the reset page redeems it through `/api/forgot-password`.
 
-**Setup.** Add the `RESEND_API_KEY` repository secret and set `EMAIL_FROM` (a sender on a domain verified in Resend) in the server's `.env`; `PUBLIC_SITE_URL` sets the base of the links. With either missing, email is off and the routes answer `503` instead of pretending to send.
+**Setup.** Enable the Gmail API in the Google Cloud project, authorise the sending account once with the `https://www.googleapis.com/auth/gmail.send` scope, and add its refresh token as the `GMAIL_REFRESH_TOKEN` repository secret. `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` name the OAuth client that issued it and default to the Google sign-in client. Set `EMAIL_FROM` (the account's address or one of its verified "Send mail as" aliases) in the server's `.env`; `PUBLIC_SITE_URL` sets the base of the links. With any of these missing, email is off and the routes answer `503` instead of pretending to send. A consent screen left in "Testing" makes Google expire the refresh token after 7 days.
 
 ## Sessions
 A session is a signed JWT in the `userToken` cookie (`src/src/middleware/auth.rs`). It ends when:
