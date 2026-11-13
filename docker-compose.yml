@@ -27,6 +27,9 @@ services:
       - GMAIL_CLIENT_ID=${GMAIL_CLIENT_ID}
       - GMAIL_CLIENT_SECRET=${GMAIL_CLIENT_SECRET}
       - GMAIL_REFRESH_TOKEN=${GMAIL_REFRESH_TOKEN}
+      # The sender, e.g. RainDrippy <mailer@gmail.com>. Not a secret, so it
+      # comes from the EMAIL_FROM repository variable. Blank leaves email off.
+      - EMAIL_FROM=${EMAIL_FROM}
       # Console commands go over RCON directly (network_mode: host reaches the
       # published port below), so the API needs no Docker access for them.
       #

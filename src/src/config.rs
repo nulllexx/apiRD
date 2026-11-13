@@ -252,11 +252,13 @@ impl AppConfig {
             cors_origin: optional("CORS_ORIGIN", "https://bakosmp.go.ro"),
             private_dir: optional("PRIVATE_DIR", "private"),
             gmail_client_id: get("GMAIL_CLIENT_ID")
+                .filter(|v| !v.trim().is_empty())
                 .or_else(|| get("GOOGLE_CLIENT_ID"))
                 .unwrap_or_default()
                 .trim()
                 .to_string(),
             gmail_client_secret: get("GMAIL_CLIENT_SECRET")
+                .filter(|v| !v.trim().is_empty())
                 .or_else(|| get("GOOGLE_CLIENT_SECRET"))
                 .unwrap_or_default()
                 .trim()
@@ -504,6 +506,10 @@ mod tests {
         pairs.push(("GOOGLE_CLIENT_SECRET", "signin-secret"));
         assert_eq!(AppConfig::build(lookup(&pairs)).unwrap().gmail_client_id, "signin-id");
         assert!(!AppConfig::build(lookup(&pairs)).unwrap().email_enabled());
+        // Compose passes unset variables through as empty strings.
+        pairs.push(("GMAIL_CLIENT_ID", ""));
+        assert_eq!(AppConfig::build(lookup(&pairs)).unwrap().gmail_client_id, "signin-id");
+        pairs.pop();
         pairs.push(("GMAIL_CLIENT_ID", "gmail-id"));
         assert_eq!(AppConfig::build(lookup(&pairs)).unwrap().gmail_client_id, "gmail-id");
 

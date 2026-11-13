@@ -207,6 +207,7 @@ jobs:
             GMAIL_CLIENT_ID=${{ secrets.GMAIL_CLIENT_ID }}
             GMAIL_CLIENT_SECRET=${{ secrets.GMAIL_CLIENT_SECRET }}
             GMAIL_REFRESH_TOKEN=${{ secrets.GMAIL_REFRESH_TOKEN }}
+            EMAIL_FROM=${{ vars.EMAIL_FROM }}
             RCON_PASSWORD=${{ secrets.RCON_PASSWORD }}
             EOF
 
@@ -221,6 +222,9 @@ jobs:
             # uses the Google sign-in client for Gmail too.
             if [ -z "${{ secrets.GMAIL_REFRESH_TOKEN }}" ]; then
               echo "::warning::GMAIL_REFRESH_TOKEN secret is empty — account emails (password resets, address confirmation) are off."
+            fi
+            if [ -z "${{ vars.EMAIL_FROM }}" ]; then
+              echo "::warning::EMAIL_FROM repository variable is empty — account emails are off."
             fi
 
             if [ -z "${{ secrets.RCON_PASSWORD }}" ]; then
