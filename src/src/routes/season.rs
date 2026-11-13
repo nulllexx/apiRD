@@ -38,6 +38,22 @@ async fn current(
     Ok(HttpResponse::Ok().json(plan))
 }
 
+/// GET /api/season/current -- the season being played now, for the public
+/// website. Read from the same `season.json` as `/admin/season/current`, but
+/// only the number and theme: no permission needed.
+async fn public_current(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
+    let path = state.config.season_info_path.clone();
+    let info = blocking(move || end::read_season_info(&path))
+        .await?
+        .map_err(|e| {
+            log::warn!("season: public current: {e}");
+            AppError::Internal("The current season is not available".to_string())
+        })?;
+    Ok(HttpResponse::Ok()
+        .insert_header(("Cache-Control", "public, max-age=60"))
+        .json(serde_json::json!({ "season": info.season, "theme": info.theme })))
+}
+
 /// POST /api/admin/season/end -- start ending the season. Answers at once;
 /// progress is at `/end/status`.
 async fn end_season(
@@ -178,6 +194,7 @@ async fn save_archive(
 }
 
 pub fn configure(cfg: &mut web::ServiceConfig) {
+    cfg.route("/season/current", web::get().to(public_current));
     cfg.service(
         web::scope("/admin/season")
             .route("/current", web::get().to(current))
