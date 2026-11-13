@@ -2359,6 +2359,26 @@ async fn password_reset_by_email_says_when_email_is_off() {
     }
 }
 
+/// An address given at registration is checked before anything else happens
+/// (no database needed): a malformed one is refused, not silently dropped.
+#[actix_web::test]
+async fn register_refuses_a_malformed_email_before_creating_anything() {
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(lazy_state()))
+            .app_data(web::Data::new(api_rd::middleware::rate_limit::RateLimiter::new(500, 60)))
+            .configure(configure_api),
+    )
+    .await;
+    for bad in ["not an address", "a@b", "Alice <alice@example.com>"] {
+        let req = test::TestRequest::post()
+            .uri("/api/register")
+            .set_json(serde_json::json!({ "username": "x", "password": "long enough", "hwid": "h", "email": bad }))
+            .to_request();
+        assert_eq!(test::call_service(&app, req).await.status(), StatusCode::BAD_REQUEST, "{bad}");
+    }
+}
+
 /// A stand-in for Google's token endpoint and Gmail's send endpoint.
 ///
 /// `POST /token` hands out an access token; `POST /send` checks it, decodes
@@ -2549,6 +2569,7 @@ async fn an_address_is_confirmed_by_email_and_then_resets_the_password() {
         ("mailtest-b-id", "mailtest_b", hashed.as_str()),
         // Made through Google: no password at all.
         ("mailtest-g-id", "mailtest_g", ""),
+        ("mailtest-admin-id", "mailtest_admin", hashed.as_str()),
     ] {
         sqlx::query("INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)")
             .bind(id)
@@ -2577,6 +2598,7 @@ async fn an_address_is_confirmed_by_email_and_then_resets_the_password() {
     )
     .await;
 
+    grant_role(&pool, "mailtest-admin-id", "admin").await;
     let a = session_cookie("mailtest_a", "mailtest-a-id");
     let b = session_cookie("mailtest_b", "mailtest-b-id");
     let g = session_cookie("mailtest_g", "mailtest-g-id");
@@ -2756,6 +2778,84 @@ async fn an_address_is_confirmed_by_email_and_then_resets_the_password() {
     assert_eq!(call!(reset(&stale, "new password 3")).0, StatusCode::BAD_REQUEST);
     let (_, me) = call!(settings(&a));
     assert_eq!(me["email"], serde_json::Value::Null);
+
+    // An admin's "Generate password reset" emails the link when the account
+    // has a verified address...
+    sqlx::query("UPDATE users SET email = 'mailtest.b@example.com', email_verified = TRUE WHERE id = 'mailtest-b-id'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let admin = session_cookie("mailtest_admin", "mailtest-admin-id");
+    let admin_reset = |username: &str| {
+        test::TestRequest::post()
+            .uri("/api/admin/gen-pwd-reset")
+            .cookie(admin.clone())
+            .set_json(serde_json::json!({ "username": username }))
+    };
+    let before = outbox.lock().unwrap().len();
+    let (status, body) = call!(admin_reset("mailtest_b"));
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["emailed"], true, "{body}");
+    assert_eq!(body["sentTo"], "m\u{2022}\u{2022}\u{2022}\u{2022}@example.com");
+    assert!(body.get("resetSession").is_none(), "no copyable link when it was emailed: {body}");
+    let mail = wait_for_mail(&outbox, before + 1).await;
+    assert_eq!(mail.last().unwrap()["to"][0], "mailtest.b@example.com");
+    assert_eq!(mail.last().unwrap()["subject"], "Reset your password");
+    // ...still within the per-account limit...
+    assert_eq!(call!(admin_reset("mailtest_b")).0, StatusCode::TOO_MANY_REQUESTS);
+    // ...and only falls back to a link to hand over when there is none.
+    // (mailtest_g's address was never confirmed.)
+    let (status, body) = call!(admin_reset("mailtest_g"));
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["emailed"], false);
+    assert!(body["resetSession"].as_str().is_some(), "{body}");
+    assert!(body["reason"].as_str().unwrap().contains("no verified email"), "{body}");
+    assert_eq!(outbox.lock().unwrap().len(), before + 1, "nothing emailed for the fallback");
+
+    // Registering with an address sends a confirmation link; the address only
+    // counts once it is opened, as when added from the settings page.
+    sqlx::query(r"DELETE FROM users WHERE username LIKE 'mailreg\_%'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let register = |username: &str, email: &str| {
+        test::TestRequest::post().uri("/api/register").set_json(serde_json::json!({
+            "username": username, "password": "a password", "hwid": "mailtest-hwid", "email": email
+        }))
+    };
+    let before = outbox.lock().unwrap().len();
+    let (status, body) = call!(register("mailreg_new", "  MailReg.New@Example.com "));
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["emailStatus"], "sent");
+    assert_eq!(body["pendingEmail"], "mailreg.new@example.com");
+    let mail = wait_for_mail(&outbox, before + 1).await;
+    assert_eq!(mail[before]["to"][0], "mailreg.new@example.com");
+    assert_eq!(mail[before]["subject"], "Confirm your email address");
+    let (stored,): (Option<String>,) = sqlx::query_as("SELECT email FROM users WHERE username = 'mailreg_new'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stored, None, "unconfirmed addresses are never stored on the account");
+    let (status, body) = call!(verify(&link_token(&mail[before])));
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["email"], "mailreg.new@example.com");
+
+    // An address another account holds gets the same reply, and the inbox a
+    // note instead of a link.
+    let (status, body) = call!(register("mailreg_dup", "mailreg.new@example.com"));
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["emailStatus"], "sent");
+    let mail = wait_for_mail(&outbox, before + 2).await;
+    assert_eq!(mail[before + 1]["subject"], "This address is already in use");
+
+    // No address is fine, and says nothing about email.
+    let (status, body) = call!(register("mailreg_none", ""));
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.get("emailStatus").is_none(), "{body}");
+    sqlx::query(r"DELETE FROM users WHERE username LIKE 'mailreg\_%'")
+        .execute(&pool)
+        .await
+        .unwrap();
 
     // Only hashes are stored.
     let (stored,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM email_tokens WHERE token_hash = ?")

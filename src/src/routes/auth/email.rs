@@ -19,9 +19,11 @@
 //! an existing account by matching verified addresses, so an unverified one
 //! in `users.email` would let whoever owns that inbox into the account.
 //!
-//! The admin-generated reset links (`/admin/gen-pwd-reset` and
-//! `/forgot-password`, in password.rs) are untouched. They remain the way in
-//! for accounts that never added an address.
+//! An admin's "Generate password reset" (`/admin/gen-pwd-reset`, in
+//! password.rs) emails the ordinary reset link through [`admin_email_reset`]
+//! when the account has a verified address. Only when it cannot does it fall
+//! back to a copyable link redeemed through `/forgot-password`, which remains
+//! the way in for accounts that never added an address.
 
 use actix_web::{web, HttpRequest, HttpResponse};
 use bcrypt::{hash, verify, DEFAULT_COST};
@@ -332,6 +334,46 @@ pub(super) async fn account_settings(
     })))
 }
 
+/// Starts confirming `address` for an account: a single-use link if the
+/// address is free, or a note to the inbox if another account holds it.
+///
+/// The caller sees the same outcome either way: whether an address is
+/// registered is the inbox owner's business, not whoever typed it in. The
+/// address is not stored on the account here; it waits in `email_tokens`
+/// until the link is used. Returns false (and logs) when the send failed.
+/// The caller checks that email is on and takes the send budget first.
+pub(super) async fn send_confirmation(
+    state: &AppState,
+    user_id: &str,
+    username: &str,
+    address: &str,
+) -> Result<bool, AppError> {
+    // Recorded either way, so the per-account limits count this request.
+    let token = issue_token(state, user_id, PURPOSE_VERIFY, address, email::VERIFY_TTL_MINUTES).await?;
+
+    let taken: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE email = ? AND id <> ?")
+        .bind(address)
+        .bind(user_id)
+        .fetch_optional(&state.pool)
+        .await?;
+
+    let message = if taken.is_some() {
+        email::address_in_use_message(&state.config, username)
+    } else {
+        email::verify_message(&state.config, username, &token)
+    };
+
+    if let Err(e) = email::send(&state.config, address, &message).await {
+        log::error!("Could not send the address confirmation for {username}: {e}");
+        sqlx::query("DELETE FROM email_tokens WHERE token_hash = ?")
+            .bind(email::hash_token(&token))
+            .execute(&state.pool)
+            .await?;
+        return Ok(false);
+    }
+    Ok(true)
+}
+
 /// POST /account/email
 pub(super) async fn set_email(
     req: HttpRequest,
@@ -359,30 +401,7 @@ pub(super) async fn set_email(
         ));
     }
 
-    // Recorded either way, so the limits above count this request.
-    let token = issue_token(&state, &account.id, PURPOSE_VERIFY, &address, email::VERIFY_TTL_MINUTES).await?;
-
-    // Someone else's address gets a note instead of a link, and the reply
-    // here is the same either way: whether an address is registered is the
-    // inbox owner's business, not whoever typed it in.
-    let taken: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE email = ? AND id <> ?")
-        .bind(&address)
-        .bind(&account.id)
-        .fetch_optional(&state.pool)
-        .await?;
-
-    let message = if taken.is_some() {
-        email::address_in_use_message(&state.config, &account.username)
-    } else {
-        email::verify_message(&state.config, &account.username, &token)
-    };
-
-    if let Err(e) = email::send(&state.config, &address, &message).await {
-        log::error!("Could not send the address confirmation for {}: {e}", account.username);
-        sqlx::query("DELETE FROM email_tokens WHERE token_hash = ?")
-            .bind(email::hash_token(&token))
-            .execute(&state.pool)
-            .await?;
+    if !send_confirmation(&state, &account.id, &account.username, &address).await? {
         return Err(AppError::ServiceUnavailable(
             "The email could not be sent. Try again in a few minutes.".to_string(),
         ));
@@ -624,6 +643,61 @@ pub(super) async fn forgot_password_email(
     );
 
     Ok(generic)
+}
+
+/// What happened when an admin asked for a reset to be emailed.
+pub(super) enum AdminEmailReset {
+    /// Sent; carries the masked address it went to.
+    Sent(String),
+    /// The account has no verified address.
+    NoAddress,
+    /// Email is not configured on this server.
+    EmailOff,
+    /// The provider refused or could not be reached. Logged.
+    SendFailed,
+}
+
+/// Emails the account's ordinary reset link on an admin's behalf.
+///
+/// Unlike `/password/forgot` this answers truthfully and waits for the send:
+/// the admin already knows the account exists, and needs to know whether the
+/// person will actually get a message or must be handed a link instead.
+/// The per-account limits still apply, so the button cannot flood an inbox.
+pub(super) async fn admin_email_reset(state: &AppState, user_id: &str) -> Result<AdminEmailReset, AppError> {
+    let Some(account) = account_by_id(state, user_id).await? else {
+        return Err(AppError::NotFound("User not found".to_string()));
+    };
+    let Some(address) = account.verified_email().map(str::to_string) else {
+        return Ok(AdminEmailReset::NoAddress);
+    };
+    if !state.config.email_enabled() {
+        return Ok(AdminEmailReset::EmailOff);
+    }
+    if !within_send_limits(state, &account.id, PURPOSE_RESET).await? {
+        return Err(AppError::TooManyRequests(
+            "A reset link was emailed to this account very recently. Wait a minute, and no more than five an hour.".to_string(),
+        ));
+    }
+    if !email::take_send_budget() {
+        return Err(AppError::TooManyRequests(
+            "The server has sent too many emails in the last few minutes. Try again shortly.".to_string(),
+        ));
+    }
+
+    let token = issue_token(state, &account.id, PURPOSE_RESET, &address, email::RESET_TTL_MINUTES).await?;
+    let message = email::reset_message(&state.config, &account.username, &token);
+    match email::send(&state.config, &address, &message).await {
+        Ok(()) => Ok(AdminEmailReset::Sent(email::mask_address(&address))),
+        Err(e) => {
+            log::error!("Admin reset email for {} failed: {e}", account.username);
+            // The emailed link never arrived, so it should not stay usable.
+            sqlx::query("DELETE FROM email_tokens WHERE token_hash = ?")
+                .bind(email::hash_token(&token))
+                .execute(&state.pool)
+                .await?;
+            Ok(AdminEmailReset::SendFailed)
+        }
+    }
 }
 
 /// POST /password/reset

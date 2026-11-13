@@ -3447,13 +3447,19 @@
                     });
                     const data = await response.json();
                     
-                    if (response.ok && data.resetSession) {
+                    if (response.ok && data.emailed) {
+                        // The account has a verified address: the link went
+                        // straight to its owner, nothing to hand over.
+                        showOverlay('Reset Link Emailed', escapeHtml(data.message));
+                    } else if (response.ok && data.resetSession) {
+                        // Fallback: no address (or email is unavailable), so
+                        // the link has to be passed on by hand.
                         const resetLink = `https://bakosmp.go.ro/reset-pwd?session=${data.resetSession}`;
                         const expiresAt = data.expiresAt ? new Date(data.expiresAt).toLocaleString() : 'N/A';
                         
                         showOverlay(
                             'Password Reset Link Generated',
-                            `<strong>Message:</strong> ${data.message}<br><br>
+                            `${data.reason ? `<strong>Not emailed:</strong> ${escapeHtml(data.reason)} Send this link to the player yourself.<br><br>` : ''}
                              <strong>Reset Link:</strong><br>
                              <input type="text" id="resetLinkInput" value="${resetLink}" readonly style="width: 100%; padding: 8px; margin: 10px 0; font-size: 12px;">
                              <br><strong>Expires At:</strong> ${expiresAt}`,
@@ -7782,6 +7788,7 @@
         'user.flag': 'Changed access',
         'user.delete': 'Deleted account',
         'user.reset_link': 'Reset link issued',
+        'user.reset_email': 'Reset link emailed',
         'migrate': 'Migration'
     };
 

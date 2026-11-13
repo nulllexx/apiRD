@@ -13,6 +13,7 @@ use crate::AppState;
 use crate::middleware::rate_limit::RateLimiter;
 
 use super::common::*;
+use super::email::{admin_email_reset, AdminEmailReset};
 
 #[derive(Debug, Deserialize)]
 pub struct GenPwdResetBody {
@@ -200,6 +201,25 @@ pub(super) async fn admin_gen_pwd_reset(
     // access than your own would be a way to acquire that access.
     store::ensure_can_act_on(&state.pool, &actor.permissions, &user_id).await?;
 
+    // Email first: the link goes straight to the account's owner and nobody
+    // has to pass it on. The copyable link below is only the fallback.
+    let fallback_reason = match admin_email_reset(&state, &user_id).await? {
+        AdminEmailReset::Sent(sent_to) => {
+            store::record(&state.pool, &actor.username, "user.reset_email", username, None).await?;
+            return Ok(HttpResponse::Ok().json(json!({
+                "emailed": true,
+                "sentTo": sent_to,
+                "message": format!(
+                    "A password reset link was emailed to {sent_to}. It expires in {} minutes.",
+                    crate::email::RESET_TTL_MINUTES
+                ),
+            })));
+        }
+        AdminEmailReset::NoAddress => "This account has no verified email address.",
+        AdminEmailReset::EmailOff => "Email is not set up on this server.",
+        AdminEmailReset::SendFailed => "Emailing the account failed (see the server log).",
+    };
+
     // Generate session token: 32 random bytes -> hex
     let mut rng = rand::thread_rng();
     let random_bytes: [u8; 32] = rng.gen();
@@ -221,6 +241,8 @@ pub(super) async fn admin_gen_pwd_reset(
     store::record(&state.pool, &actor.username, "user.reset_link", username, None).await?;
 
     Ok(HttpResponse::Ok().json(json!({
+        "emailed": false,
+        "reason": fallback_reason,
         "message": "Password reset session created",
         "resetSession": session_token,
         "expiresAt": expires_at

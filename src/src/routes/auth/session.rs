@@ -14,6 +14,8 @@ use crate::AppState;
 use crate::middleware::rate_limit::RateLimiter;
 
 use super::common::*;
+use super::email::send_confirmation;
+use crate::email;
 
 const SEVEN_DAYS_SECS: u64 = 7 * 24 * 60 * 60;
 
@@ -22,6 +24,10 @@ pub struct RegisterBody {
     pub username: Option<String>,
     pub password: Option<String>,
     pub hwid: Option<String>,
+    /// Optional. Never stored as the account's address directly: a
+    /// confirmation link is sent and the address counts once it is opened,
+    /// exactly as when it is added later from the settings page.
+    pub email: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -76,6 +82,15 @@ pub(super) async fn register(
         .filter(|s| !s.is_empty())
         .ok_or_else(|| AppError::BadRequest("Missing username or password".to_string()))?;
 
+    // Checked before anything is created, so a typo does not leave behind an
+    // account the person thinks has no address. Blank means none given.
+    let address = match body.email.as_deref().map(str::trim).filter(|e| !e.is_empty()) {
+        Some(raw) => Some(email::normalize_address(raw).ok_or_else(|| {
+            AppError::BadRequest("That does not look like an email address.".to_string())
+        })?),
+        None => None,
+    };
+
     // Check HWID
     let hwid = match &body.hwid {
         Some(h) if !h.is_empty() => h.clone(),
@@ -125,9 +140,36 @@ pub(super) async fn register(
 
     let cookie = build_user_token_cookie(&token);
 
-    Ok(HttpResponse::Ok()
-        .cookie(cookie)
-        .json(json!({ "message": "Registration successful", "token": token })))
+    // The account exists by now, so a problem with the email does not undo
+    // the registration; the reply says what happened and the address can be
+    // added again from the settings page.
+    let email_status = match &address {
+        None => None,
+        Some(_) if !state.config.email_enabled() => Some("unavailable"),
+        Some(_) if !email::take_send_budget() => Some("not_sent"),
+        Some(address) => {
+            if send_confirmation(&state, &user_id, username, address).await? {
+                Some("sent")
+            } else {
+                Some("not_sent")
+            }
+        }
+    };
+
+    let mut reply = json!({ "message": "Registration successful", "token": token });
+    if let (Some(address), Some(status)) = (&address, email_status) {
+        reply["emailStatus"] = json!(status);
+        reply["emailMessage"] = json!(match status {
+            "sent" => format!("We sent a link to {address}. Open it to confirm the address."),
+            "unavailable" => "Email is not set up on this server yet, so the address was not saved. You can add it later in your account settings.".to_string(),
+            _ => "The confirmation email could not be sent. You can add the address again in your account settings.".to_string(),
+        });
+        if status == "sent" {
+            reply["pendingEmail"] = json!(address);
+        }
+    }
+
+    Ok(HttpResponse::Ok().cookie(cookie).json(reply))
 }
 
 /// POST /login

@@ -65,6 +65,7 @@ Accounts can hold one email address, used to send password reset links (`src/src
 
 | Route | Session | |
 |---|---|---|
+| `POST /api/register` | no | Optional `email`: sends a confirmation link, like adding it later. The reply's `emailStatus` is `sent`, `not_sent` or `unavailable`; registration succeeds either way, but a malformed address is refused with `400` before the account is created |
 | `GET /api/account/settings` | yes | What the settings page shows |
 | `POST /api/account/email` | yes | `{email, password}`: send a confirmation link |
 | `DELETE /api/account/email` | yes | `{password}`: remove the address |
@@ -78,7 +79,7 @@ Accounts can hold one email address, used to send password reset links (`src/src
 
 New passwords need at least 8 characters, and at most 72 bytes (bcrypt ignores the rest).
 
-**Fallback.** Accounts without an address can't use any of this, so the old way stays: staff with `users.reset_password` generate a one-time link in the admin panel (`/api/admin/gen-pwd-reset`), and the reset page redeems it through `/api/forgot-password`.
+**Admin resets.** Staff with `users.reset_password` click **Generate Password Reset** in the admin panel (`/api/admin/gen-pwd-reset`). If the account has a verified address, the server emails it the ordinary reset link (same per-account limits) and the panel just says where it went. **Fallback:** only when that is impossible (no verified address, email not configured, or the send failed) does it return a one-time link for staff to pass on by hand; the panel shows it with the reason, and the reset page redeems it through `/api/forgot-password`.
 
 **Setup.** Enable the Gmail API in the Google Cloud project, authorise the sending account once with the `https://www.googleapis.com/auth/gmail.send` scope, and add its refresh token as the `GMAIL_REFRESH_TOKEN` repository secret. `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` name the OAuth client that issued it and default to the Google sign-in client. Set the `EMAIL_FROM` repository *variable* (`gh variable set EMAIL_FROM`; the account's address or one of its verified "Send mail as" aliases, e.g. `RainDrippy <mailer@gmail.com>`); `PUBLIC_SITE_URL` sets the base of the links. With any of these missing, email is off and the routes answer `503` instead of pretending to send. A consent screen left in "Testing" makes Google expire the refresh token after 7 days.
 
