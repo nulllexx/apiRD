@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::access::{permission_names, store, Permission};
 use crate::error::AppError;
-use crate::middleware::auth::{create_jwt, decode_jwt};
+use crate::middleware::auth::{authenticate, create_jwt};
 use crate::middleware::auth_failopen::OptionalAuthUser;
 use crate::AppState;
 use crate::middleware::rate_limit::RateLimiter;
@@ -36,7 +36,7 @@ pub struct VCredsBody {
     pub password: Option<String>,
 }
 
-fn build_user_token_cookie(token: &str) -> Cookie<'static> {
+pub(super) fn build_user_token_cookie(token: &str) -> Cookie<'static> {
     Cookie::build("userToken", token.to_string())
         .http_only(true)
         .secure(true)
@@ -46,7 +46,7 @@ fn build_user_token_cookie(token: &str) -> Cookie<'static> {
         .finish()
 }
 
-fn clear_cookie(name: &str) -> Cookie<'static> {
+pub(super) fn clear_cookie(name: &str) -> Cookie<'static> {
     Cookie::build(name.to_string(), "")
         .http_only(true)
         .secure(true)
@@ -119,7 +119,8 @@ pub(super) async fn register(
         .execute(&state.pool)
         .await?;
 
-    let token = create_jwt(username, &user_id, false, &state.config.jwt_secret, SEVEN_DAYS_SECS)
+    // A new account starts at session version 0 (the column default).
+    let token = create_jwt(username, &user_id, false, 0, &state.config.jwt_secret, SEVEN_DAYS_SECS)
         .map_err(|e| AppError::Internal(format!("JWT error: {}", e)))?;
 
     let cookie = build_user_token_cookie(&token);
@@ -154,10 +155,11 @@ pub(super) async fn login(
         id: String,
         password_hash: String,
         is_og: bool,
+        session_version: u32,
     }
 
     let user: Option<UserRow> =
-        sqlx::query_as("SELECT id, password_hash, is_og FROM users WHERE username = ?")
+        sqlx::query_as("SELECT id, password_hash, is_og, session_version FROM users WHERE username = ?")
             .bind(username)
             .fetch_optional(&state.pool)
             .await?;
@@ -173,6 +175,7 @@ pub(super) async fn login(
         username,
         &user.id,
         user.is_og,
+        user.session_version,
         &state.config.jwt_secret,
         SEVEN_DAYS_SECS,
     )
@@ -258,8 +261,7 @@ pub(super) async fn validate(
         .map(|c| c.value().to_string())
         .ok_or_else(|| AppError::Unauthorized("Not logged in".to_string()))?;
 
-    let claims = decode_jwt(&token, &state.config.jwt_secret)
-        .map_err(|_| AppError::Unauthorized("Invalid token".to_string()))?;
+    let claims = authenticate(&state, &token).await?;
 
     #[derive(sqlx::FromRow)]
     struct UserRow {
@@ -301,13 +303,15 @@ pub(super) async fn refresh_token(
         .map(|c| c.value().to_string())
         .ok_or_else(|| AppError::Unauthorized("No refresh token".to_string()))?;
 
-    let decoded = decode_jwt(&token, &state.config.jwt_secret)
+    let decoded = authenticate(&state, &token)
+        .await
         .map_err(|_| AppError::Forbidden("Invalid refresh token".to_string()))?;
 
     let new_access_token = create_jwt(
         &decoded.username,
         &decoded.id,
         decoded.is_og,
+        decoded.session_version,
         &state.config.jwt_secret,
         15 * 60, // 15 minutes
     )

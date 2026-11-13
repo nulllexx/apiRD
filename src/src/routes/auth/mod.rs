@@ -5,6 +5,7 @@ mod account;
 mod admin;
 mod common;
 mod dashboard;
+mod email;
 mod games;
 mod password;
 mod session;
@@ -14,6 +15,7 @@ mod wiki;
 use access::*;
 use account::*;
 use admin::*;
+use email::*;
 use games::*;
 use password::*;
 use session::*;
@@ -72,7 +74,17 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         )
         .route("/admin/gen-pwd-reset", web::post().to(admin_gen_pwd_reset))
         .route("/reset-password", web::post().to(reset_password))
+        // Kept as the fallback for accounts without an email address: an
+        // admin generates the link (/admin/gen-pwd-reset) and hands it over.
         .route("/forgot-password", web::post().to(forgot_password))
+        .route("/account/settings", web::get().to(account_settings))
+        .route("/account/email", web::post().to(set_email))
+        .route("/account/email", web::delete().to(remove_email))
+        .route("/account/email/verify", web::post().to(verify_email))
+        .route("/change-password", web::post().to(change_password))
+        .route("/password/forgot", web::post().to(forgot_password_email))
+        .route("/password/reset", web::post().to(reset_password_email))
+        .route("/account/sessions/revoke", web::post().to(revoke_all_sessions))
         .route("/history/wiki/edit", web::patch().to(history_wiki_edit))
         .route("/history/wiki/view", web::get().to(history_wiki_view));
 }

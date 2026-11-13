@@ -52,6 +52,54 @@ The **Minecraft Server → Archives** view ends seasons and keeps a record of ea
 
 ServerSideUtils reads the season number and theme from `plugins/ServerSideUtils/season-override.json` on start-up, falling back to the defaults in its `Main.java` if the file is missing or invalid, so a new season needs no plugin rebuild.
 
+## Account email and password resets
+Accounts can hold one email address, used to send password reset links (`src/src/routes/auth/email.rs`, `src/src/email.rs`). Mail goes out through [Resend](https://resend.com).
+
+- **Only confirmed addresses count.** `users.email` holds an address only once its owner has opened a link sent to it (or Google has vouched for it). Until then it waits in `email_tokens`. This matters beyond resets: a Google sign-in is linked to an existing account by matching *confirmed* addresses, so storing a typed-in one would let whoever owns that inbox into the account.
+- **Changing or removing the address needs the current password**, when the account has one, so a stolen session cannot swap in the thief's inbox.
+- **Links are single-use and short-lived**: 24 hours to confirm an address, 30 minutes to reset a password. Only their SHA-256 is stored. A reset link stops working if the account's address changes after it was sent, and every outstanding reset link (emailed or admin-generated) is dropped when the password changes.
+- **Nothing leaks whether an account exists.** `POST /api/password/forgot` gives the same answer for every username or address and sends in the background. Asking to add an address another account holds sends that inbox a note instead of a link, and the requester sees the usual reply.
+- **Limits**: one link of each kind per account per minute and five per hour, plus 40 emails per 10 minutes across the whole server.
+- **Notices** go to the old address when the address changes or is removed, and to the account's address when its password changes.
+- Google sign-ups store Google's address with Google's verified flag. A returning Google sign-in fills in a confirmed address for an account that has none.
+
+| Route | Session | |
+|---|---|---|
+| `GET /api/account/settings` | yes | What the settings page shows |
+| `POST /api/account/email` | yes | `{email, password}`: send a confirmation link |
+| `DELETE /api/account/email` | yes | `{password}`: remove the address |
+| `POST /api/account/email/verify` | no | `{token}`: the link's token proves it |
+| `POST /api/change-password` | yes | `{currentPassword, newPassword}` |
+| `POST /api/password/forgot` | no | `{identifier}`: username or address |
+| `POST /api/password/reset` | no | `{token, newPassword}` |
+| `POST /api/account/sessions/revoke` | yes | Sign out everywhere |
+| `POST /api/auth/oauth/google/link` | yes | `{password, returnTo}`: start linking Google; answers `{url}` |
+| `DELETE /api/account/google` | yes | `{password}`: unlink Google |
+
+New passwords need at least 8 characters, and at most 72 bytes (bcrypt ignores the rest).
+
+**Fallback.** Accounts without an address can't use any of this, so the old way stays: staff with `users.reset_password` generate a one-time link in the admin panel (`/api/admin/gen-pwd-reset`), and the reset page redeems it through `/api/forgot-password`.
+
+**Setup.** Add the `RESEND_API_KEY` repository secret and set `EMAIL_FROM` (a sender on a domain verified in Resend) in the server's `.env`; `PUBLIC_SITE_URL` sets the base of the links. With either missing, email is off and the routes answer `503` instead of pretending to send.
+
+## Sessions
+A session is a signed JWT in the `userToken` cookie (`src/src/middleware/auth.rs`). It ends when:
+
+- **it expires**, 7 days after sign-in. Tokens without an expiry are refused.
+- **the account's sessions are revoked.** Each token carries the account's `session_version` from when it was issued, and `authenticate()` refuses it once `users.session_version` has moved on. The number goes up when the password is changed or reset (by email, by an admin-generated link, or through the old `/reset-password`), and on **Sign out everywhere**. Changing the password while signed in gives that device a fresh session, so only the others are signed out.
+
+Every place that accepts the cookie goes through `authenticate()`: `AuthUser`, `OptionalAuthUser`, `Principal`/`Require<P>`, the dashboard pages, `/validate` (which the AI group chat server asks), `/profile`, `/account-status` and `/refresh-token`. `decode_jwt()` checks the signature and expiry only, so on its own it is not enough to accept a session.
+
+## Linking Google to an existing account
+A signed-in account can link Google from its settings, then sign in with either.
+
+- Linking starts with a POST that needs the current password (when the account has one): it adds a way in, so a stolen session alone must not be able to add the thief's Google account. Being a POST, another site cannot start it.
+- Google's callback finishes the link only if the browser is still signed in as the account that started it. A Google account already linked elsewhere is refused. If the account has no confirmed email address, it takes Google's verified one.
+- Either way it ends on the settings page that started it (`?google=linked|taken|already|cancelled|session|error`); only the two built-in settings pages are possible destinations.
+- Unlinking needs the password, and is refused for an account whose only way in is Google.
+
+Accounts are also still linked automatically on Google sign-in when Google's verified address matches a confirmed address on the account.
+
 ## Deployment
 Locally, you need to create a `.env` file (see the structure of the env example file) in the src folder & run `cargo run`.
 For production purposes, we use a GitHub actions workflow that builds the Docker image, pushes it to GHCR and uploads & updates it to our server.

@@ -13,6 +13,7 @@ pub mod access;
 pub mod config;
 pub mod console;
 pub mod db;
+pub mod email;
 pub mod error;
 pub mod middleware;
 pub mod models;

@@ -681,7 +681,8 @@ Columns in `{table}`:
 /// access comes from `user_roles`, which tests set with [`grant_role`].
 /// "test-secret" is the JWT secret test_state's config carries.
 fn session_cookie(username: &str, id: &str) -> actix_web::cookie::Cookie<'static> {
-    let token = api_rd::middleware::auth::create_jwt(username, id, false, "test-secret", 3600)
+    // Session version 0, the column's starting value.
+    let token = api_rd::middleware::auth::create_jwt(username, id, false, 0, "test-secret", 3600)
         .expect("sign a test session");
     actix_web::cookie::Cookie::new("userToken", token)
 }
@@ -2291,4 +2292,635 @@ async fn the_end_season_job_runs_without_a_database() {
     assert_eq!(seen.lock().unwrap().len(), 2, "no further stop or start");
 
     let _ = std::fs::remove_dir_all(&base);
+}
+
+// ---------------------------------------------------------------------------
+// Account email and password resets
+// ---------------------------------------------------------------------------
+
+/// Everything about an account's address and password needs that account's
+/// session -- except using an emailed link, which is the proof by itself.
+#[actix_web::test]
+async fn account_email_routes_reject_anonymous_callers() {
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(lazy_state()))
+            .app_data(web::Data::new(api_rd::middleware::rate_limit::RateLimiter::new(500, 60)))
+            .configure(configure_api),
+    )
+    .await;
+
+    let body = serde_json::json!({ "email": "a@example.com", "password": "x",
+                                   "currentPassword": "x", "newPassword": "long enough" });
+    for (method, uri) in [
+        ("GET", "/api/account/settings"),
+        ("POST", "/api/account/email"),
+        ("DELETE", "/api/account/email"),
+        ("POST", "/api/change-password"),
+        ("POST", "/api/account/sessions/revoke"),
+        ("POST", "/api/auth/oauth/google/link"),
+        ("DELETE", "/api/account/google"),
+    ] {
+        let req = match method {
+            "GET" => test::TestRequest::get(),
+            "POST" => test::TestRequest::post(),
+            _ => test::TestRequest::delete(),
+        }
+        .uri(uri)
+        .set_json(&body)
+        .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "{method} {uri} must require a session");
+    }
+}
+
+/// With no Resend key the server says email is unavailable rather than
+/// claiming a link is on its way -- and it says so before looking anyone up.
+#[actix_web::test]
+async fn password_reset_by_email_says_when_email_is_off() {
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(lazy_state()))
+            .app_data(web::Data::new(api_rd::middleware::rate_limit::RateLimiter::new(500, 60)))
+            .configure(configure_api),
+    )
+    .await;
+
+    let req = test::TestRequest::post()
+        .uri("/api/password/forgot")
+        .set_json(serde_json::json!({ "identifier": "someone" }))
+        .to_request();
+    assert_eq!(test::call_service(&app, req).await.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    // Missing input is refused before any lookup, too.
+    for uri in ["/api/password/reset", "/api/account/email/verify"] {
+        let req = test::TestRequest::post().uri(uri).set_json(serde_json::json!({})).to_request();
+        assert_eq!(test::call_service(&app, req).await.status(), StatusCode::BAD_REQUEST, "{uri}");
+    }
+}
+
+/// A stand-in for Resend's send endpoint. Answers every request with success
+/// and keeps the JSON body, so a test can read the link out of the message.
+async fn fake_resend() -> (String, Arc<std::sync::Mutex<Vec<serde_json::Value>>>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/emails", listener.local_addr().unwrap());
+    let outbox = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = Arc::clone(&outbox);
+
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else { return };
+            let sink = Arc::clone(&sink);
+            tokio::spawn(async move {
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                // Headers, then exactly Content-Length bytes of body.
+                let body_start = loop {
+                    let n = socket.read(&mut chunk).await.unwrap_or(0);
+                    if n == 0 { return; }
+                    buf.extend_from_slice(&chunk[..n]);
+                    if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") { break i + 4; }
+                };
+                let head = String::from_utf8_lossy(&buf[..body_start]).to_lowercase();
+                let length: usize = head
+                    .lines()
+                    .find_map(|l| l.strip_prefix("content-length:"))
+                    .and_then(|v| v.trim().parse().ok())
+                    .unwrap_or(0);
+                while buf.len() < body_start + length {
+                    let n = socket.read(&mut chunk).await.unwrap_or(0);
+                    if n == 0 { break; }
+                    buf.extend_from_slice(&chunk[..n]);
+                }
+                if let Ok(json) = serde_json::from_slice(&buf[body_start..]) {
+                    sink.lock().unwrap().push(json);
+                }
+                let reply = "{\"id\":\"test\"}";
+                let _ = socket
+                    .write_all(format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                        reply.len()
+                    ).as_bytes())
+                    .await;
+            });
+        }
+    });
+
+    (url, outbox)
+}
+
+/// Waits for the outbox to reach `count` messages. Resets are sent in the
+/// background, so they can land just after the response.
+async fn wait_for_mail(outbox: &std::sync::Mutex<Vec<serde_json::Value>>, count: usize) -> Vec<serde_json::Value> {
+    for _ in 0..100 {
+        {
+            let mail = outbox.lock().unwrap();
+            if mail.len() >= count {
+                return mail.clone();
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("expected {count} emails, got {:?}", outbox.lock().unwrap());
+}
+
+/// Sends a request and returns its status and the `userToken` cookie it set,
+/// if any.
+macro_rules! call_for_session {
+    ($app:expr, $req:expr) => {{
+        let resp = test::call_service($app, $req.to_request()).await;
+        let cookie = resp
+            .response()
+            .cookies()
+            .find(|c| c.name() == "userToken" && !c.value().is_empty())
+            .map(|c| c.into_owned());
+        (resp.status(), cookie)
+    }};
+}
+
+fn link_token(message: &serde_json::Value) -> String {
+    let text = message["text"].as_str().unwrap();
+    let start = text.find("token=").expect("a link with a token") + "token=".len();
+    text[start..].chars().take_while(|c| c.is_ascii_hexdigit()).collect()
+}
+
+#[actix_web::test]
+async fn an_address_is_confirmed_by_email_and_then_resets_the_password() {
+    let Some(pool) = shared_pool().await else {
+        eprintln!("skipping an_address_is_confirmed_by_email_and_then_resets_the_password: TEST_DATABASE_URL not set");
+        return;
+    };
+    let _serialized = DB_TEST_LOCK.lock().await;
+
+    sqlx::query(r"DELETE FROM users WHERE username LIKE 'mailtest\_%'")
+        .execute(&pool)
+        .await
+        .expect("clear test accounts");
+    let hashed = bcrypt::hash("old password", 4).unwrap();
+    for (id, username, hash) in [
+        ("mailtest-a-id", "mailtest_a", hashed.as_str()),
+        ("mailtest-b-id", "mailtest_b", hashed.as_str()),
+        // Made through Google: no password at all.
+        ("mailtest-g-id", "mailtest_g", ""),
+    ] {
+        sqlx::query("INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)")
+            .bind(id)
+            .bind(username)
+            .bind(hash)
+            .execute(&pool)
+            .await
+            .expect("create test account");
+    }
+
+    let (url, outbox) = fake_resend().await;
+    let mut state = test_state(pool.clone());
+    state.config.resend_api_key = "re_test".to_string();
+    state.config.email_from = "RainDrippy <no-reply@example.com>".to_string();
+    state.config.resend_api_url = url;
+    state.config.public_site_url = "https://site.example".to_string();
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(state))
+            .app_data(web::Data::new(api_rd::middleware::rate_limit::RateLimiter::new(10_000, 60)))
+            .configure(configure_api),
+    )
+    .await;
+
+    let a = session_cookie("mailtest_a", "mailtest-a-id");
+    let b = session_cookie("mailtest_b", "mailtest-b-id");
+    let g = session_cookie("mailtest_g", "mailtest-g-id");
+
+    macro_rules! call {
+        ($req:expr) => {{
+            let resp = test::call_service(&app, $req.to_request()).await;
+            let status = resp.status();
+            let body: serde_json::Value =
+                serde_json::from_slice(&test::read_body(resp).await).unwrap_or(serde_json::Value::Null);
+            (status, body)
+        }};
+    }
+    let settings = |who: &actix_web::cookie::Cookie<'static>| {
+        test::TestRequest::get().uri("/api/account/settings").cookie(who.clone())
+    };
+    let add_email = |who: &actix_web::cookie::Cookie<'static>, email: &str, password: Option<&str>| {
+        test::TestRequest::post()
+            .uri("/api/account/email")
+            .cookie(who.clone())
+            .set_json(serde_json::json!({ "email": email, "password": password }))
+    };
+
+    // A new account has no address and is asked for one.
+    let (status, me) = call!(settings(&a));
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(me["email"], serde_json::Value::Null);
+    assert_eq!(me["emailVerified"], false);
+    assert_eq!(me["hasPassword"], true);
+    assert_eq!(me["emailEnabled"], true);
+
+    // Adding one needs the password, so a stolen session cannot swap it.
+    assert_eq!(call!(add_email(&a, "Mailtest.A@Example.com", None)).0, StatusCode::BAD_REQUEST);
+    assert_eq!(call!(add_email(&a, "mailtest.a@example.com", Some("wrong"))).0, StatusCode::UNAUTHORIZED);
+    assert_eq!(call!(add_email(&a, "not an address", Some("old password"))).0, StatusCode::BAD_REQUEST);
+
+    let (status, body) = call!(add_email(&a, "Mailtest.A@Example.com", Some("old password")));
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let mail = wait_for_mail(&outbox, 1).await;
+    assert_eq!(mail[0]["to"][0], "mailtest.a@example.com");
+    assert!(mail[0]["text"].as_str().unwrap().contains("https://site.example/verify-email?token="));
+    let verify_token = link_token(&mail[0]);
+
+    // Not stored as the account's address until the link is used.
+    let (_, me) = call!(settings(&a));
+    assert_eq!(me["email"], serde_json::Value::Null);
+    assert_eq!(me["pendingEmail"], "mailtest.a@example.com");
+    // Nor can a reset be sent to it yet.
+    let forgot = |identifier: &str| {
+        test::TestRequest::post()
+            .uri("/api/password/forgot")
+            .set_json(serde_json::json!({ "identifier": identifier }))
+    };
+    assert_eq!(call!(forgot("mailtest_a")).0, StatusCode::OK);
+
+    // One link a minute.
+    assert_eq!(
+        call!(add_email(&a, "mailtest.a@example.com", Some("old password"))).0,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+
+    let verify = |token: &str| {
+        test::TestRequest::post()
+            .uri("/api/account/email/verify")
+            .set_json(serde_json::json!({ "token": token }))
+    };
+    let (status, body) = call!(verify(&verify_token));
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["email"], "mailtest.a@example.com");
+    assert_eq!(call!(verify(&verify_token)).0, StatusCode::BAD_REQUEST, "links work once");
+
+    let (_, me) = call!(settings(&a));
+    assert_eq!(me["email"], "mailtest.a@example.com");
+    assert_eq!(me["emailVerified"], true);
+    assert_eq!(me["pendingEmail"], serde_json::Value::Null);
+    // The earlier forgot request, made before the address was confirmed,
+    // sent nothing.
+    assert_eq!(outbox.lock().unwrap().len(), 1);
+
+    // Someone else asking for the same address gets the same answer, but the
+    // inbox gets a note instead of a link.
+    let (status, _) = call!(add_email(&b, "mailtest.a@example.com", Some("old password")));
+    assert_eq!(status, StatusCode::OK);
+    let mail = wait_for_mail(&outbox, 2).await;
+    assert_eq!(mail[1]["subject"], "This address is already in use");
+    assert!(!mail[1]["text"].as_str().unwrap().contains("token="));
+
+    // Unknown accounts get the same reply and no email.
+    let (status, unknown) = call!(forgot("mailtest_nobody"));
+    assert_eq!(status, StatusCode::OK);
+
+    // A reset by address.
+    let (status, known) = call!(forgot("MAILTEST.A@example.com"));
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(known, unknown, "the reply must not say whether the account exists");
+    let mail = wait_for_mail(&outbox, 3).await;
+    assert_eq!(mail.len(), 3, "no email for the unknown account");
+    assert_eq!(mail[2]["subject"], "Reset your password");
+    assert!(mail[2]["text"].as_str().unwrap().contains("https://site.example/reset-pwd?token="));
+    let reset_token = link_token(&mail[2]);
+
+    // And a second within the minute is quietly not sent.
+    assert_eq!(call!(forgot("mailtest_a")).0, StatusCode::OK);
+
+    let reset = |token: &str, password: &str| {
+        test::TestRequest::post()
+            .uri("/api/password/reset")
+            .set_json(serde_json::json!({ "token": token, "newPassword": password }))
+    };
+    assert_eq!(call!(reset(&reset_token, "short")).0, StatusCode::BAD_REQUEST);
+    assert_eq!(call!(reset(&verify_token, "new password 1")).0, StatusCode::BAD_REQUEST, "a verify link is not a reset link");
+    let (status, body) = call!(reset(&reset_token, "new password 1"));
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(call!(reset(&reset_token, "new password 2")).0, StatusCode::BAD_REQUEST, "links work once");
+
+    // The reset signed out the session that existed before it.
+    assert_eq!(call!(settings(&a)).0, StatusCode::UNAUTHORIZED, "a reset must end existing sessions");
+
+    let login = |password: &str| {
+        test::TestRequest::post()
+            .uri("/api/login")
+            .set_json(serde_json::json!({ "username": "mailtest_a", "password": password }))
+    };
+    assert_eq!(call!(login("old password")).0, StatusCode::UNAUTHORIZED);
+    let (status, a) = call_for_session!(&app, login("new password 1"));
+    assert_eq!(status, StatusCode::OK);
+    let a = a.expect("login sets a session");
+    assert_eq!(call!(settings(&a)).0, StatusCode::OK);
+    let mail = wait_for_mail(&outbox, 4).await;
+    assert_eq!(mail[3]["subject"], "Your password was changed");
+
+    // Changing it knowing the current one.
+    let change = |who: &actix_web::cookie::Cookie<'static>, current: &str, new: &str| {
+        test::TestRequest::post()
+            .uri("/api/change-password")
+            .cookie(who.clone())
+            .set_json(serde_json::json!({ "currentPassword": current, "newPassword": new }))
+    };
+    assert_eq!(call!(change(&a, "wrong", "new password 2")).0, StatusCode::UNAUTHORIZED);
+    let (_, other_device) = call_for_session!(&app, login("new password 1"));
+    let other_device = other_device.unwrap();
+    let (status, fresh) = call_for_session!(&app, change(&a, "new password 1", "new password 2"));
+    assert_eq!(status, StatusCode::OK);
+    // Every other session ends, including the one it was changed from, which
+    // is handed a new cookie so it stays signed in.
+    assert_eq!(call!(settings(&other_device)).0, StatusCode::UNAUTHORIZED);
+    assert_eq!(call!(settings(&a)).0, StatusCode::UNAUTHORIZED);
+    let a = fresh.expect("the changing device gets a fresh session");
+    assert_eq!(call!(settings(&a)).0, StatusCode::OK);
+    assert_eq!(call!(login("new password 2")).0, StatusCode::OK);
+
+    // An account with no password is pointed at the email route instead.
+    let (status, body) = call!(change(&g, "", "new password 1"));
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body["error"].as_str().unwrap().contains("Set a password"), "{body}");
+    let (_, me) = call!(settings(&g));
+    assert_eq!(me["hasPassword"], false);
+    // ...and needs no password to add an address.
+    assert_eq!(call!(add_email(&g, "mailtest.g@example.com", None)).0, StatusCode::OK);
+
+    // A reset link stops working once the address it went to is removed.
+    sqlx::query("DELETE FROM email_tokens WHERE user_id = 'mailtest-a-id'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let before = outbox.lock().unwrap().len();
+    assert_eq!(call!(forgot("mailtest_a")).0, StatusCode::OK);
+    let mail = wait_for_mail(&outbox, before + 1).await;
+    let stale = link_token(mail.last().unwrap());
+    let (status, _) = call!(test::TestRequest::delete()
+        .uri("/api/account/email")
+        .cookie(a.clone())
+        .set_json(serde_json::json!({ "password": "new password 2" })));
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(call!(reset(&stale, "new password 3")).0, StatusCode::BAD_REQUEST);
+    let (_, me) = call!(settings(&a));
+    assert_eq!(me["email"], serde_json::Value::Null);
+
+    // Only hashes are stored.
+    let (stored,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM email_tokens WHERE token_hash = ?")
+        .bind(&stale)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stored, 0);
+
+    sqlx::query(r"DELETE FROM users WHERE username LIKE 'mailtest\_%'")
+        .execute(&pool)
+        .await
+        .expect("clear test accounts");
+}
+
+/// A session ends when it expires, when the password changes by any route,
+/// and on "sign out everywhere" -- and every place that accepts the cookie
+/// agrees.
+#[actix_web::test]
+async fn sessions_expire_and_can_be_revoked_everywhere() {
+    let Some(pool) = shared_pool().await else {
+        eprintln!("skipping sessions_expire_and_can_be_revoked_everywhere: TEST_DATABASE_URL not set");
+        return;
+    };
+    let _serialized = DB_TEST_LOCK.lock().await;
+
+    sqlx::query(r"DELETE FROM users WHERE username LIKE 'sesstest\_%'")
+        .execute(&pool)
+        .await
+        .expect("clear test accounts");
+    let hashed = bcrypt::hash("first password", 4).unwrap();
+    for (id, username) in [("sesstest-u-id", "sesstest_u"), ("sesstest-admin-id", "sesstest_admin")] {
+        sqlx::query("INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)")
+            .bind(id)
+            .bind(username)
+            .bind(&hashed)
+            .execute(&pool)
+            .await
+            .expect("create test account");
+    }
+    grant_role(&pool, "sesstest-admin-id", "admin").await;
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(test_state(pool.clone())))
+            .app_data(web::Data::new(api_rd::middleware::rate_limit::RateLimiter::new(10_000, 60)))
+            .configure(configure_api),
+    )
+    .await;
+
+    macro_rules! status {
+        ($req:expr) => {
+            test::call_service(&app, $req.to_request()).await.status()
+        };
+    }
+    macro_rules! json {
+        ($req:expr) => {{
+            let resp = test::call_service(&app, $req.to_request()).await;
+            serde_json::from_slice::<serde_json::Value>(&test::read_body(resp).await).unwrap()
+        }};
+    }
+    let login = || {
+        test::TestRequest::post()
+            .uri("/api/login")
+            .set_json(serde_json::json!({ "username": "sesstest_u", "password": "first password" }))
+    };
+    // Each kind of session check: the strict extractor, the fail-open one,
+    // the one /validate does by hand, and the permission extractor.
+    let alive = |c: &actix_web::cookie::Cookie<'static>| {
+        (
+            test::TestRequest::get().uri("/api/account/settings").cookie(c.clone()),
+            test::TestRequest::get().uri("/api/logged-in").cookie(c.clone()),
+            test::TestRequest::get().uri("/api/validate").cookie(c.clone()),
+        )
+    };
+
+    // An expired token is refused, though correctly signed for a real account.
+    let expired = {
+        use jsonwebtoken::{encode, EncodingKey, Header};
+        let past = chrono::Utc::now().timestamp() - 60 * 60;
+        let token = encode(
+            &Header::default(),
+            &serde_json::json!({ "username": "sesstest_u", "id": "sesstest-u-id", "exp": past }),
+            &EncodingKey::from_secret(b"test-secret"),
+        )
+        .unwrap();
+        actix_web::cookie::Cookie::new("userToken", token)
+    };
+    let (settings, logged_in, validate) = alive(&expired);
+    assert_eq!(status!(settings), StatusCode::UNAUTHORIZED);
+    assert_eq!(json!(logged_in)["loggedIn"], false);
+    assert_eq!(status!(validate), StatusCode::UNAUTHORIZED);
+
+    // Two devices signed in.
+    let (_, laptop) = call_for_session!(&app, login());
+    let (_, phone) = call_for_session!(&app, login());
+    let (laptop, phone) = (laptop.unwrap(), phone.unwrap());
+    let (settings, logged_in, validate) = alive(&phone);
+    assert_eq!(status!(settings), StatusCode::OK);
+    assert_eq!(json!(logged_in)["loggedIn"], true);
+    assert_eq!(status!(validate), StatusCode::OK);
+
+    // "Sign out everywhere" from the laptop ends both.
+    let (status, cleared) = call_for_session!(
+        &app,
+        test::TestRequest::post().uri("/api/account/sessions/revoke").cookie(laptop.clone())
+    );
+    assert_eq!(status, StatusCode::OK);
+    assert!(cleared.is_none(), "this device is signed out too");
+    for device in [&laptop, &phone] {
+        let (settings, logged_in, validate) = alive(device);
+        assert_eq!(status!(settings), StatusCode::UNAUTHORIZED);
+        assert_eq!(json!(logged_in)["loggedIn"], false);
+        assert_eq!(status!(validate), StatusCode::UNAUTHORIZED);
+    }
+
+    // Signing in again works, under the new version.
+    let (status, phone) = call_for_session!(&app, login());
+    assert_eq!(status, StatusCode::OK);
+    let phone = phone.unwrap();
+    assert_eq!(status!(alive(&phone).0), StatusCode::OK);
+
+    // The admin-generated reset link (the fallback) also ends sessions.
+    let (_, admin) = call_for_session!(
+        &app,
+        test::TestRequest::post()
+            .uri("/api/login")
+            .set_json(serde_json::json!({ "username": "sesstest_admin", "password": "first password" }))
+    );
+    let admin = admin.unwrap();
+    let link = json!(test::TestRequest::post()
+        .uri("/api/admin/gen-pwd-reset")
+        .cookie(admin.clone())
+        .set_json(serde_json::json!({ "username": "sesstest_u" })));
+    let session = link["resetSession"].as_str().expect("a reset session").to_string();
+    assert_eq!(
+        status!(test::TestRequest::post()
+            .uri("/api/forgot-password")
+            .set_json(serde_json::json!({ "resetSession": session, "newPassword": "second password" }))),
+        StatusCode::OK
+    );
+    assert_eq!(status!(alive(&phone).0), StatusCode::UNAUTHORIZED);
+    // ...and the admin's own session is untouched.
+    assert_eq!(status!(alive(&admin).0), StatusCode::OK);
+
+    // A session for a deleted account is no session.
+    sqlx::query("DELETE FROM users WHERE id = 'sesstest-admin-id'").execute(&pool).await.unwrap();
+    assert_eq!(status!(alive(&admin).0), StatusCode::UNAUTHORIZED);
+
+    sqlx::query(r"DELETE FROM users WHERE username LIKE 'sesstest\_%'")
+        .execute(&pool)
+        .await
+        .expect("clear test accounts");
+}
+
+/// Linking starts only from a signed-in account that proves it knows its
+/// password, and unlinking never leaves an account with no way in.
+#[actix_web::test]
+async fn google_can_be_linked_to_and_unlinked_from_an_existing_account() {
+    let Some(pool) = shared_pool().await else {
+        eprintln!("skipping google_can_be_linked_to_and_unlinked_from_an_existing_account: TEST_DATABASE_URL not set");
+        return;
+    };
+    let _serialized = DB_TEST_LOCK.lock().await;
+
+    sqlx::query(r"DELETE FROM users WHERE username LIKE 'linktest\_%'")
+        .execute(&pool)
+        .await
+        .expect("clear test accounts");
+    let hashed = bcrypt::hash("a password", 4).unwrap();
+    for (id, username, hash, sub) in [
+        ("linktest-p-id", "linktest_p", hashed.as_str(), None),
+        ("linktest-l-id", "linktest_l", hashed.as_str(), Some("linktest-sub-1")),
+        ("linktest-g-id", "linktest_g", "", Some("linktest-sub-2")),
+    ] {
+        sqlx::query(
+            "INSERT INTO users (id, username, password_hash, oauth_provider, oauth_subject)
+             VALUES (?, ?, ?, IF(? IS NULL, NULL, 'google'), ?)",
+        )
+        .bind(id)
+        .bind(username)
+        .bind(hash)
+        .bind(sub)
+        .bind(sub)
+        .execute(&pool)
+        .await
+        .expect("create test account");
+    }
+
+    let mut state = test_state(pool.clone());
+    state.config.google_client_id = "client-id".to_string();
+    state.config.google_client_secret = "client-secret".to_string();
+    state.config.google_redirect_uri = "https://site.example/api/auth/oauth/google/callback".to_string();
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(state))
+            .app_data(web::Data::new(api_rd::middleware::rate_limit::RateLimiter::new(10_000, 60)))
+            .configure(configure_api),
+    )
+    .await;
+
+    let p = session_cookie("linktest_p", "linktest-p-id");
+    let l = session_cookie("linktest_l", "linktest-l-id");
+    let g = session_cookie("linktest_g", "linktest-g-id");
+    let link = |who: &actix_web::cookie::Cookie<'static>, password: Option<&str>| {
+        test::TestRequest::post()
+            .uri("/api/auth/oauth/google/link")
+            .cookie(who.clone())
+            .set_json(serde_json::json!({ "password": password, "returnTo": "rd" }))
+    };
+    let unlink = |who: &actix_web::cookie::Cookie<'static>, password: Option<&str>| {
+        test::TestRequest::delete()
+            .uri("/api/account/google")
+            .cookie(who.clone())
+            .set_json(serde_json::json!({ "password": password }))
+    };
+    macro_rules! status {
+        ($req:expr) => {
+            test::call_service(&app, $req.to_request()).await.status()
+        };
+    }
+
+    assert_eq!(status!(link(&p, None)), StatusCode::BAD_REQUEST);
+    assert_eq!(status!(link(&p, Some("wrong"))), StatusCode::UNAUTHORIZED);
+
+    let resp = test::call_service(&app, link(&p, Some("a password")).to_request()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(
+        resp.response().cookies().any(|c| c.name() == "oauth_state" && !c.value().is_empty()),
+        "the flow's state travels in a cookie"
+    );
+    let body: serde_json::Value = serde_json::from_slice(&test::read_body(resp).await).unwrap();
+    let url = body["url"].as_str().unwrap();
+    assert!(url.starts_with("https://accounts.google.com/"), "{url}");
+    assert!(url.contains("code_challenge="), "PKCE is used: {url}");
+
+    // Already linked.
+    assert_eq!(status!(link(&l, Some("a password"))), StatusCode::CONFLICT);
+
+    // Unlinking needs the password, and leaves password sign-in.
+    assert_eq!(status!(unlink(&l, Some("wrong"))), StatusCode::UNAUTHORIZED);
+    assert_eq!(status!(unlink(&l, Some("a password"))), StatusCode::OK);
+    let (provider, sub): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT oauth_provider, oauth_subject FROM users WHERE id = 'linktest-l-id'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((provider, sub), (None, None));
+    assert_eq!(status!(unlink(&l, Some("a password"))), StatusCode::BAD_REQUEST, "nothing left to unlink");
+
+    // A Google-only account cannot unlink its only way in.
+    assert_eq!(status!(unlink(&g, None)), StatusCode::BAD_REQUEST);
+
+    sqlx::query(r"DELETE FROM users WHERE username LIKE 'linktest\_%'")
+        .execute(&pool)
+        .await
+        .expect("clear test accounts");
 }

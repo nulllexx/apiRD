@@ -2,10 +2,13 @@ use actix_web::{dev::Payload, web, FromRequest, HttpRequest};
 use std::future::Future;
 use std::pin::Pin;
 
-use crate::middleware::auth::{decode_jwt, AuthUser};
+use crate::middleware::auth::{authenticate_opt, AuthUser};
 use crate::AppState;
 
-/// Fail-open auth extractor — always succeeds, user may be None
+/// Fail-open auth extractor — always succeeds, user may be None.
+///
+/// `None` for no cookie, and for one that is expired, revoked or forged (see
+/// `auth::authenticate`).
 pub struct OptionalAuthUser(pub Option<AuthUser>);
 
 impl FromRequest for OptionalAuthUser {
@@ -20,14 +23,7 @@ impl FromRequest for OptionalAuthUser {
 
             let user = match (state, token) {
                 (Some(state), Some(token)) => {
-                    match decode_jwt(&token, &state.config.jwt_secret) {
-                        Ok(claims) => Some(AuthUser {
-                            username: claims.username,
-                            id: claims.id,
-                            is_og: claims.is_og,
-                        }),
-                        Err(_) => None,
-                    }
+                    authenticate_opt(state, &token).await.map(AuthUser::from)
                 }
                 _ => None,
             };

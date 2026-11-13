@@ -101,6 +101,17 @@ pub struct AppConfig {
     pub google_redirect_uri: String,
     pub oauth_signup_redirect: String,
     pub oauth_success_redirect: String,
+    /// Resend API key. Empty turns email off: verification and reset links
+    /// cannot be sent, and the API says so instead of failing at boot.
+    pub resend_api_key: String,
+    /// Where messages are posted. Only overridden by tests, which point it at
+    /// a local stand-in so nothing ever reaches the real service.
+    pub resend_api_url: String,
+    /// The sender, e.g. `RainDrippy <no-reply@example.com>`. Its domain must be
+    /// verified in Resend. Empty also turns email off.
+    pub email_from: String,
+    /// Base URL of the website, used to build the links in emails.
+    pub public_site_url: String,
 }
 
 /// A comma-separated list of patterns, blanks dropped.
@@ -241,7 +252,18 @@ impl AppConfig {
                 "OAUTH_SUCCESS_REDIRECT",
                 "https://bakosmp.go.ro/dashboard",
             ),
+            resend_api_key: get("RESEND_API_KEY").unwrap_or_default().trim().to_string(),
+            resend_api_url: optional("RESEND_API_URL", "https://api.resend.com/emails"),
+            email_from: get("EMAIL_FROM").unwrap_or_default().trim().to_string(),
+            public_site_url: optional("PUBLIC_SITE_URL", "https://bakosmp.go.ro")
+                .trim_end_matches('/')
+                .to_string(),
         })
+    }
+
+    /// Whether emails can be sent at all.
+    pub fn email_enabled(&self) -> bool {
+        !self.resend_api_key.is_empty() && !self.email_from.is_empty()
     }
 
     pub fn database_url(&self) -> String {
@@ -437,6 +459,25 @@ mod tests {
         pairs.push(("RCON_PASSWORD", "s3cret"));
         let cfg = AppConfig::build(lookup(&pairs)).unwrap();
         assert_eq!(cfg.rcon_password, "s3cret");
+    }
+
+    #[test]
+    fn email_is_off_until_both_key_and_sender_are_set() {
+        let cfg = AppConfig::build(lookup(&required_pairs())).unwrap();
+        assert!(!cfg.email_enabled());
+        assert_eq!(cfg.resend_api_url, "https://api.resend.com/emails");
+        assert_eq!(cfg.public_site_url, "https://bakosmp.go.ro");
+
+        let mut pairs = required_pairs();
+        pairs.push(("RESEND_API_KEY", "re_test"));
+        assert!(!AppConfig::build(lookup(&pairs)).unwrap().email_enabled());
+
+        pairs.push(("EMAIL_FROM", "RainDrippy <no-reply@example.com>"));
+        pairs.push(("PUBLIC_SITE_URL", "https://example.com/"));
+        let cfg = AppConfig::build(lookup(&pairs)).unwrap();
+        assert!(cfg.email_enabled());
+        // A trailing slash would put `//` into every link.
+        assert_eq!(cfg.public_site_url, "https://example.com");
     }
 
     #[test]

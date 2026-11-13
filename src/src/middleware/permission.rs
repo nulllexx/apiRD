@@ -10,11 +10,10 @@
 //!   ```
 //!
 //! Neither trusts anything in the session token beyond *which account* it
-//! names. `middleware::auth` does not validate expiry, so any claim about
-//! privilege a token carries can be arbitrarily old; access is decided from
-//! the `user_roles` table every time.
+//! names, and only once `auth::authenticate` has accepted it (unexpired, not
+//! revoked). Access is decided from the `user_roles` table every time.
 //!
-//! Both check for the cookie and decode the token before any query runs, so an
+//! Both check for the cookie and its signature before any query runs, so an
 //! anonymous request is rejected with 401 without touching the database.
 
 use actix_web::{dev::Payload, web, FromRequest, HttpRequest};
@@ -26,7 +25,7 @@ use std::pin::Pin;
 use crate::access::perm::PermissionMarker;
 use crate::access::{store, Permission, PermissionSet};
 use crate::error::AppError;
-use crate::middleware::auth::decode_jwt;
+use crate::middleware::auth::authenticate;
 use crate::AppState;
 
 /// A signed-in account and what it may do.
@@ -104,8 +103,7 @@ async fn principal_from_request(req: &HttpRequest) -> Result<Principal, AppError
         .map(|c| c.value().to_string())
         .ok_or_else(|| AppError::Unauthorized("No auth token".to_string()))?;
 
-    let claims = decode_jwt(&token, &state.config.jwt_secret)
-        .map_err(|_| AppError::Unauthorized("Invalid or expired token".to_string()))?;
+    let claims = authenticate(state, &token).await?;
 
     load_principal(&state.pool, &claims.id, &claims.username)
         .await

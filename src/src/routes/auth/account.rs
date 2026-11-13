@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::access::{permission_names, store, Permission};
 use crate::error::AppError;
 use crate::middleware::api_key_auth::get_key_usage;
-use crate::middleware::auth::{decode_jwt, AuthUser};
+use crate::middleware::auth::{authenticate_opt, AuthUser};
 use crate::middleware::auth_failopen::OptionalAuthUser;
 use crate::AppState;
 use crate::middleware::rate_limit::RateLimiter;
@@ -32,9 +32,9 @@ pub(super) async fn account_status(
         None => return Ok(HttpResponse::Ok().json(json!({ "accountStatus": null }))),
     };
 
-    let claims = match decode_jwt(&token, &state.config.jwt_secret) {
-        Ok(c) => c,
-        Err(_) => return Ok(HttpResponse::Ok().json(json!({ "accountStatus": null }))),
+    let claims = match authenticate_opt(&state, &token).await {
+        Some(c) => c,
+        None => return Ok(HttpResponse::Ok().json(json!({ "accountStatus": null }))),
     };
 
     let hwid_cookie = req.cookie("hwid").map(|c| c.value().to_string());
@@ -138,10 +138,12 @@ pub(super) async fn account_data(
         created_at: String,
         #[sqlx(rename = "apiKeyId")]
         api_key_id: Option<String>,
+        email: Option<String>,
+        email_verified: bool,
     }
 
     let user: Option<UserRow> = sqlx::query_as(
-            "SELECT id, username, is_member, CAST(created_at AS CHAR) AS created_at, apiKeyId FROM users WHERE username = ?",
+            "SELECT id, username, is_member, CAST(created_at AS CHAR) AS created_at, apiKeyId, email, email_verified FROM users WHERE username = ?",
     )
     .bind(&auth.username)
     .fetch_optional(&state.pool)
@@ -158,7 +160,9 @@ pub(super) async fn account_data(
         "permissions": permission_names(&perms),
         "isMember": user.is_member,
         "createdAt": user.created_at,
-        "hasApiKey": user.api_key_id.is_some()
+        "hasApiKey": user.api_key_id.is_some(),
+        "email": user.email,
+        "emailVerified": user.email_verified
     })))
 }
 
@@ -388,9 +392,9 @@ pub(super) async fn profile(
         None => return Ok(HttpResponse::Ok().json(json!({ "username": null }))),
     };
 
-    match decode_jwt(&token, &state.config.jwt_secret) {
-        Ok(claims) => Ok(HttpResponse::Ok().json(json!({ "username": claims.username }))),
-        Err(_) => Ok(HttpResponse::Ok().json(json!({ "username": null }))),
+    match authenticate_opt(&state, &token).await {
+        Some(claims) => Ok(HttpResponse::Ok().json(json!({ "username": claims.username }))),
+        None => Ok(HttpResponse::Ok().json(json!({ "username": null }))),
     }
 }
 

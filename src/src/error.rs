@@ -10,6 +10,7 @@ pub enum AppError {
     Conflict(String),
     PayloadTooLarge(String),
     TooManyRequests(String),
+    ServiceUnavailable(String),
     Internal(String),
 }
 
@@ -23,6 +24,7 @@ impl fmt::Display for AppError {
             AppError::Conflict(msg) => write!(f, "{}", msg),
             AppError::PayloadTooLarge(msg) => write!(f, "{}", msg),
             AppError::TooManyRequests(msg) => write!(f, "{}", msg),
+            AppError::ServiceUnavailable(msg) => write!(f, "{}", msg),
             AppError::Internal(msg) => write!(f, "{}", msg),
         }
     }
@@ -41,6 +43,9 @@ impl ResponseError for AppError {
             }
             AppError::TooManyRequests(msg) => {
                 (actix_web::http::StatusCode::TOO_MANY_REQUESTS, msg)
+            }
+            AppError::ServiceUnavailable(msg) => {
+                (actix_web::http::StatusCode::SERVICE_UNAVAILABLE, msg)
             }
             AppError::Internal(msg) => {
                 (actix_web::http::StatusCode::INTERNAL_SERVER_ERROR, msg)

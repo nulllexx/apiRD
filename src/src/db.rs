@@ -298,6 +298,30 @@ async fn setup_database(pool: &MySqlPool) -> Result<(), sqlx::Error> {
             detail TEXT NULL,
             INDEX idx_access_audit_at (at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"#,
+        // ------------------------------------------------------- email links
+        //
+        // Single-use links sent by email (see crate::email): confirming an
+        // address (`verify`) and resetting a password (`reset`).
+        //
+        // Only the SHA-256 of a token is stored. `email` is the address the
+        // link went to: for `verify` it is the address being confirmed, which
+        // is not written to `users.email` until the link is used; for `reset`
+        // the link stops working if the account's address changes after it
+        // was sent. Times are UTC and only ever compared in SQL.
+        //
+        // Used links are deleted. Expired ones are kept for a day, because the
+        // per-account send limits count them.
+        r#"CREATE TABLE IF NOT EXISTS email_tokens (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            user_id VARCHAR(255) NOT NULL,
+            purpose VARCHAR(16) NOT NULL,
+            token_hash CHAR(64) NOT NULL UNIQUE,
+            email VARCHAR(255) NOT NULL,
+            created_at DATETIME NOT NULL,
+            expires_at DATETIME NOT NULL,
+            INDEX idx_email_tokens_user (user_id, purpose, created_at),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB"#,
     ];
 
     for create_table in &tables {
@@ -436,6 +460,35 @@ async fn fix_database_schema(pool: &MySqlPool) -> Result<(), sqlx::Error> {
             .execute(pool)
             .await?;
         log::info!("Column oauth_subject added successfully");
+    }
+
+    // Whether `email` has been proven to belong to the account holder: by a
+    // link sent to it, or by Google saying so. Only a verified address is
+    // used for password resets or to link a Google sign-in, because an
+    // unverified one is just something somebody typed.
+    //
+    // Existing rows start unverified. The only addresses stored before this
+    // column came from Google sign-ups, and those are confirmed the next time
+    // the account signs in with Google (see oauth_google::callback).
+    if !column_names.contains(&"email_verified") {
+        log::info!("Adding email_verified column...");
+        sqlx::query("ALTER TABLE users ADD email_verified BOOLEAN NOT NULL DEFAULT FALSE")
+            .execute(pool)
+            .await?;
+        log::info!("Column email_verified added successfully");
+    }
+
+    // Bumped to end every session the account has (password changed or reset,
+    // "Sign out everywhere"). Each session token carries the version it was
+    // issued under and stops working once they differ; see
+    // middleware::auth::authenticate. Existing tokens carry none, which reads
+    // as 0, so adding the column signs nobody out.
+    if !column_names.contains(&"session_version") {
+        log::info!("Adding session_version column...");
+        sqlx::query("ALTER TABLE users ADD session_version INT UNSIGNED NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await?;
+        log::info!("Column session_version added successfully");
     }
 
     // Add unique indexes if missing. Check INFORMATION_SCHEMA.STATISTICS;

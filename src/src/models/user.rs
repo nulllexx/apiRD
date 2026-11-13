@@ -13,6 +13,7 @@ pub struct User {
     pub is_projallowed: bool,
     pub is_chatallowed: bool,
     pub email: Option<String>,
+    pub email_verified: bool,
     pub oauth_provider: Option<String>,
     pub oauth_subject: Option<String>,
 }

@@ -7,6 +7,7 @@ use serde_json::json;
 
 use crate::error::AppError;
 use crate::access::{perm, store};
+use crate::middleware::auth::revoke_sessions;
 use crate::middleware::permission::Require;
 use crate::AppState;
 use crate::middleware::rate_limit::RateLimiter;
@@ -86,6 +87,7 @@ pub(super) async fn reset_password(
         .bind(&user.id)
         .execute(&state.pool)
         .await?;
+    revoke_sessions(&state.pool, &user.id).await?;
 
     Ok(HttpResponse::Ok().json(json!({ "message": "Password reset successfully" })))
 }
@@ -162,6 +164,9 @@ pub(super) async fn forgot_password(
         .bind(reset_session)
         .execute(&state.pool)
         .await?;
+    // A reset is what someone does when they think the account is not only
+    // theirs any more, so whoever else is signed in goes too.
+    revoke_sessions(&state.pool, &user_id).await?;
 
     Ok(HttpResponse::Ok().json(json!({ "message": "Password changed successfully" })))
 }

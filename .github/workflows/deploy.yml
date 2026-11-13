@@ -204,6 +204,7 @@ jobs:
             DB_NAME=$DB_NAME
             GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
             GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+            RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}
             RCON_PASSWORD=${{ secrets.RCON_PASSWORD }}
             EOF
 
@@ -212,6 +213,12 @@ jobs:
             # the minecraft service (which sets the server's actual RCON
             # password) and the api service, so a blank value silently leaves
             # the console unable to run commands.
+            # Not fatal either: without it the site cannot send password reset
+            # links or confirm addresses, and says so to whoever asks.
+            if [ -z "${{ secrets.RESEND_API_KEY }}" ]; then
+              echo "::warning::RESEND_API_KEY secret is empty — account emails (password resets, address confirmation) are off."
+            fi
+
             if [ -z "${{ secrets.RCON_PASSWORD }}" ]; then
               echo "::warning::RCON_PASSWORD secret is empty — the admin console will not be able to run commands."
             fi

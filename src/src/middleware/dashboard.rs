@@ -1,7 +1,7 @@
 use actix_web::{web, HttpRequest, HttpResponse};
 
 use crate::access::Permission;
-use crate::middleware::auth::decode_jwt;
+use crate::middleware::auth::authenticate_opt;
 use crate::middleware::permission::load_principal;
 use crate::AppState;
 
@@ -50,10 +50,10 @@ async fn check_dashboard_auth(
         }
     };
 
-    let claims = match decode_jwt(&token, &state.config.jwt_secret) {
-        Ok(c) => c,
-        Err(e) => {
-            log::error!("Dashboard auth error: {}", e);
+    let claims = match authenticate_opt(state, &token).await {
+        Some(c) => c,
+        None => {
+            log::info!("Dashboard: no live session");
             return Err(redirect());
         }
     };
