@@ -23,7 +23,7 @@ const { createDocument } = require('./dom');
 const PAGE = path.join(__dirname, '..', '..', 'private', 'rdadmin.html');
 
 const MARK_START = '/* --------------------------------------------------------- Chat prompt */';
-const MARK_END = '/* --------------------------------------------------------- Tab Routing Implementation */';
+const MARK_END = '/* --------------------------------------------------------- AI access (MCP) */';
 
 const html = fs.readFileSync(PAGE, 'utf8');
 const start = html.indexOf(MARK_START);

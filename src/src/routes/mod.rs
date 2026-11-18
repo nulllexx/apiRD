@@ -10,3 +10,4 @@ pub mod chat_prompt;
 pub mod util;
 pub mod oauth_google;
 pub mod roles;
+pub mod mcp;

@@ -85,7 +85,7 @@ fn now_formatted() -> String {
 // GET /status — public
 // ---------------------------------------------------------------------------
 
-async fn get_status(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
+pub(crate) async fn get_status(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
     let components: Vec<Component> =
         sqlx::query_as("SELECT id, name, status, CAST(last_updated AS CHAR) AS last_updated FROM components")
             .fetch_all(&state.pool)

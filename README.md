@@ -101,6 +101,40 @@ A signed-in account can link Google from its settings, then sign in with either.
 
 Accounts are also still linked automatically on Google sign-in when Google's verified address matches a confirmed address on the account.
 
+## MCP server (AI assistants)
+`POST /api/mcp` is an [MCP](https://modelcontextprotocol.io) server, so an assistant such as Claude can read what the admin panel shows: server health, who is online, the console log and audit trail, seasons, polls, accounts and site status (`src/src/mcp/`, `src/src/routes/mcp.rs`). It speaks the Streamable HTTP transport (protocol versions `2025-03-26` to `2025-11-25`) and answers with plain JSON; it keeps no sessions and opens no stream.
+
+- **Read-only, on purpose.** Every tool calls the same handler the panel does, behind the same permission check, and none can run a command, change a setting or touch an account. The console log carries player chat, which is text an attacker writes. An assistant reading it must not hold a tool that acts on the server, so none exists.
+- **Off by default.** It answers only when `MCP_ENABLED=true` (the `MCP_ENABLED` repository variable, `gh variable set MCP_ENABLED --body true`). While it is off, `/api/mcp` is a 404 and no tokens can be made.
+- **Personal access tokens, made in the panel's AI Access tab.** Making one needs the `mcp.access` permission (not in any starter role) and your password, when the account has one. Each token holds a list of permissions you tick from those you hold, and lasts 7, 30 or 90 days. It is `rdmcp_` plus 256 random bits, shown once; only its SHA-256 is stored. At most 10 per account.
+- **A token is a ceiling, not a grant.** Every request intersects the token's list with what the account holds *at that moment*. Taking a role away narrows the token at once, and taking `mcp.access` away stops it. A token is never a superuser, even an admin's. It also stops when it expires, when it is revoked, and when the account's password changes or it signs out everywhere (the same `session_version` sessions use).
+- **Credentials don't cross.** `/api/mcp` reads only `Authorization: Bearer`, never the session cookie, so a web page cannot use a signed-in browser to call it. The token-management routes read only the cookie (and need the `X-RD-Panel` header), so a leaked token cannot mint a replacement.
+- **Web pages are refused.** Any request with an `Origin` header is refused unless that origin is in `MCP_ALLOWED_ORIGINS`, which is empty by default. MCP clients don't send one, and refusing pages is what stops DNS rebinding.
+- **What a tool returns leaves the server.** It goes to whichever AI service the assistant runs on, so give each token only the permissions that service should see.
+- **Bounded and audited.** 120 requests a minute per token, 64 KiB per message, 256 KiB per result. Every tool call is written to `mcp_audit` before it runs (refusals included) and shown in the AI Access tab. Making and revoking tokens is in the access audit trail on the Roles tab.
+
+| Tool | Needs |
+|---|---|
+| `whoami`, `get_current_season`, `get_site_status` | a valid token |
+| `get_server_stats`, `get_online_players`, `list_players`, `read_console_log`, `get_console_audit` | `console.view` |
+| `list_season_archives`, `get_season_archive` | `season.archives` |
+| `list_polls` | `polls.manage` |
+| `list_users`, `get_moderation_list` | `users.view` |
+
+**Connecting.** The AI Access tab shows the command once the token is made, e.g. for Claude Code:
+
+```sh
+claude mcp add --transport http raindrippy https://<api host>/api/mcp --header "Authorization: Bearer rdmcp_…"
+```
+
+| Route | Credential | |
+|---|---|---|
+| `POST /api/mcp` | token | One JSON-RPC message: `initialize`, `ping`, `tools/list`, `tools/call` |
+| `GET /api/account/mcp` | session | Your tokens, what a new one could hold, and whether MCP is on |
+| `POST /api/account/mcp/tokens` | session + `mcp.access` | `{name, permissions, expiresInDays, password}`: answers with the token, once |
+| `DELETE /api/account/mcp/tokens/{id}` | session | Revoke one of your tokens |
+| `GET /api/account/mcp/activity` | session | The tools your tokens called |
+
 ## Deployment
 Locally, you need to create a `.env` file (see the structure of the env example file) in the src folder & run `cargo run`.
 For production purposes, we use a GitHub actions workflow that builds the Docker image, pushes it to GHCR and uploads & updates it to our server.

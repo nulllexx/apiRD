@@ -92,10 +92,16 @@ pub enum Permission {
     ChatPromptManage,
     /// Edit the history wiki. OG accounts can also edit it without this.
     WikiEdit,
+    /// Connect AI assistants to the API over MCP, with personal access tokens.
+    /// Separate from everything else because a token is a credential that
+    /// lives outside the browser, in another program's config. What a token
+    /// can read is still limited to permissions its owner holds; see
+    /// `crate::mcp`.
+    McpAccess,
 }
 
 impl Permission {
-    pub const ALL: [Permission; 21] = [
+    pub const ALL: [Permission; 22] = [
         Permission::PanelAccess,
         Permission::UsersView,
         Permission::UsersModerate,
@@ -117,6 +123,7 @@ impl Permission {
         Permission::PollsManage,
         Permission::ChatPromptManage,
         Permission::WikiEdit,
+        Permission::McpAccess,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -142,6 +149,7 @@ impl Permission {
             Permission::PollsManage => "polls.manage",
             Permission::ChatPromptManage => "chat_prompt.manage",
             Permission::WikiEdit => "wiki.edit",
+            Permission::McpAccess => "mcp.access",
         }
     }
 
@@ -177,6 +185,9 @@ impl Permission {
             Permission::PollsManage => "Open, extend and end polls",
             Permission::ChatPromptManage => "Edit the AI group chat pop-up",
             Permission::WikiEdit => "Edit the history wiki",
+            Permission::McpAccess => {
+                "Connect AI assistants over MCP with personal access tokens (read-only)"
+            }
         }
     }
 
@@ -190,7 +201,7 @@ impl Permission {
             | Permission::UsersResetPassword
             | Permission::UsersManageAccess => "Accounts",
             Permission::RolesManage => "Roles",
-            Permission::ApiKeysManage | Permission::StatusManage => "Site",
+            Permission::ApiKeysManage | Permission::StatusManage | Permission::McpAccess => "Site",
             Permission::ConsoleView
             | Permission::ConsoleCommand
             | Permission::ConsolePower
@@ -285,6 +296,17 @@ impl PermissionSet {
         other.granted.is_subset(&self.granted)
     }
 
+    /// The part of `self` that `scopes` names: what a delegated credential,
+    /// such as an MCP access token, may use on its owner's behalf.
+    ///
+    /// Never a superuser, whatever `self` is. A token's reach is always the
+    /// explicit list it was issued with, so an administrator's token does not
+    /// quietly pick up permissions added to the catalog later, and every
+    /// `covers` check against it treats it as the ordinary set it is.
+    pub fn restricted_to<I: IntoIterator<Item = Permission>>(&self, scopes: I) -> PermissionSet {
+        PermissionSet::from_permissions(scopes.into_iter().filter(|p| self.has(*p)))
+    }
+
     /// The permissions in `other` that `self` lacks, for error messages.
     pub fn missing_from(&self, other: &PermissionSet) -> Vec<Permission> {
         if self.superuser {
@@ -368,6 +390,7 @@ pub mod perm {
         PollsManage,
         ChatPromptManage,
         WikiEdit,
+        McpAccess,
     );
 }
 
@@ -408,6 +431,7 @@ mod tests {
                 "polls.manage",
                 "chat_prompt.manage",
                 "wiki.edit",
+                "mcp.access",
             ]
         );
     }
@@ -497,6 +521,19 @@ mod tests {
         let target = set(&[Permission::UsersView, Permission::ConsoleCommand]);
         assert_eq!(actor.missing_from(&target), vec![Permission::ConsoleCommand]);
         assert!(PermissionSet::superuser().missing_from(&target).is_empty());
+    }
+
+    #[test]
+    fn a_restricted_set_is_the_intersection_and_never_a_superuser() {
+        let actor = set(&[Permission::ConsoleView, Permission::UsersView]);
+        let r = actor.restricted_to([Permission::ConsoleView, Permission::ConsoleCommand]);
+        assert_eq!(r.effective(), vec![Permission::ConsoleView]);
+        assert!(!r.is_superuser());
+
+        let su = PermissionSet::superuser().restricted_to([Permission::PollsManage]);
+        assert!(!su.is_superuser());
+        assert_eq!(su.effective(), vec![Permission::PollsManage]);
+        assert!(PermissionSet::superuser().restricted_to([]).effective().is_empty());
     }
 
     #[test]

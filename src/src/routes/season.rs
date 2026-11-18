@@ -41,7 +41,7 @@ async fn current(
 /// GET /api/season/current -- the season being played now, for the public
 /// website. Read from the same `season.json` as `/admin/season/current`, but
 /// only the number and theme: no permission needed.
-async fn public_current(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
+pub(crate) async fn public_current(state: web::Data<AppState>) -> Result<HttpResponse, AppError> {
     let path = state.config.season_info_path.clone();
     let info = blocking(move || end::read_season_info(&path))
         .await?
@@ -110,7 +110,7 @@ async fn end_status(_admin: Require<perm::SeasonEnd>) -> Result<HttpResponse, Ap
 }
 
 /// GET /api/admin/season/archives
-async fn list_archives(
+pub(crate) async fn list_archives(
     state: web::Data<AppState>,
     _admin: Require<perm::SeasonArchives>,
 ) -> Result<HttpResponse, AppError> {
@@ -120,7 +120,7 @@ async fn list_archives(
 }
 
 /// GET /api/admin/season/archives/{season}
-async fn get_archive(
+pub(crate) async fn get_archive(
     state: web::Data<AppState>,
     _admin: Require<perm::SeasonArchives>,
     path: web::Path<u32>,

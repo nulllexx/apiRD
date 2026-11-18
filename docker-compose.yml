@@ -30,6 +30,10 @@ services:
       # The sender, e.g. RainDrippy <mailer@gmail.com>. Not a secret, so it
       # comes from the EMAIL_FROM repository variable. Blank leaves email off.
       - EMAIL_FROM=${EMAIL_FROM}
+      # The MCP endpoint for AI assistants (/api/mcp). "true" turns it on;
+      # blank or anything else leaves it off. From the MCP_ENABLED repository
+      # variable. See "MCP server" in the README.
+      - MCP_ENABLED=${MCP_ENABLED}
       # Console commands go over RCON directly (network_mode: host reaches the
       # published port below), so the API needs no Docker access for them.
       #

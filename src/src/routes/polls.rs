@@ -821,7 +821,7 @@ async fn extend_poll(
 }
 
 /// GET /api/admin/polls?status=live|past&page=N — browse polls (admin only)
-async fn list_polls_admin(
+pub(crate) async fn list_polls_admin(
     state: web::Data<AppState>,
     _admin: Require<perm::PollsManage>,
     query: web::Query<ListQuery>,

@@ -3114,3 +3114,427 @@ async fn google_can_be_linked_to_and_unlinked_from_an_existing_account() {
         .await
         .expect("clear test accounts");
 }
+
+// ---------------------------------------------------------------------------
+// MCP endpoint
+// ---------------------------------------------------------------------------
+
+/// `lazy_state` with the MCP endpoint switched on.
+fn lazy_mcp_state() -> AppState {
+    let mut state = lazy_state();
+    state.config.mcp_enabled = true;
+    state
+}
+
+fn mcp_message(method: &str) -> serde_json::Value {
+    serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": {} })
+}
+
+/// Everything here is refused before a query could run: `lazy_state`'s pool
+/// points at a dead port, so a regression that let any of these reach the
+/// database would fail with a 503 instead of the status asserted.
+#[actix_web::test]
+async fn the_mcp_endpoint_is_off_by_default_and_refuses_what_it_cannot_trust() {
+    let limiter = || web::Data::new(api_rd::middleware::rate_limit::RateLimiter::new(10_000, 60));
+
+    // Off unless MCP_ENABLED says otherwise: nothing to find.
+    let off = test::init_service(
+        App::new().app_data(web::Data::new(lazy_state())).app_data(limiter()).configure(configure_api),
+    )
+    .await;
+    for req in [
+        test::TestRequest::post().uri("/api/mcp").set_json(mcp_message("initialize")),
+        test::TestRequest::get().uri("/api/mcp"),
+    ] {
+        assert_eq!(test::call_service(&off, req.to_request()).await.status(), StatusCode::NOT_FOUND);
+    }
+
+    let app = test::init_service(
+        App::new().app_data(web::Data::new(lazy_mcp_state())).app_data(limiter()).configure(configure_api),
+    )
+    .await;
+
+    // No token: 401 with a bare challenge.
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::post().uri("/api/mcp").set_json(mcp_message("tools/list")).to_request(),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let challenge = resp.headers().get("www-authenticate").unwrap().to_str().unwrap();
+    assert!(challenge.starts_with("Bearer "), "{challenge}");
+    assert!(!challenge.contains("invalid_token"), "{challenge}");
+
+    // A session cookie is not a credential here, even a validly signed one.
+    let cookie = session_cookie("someone", "someone-id");
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::post().uri("/api/mcp").cookie(cookie).set_json(mcp_message("tools/list")).to_request(),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "the cookie must be ignored");
+
+    // Tokens of the wrong shape are refused without a lookup.
+    for bad in ["Bearer nope", "Bearer rdmcp_short", "Basic dXNlcjpwYXNz", "Bearer"] {
+        let resp = test::call_service(
+            &app,
+            test::TestRequest::post()
+                .uri("/api/mcp")
+                .insert_header(("Authorization", bad))
+                .set_json(mcp_message("tools/list"))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "{bad}");
+    }
+
+    // Web pages are refused before authentication, whatever they send.
+    let forged = format!("Bearer {}", api_rd::mcp::token::generate().token);
+    for origin in ["https://evil.example", "null", "https://bakosmp.go.ro"] {
+        let resp = test::call_service(
+            &app,
+            test::TestRequest::post()
+                .uri("/api/mcp")
+                .insert_header(("Origin", origin))
+                .insert_header(("Authorization", forged.as_str()))
+                .set_json(mcp_message("tools/list"))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN, "{origin}");
+    }
+
+    // No stream and no sessions.
+    for req in [test::TestRequest::get().uri("/api/mcp"), test::TestRequest::delete().uri("/api/mcp")] {
+        let resp = test::call_service(&app, req.to_request()).await;
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(resp.headers().get("allow").unwrap(), "POST");
+    }
+
+    // Token management is for signed-in accounts only, and an access token
+    // is not a session: a leaked one cannot mint its own replacement.
+    for (req, what) in [
+        (test::TestRequest::get().uri("/api/account/mcp"), "overview"),
+        (test::TestRequest::post().uri("/api/account/mcp/tokens").set_json(serde_json::json!({"name": "x"})), "create"),
+        (test::TestRequest::delete().uri("/api/account/mcp/tokens/1"), "revoke"),
+        (test::TestRequest::get().uri("/api/account/mcp/activity"), "activity"),
+    ] {
+        let resp = test::call_service(&app, req.insert_header(("Authorization", forged.as_str())).to_request()).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "{what}");
+    }
+}
+
+/// The whole life of a token, against a real database: who may make one,
+/// what it reaches, and every way it stops working.
+#[actix_web::test]
+async fn mcp_tokens_reach_only_what_their_owner_holds_and_stop_when_access_does() {
+    let Some(pool) = shared_pool().await else {
+        eprintln!("skipping mcp_tokens_reach_only_what_their_owner_holds_and_stop_when_access_does: TEST_DATABASE_URL not set");
+        return;
+    };
+    let _serialized = DB_TEST_LOCK.lock().await;
+    use serde_json::{json, Value};
+
+    let clean = |pool: MySqlPool| async move {
+        sqlx::query(r"DELETE FROM users WHERE username LIKE 'mcptest\_%'").execute(&pool).await.unwrap();
+        sqlx::query(r"DELETE FROM roles WHERE name LIKE 'mcptest-%'").execute(&pool).await.unwrap();
+        sqlx::query(r"DELETE FROM mcp_audit WHERE username LIKE 'mcptest\_%'").execute(&pool).await.unwrap();
+        sqlx::query(r"DELETE FROM access_audit WHERE actor LIKE 'mcptest\_%'").execute(&pool).await.unwrap();
+    };
+    clean(pool.clone()).await;
+
+    let password = bcrypt::hash("staff password", 4).unwrap();
+    for (id, username, hash) in [
+        ("mcptest-admin-id", "mcptest_admin", ""),
+        ("mcptest-staff-id", "mcptest_staff", password.as_str()),
+        ("mcptest-plain-id", "mcptest_plain", ""),
+    ] {
+        sqlx::query("INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)")
+            .bind(id)
+            .bind(username)
+            .bind(hash)
+            .execute(&pool)
+            .await
+            .expect("create test account");
+    }
+    grant_role(&pool, "mcptest-admin-id", "admin").await;
+    sqlx::query("INSERT INTO roles (name, description) VALUES ('mcptest-console', 'test')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let set_role_perms = |perms: &'static [&'static str]| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query("DELETE rp FROM role_permissions rp JOIN roles r ON r.id = rp.role_id WHERE r.name = 'mcptest-console'")
+                .execute(&pool)
+                .await
+                .unwrap();
+            for p in perms {
+                sqlx::query("INSERT INTO role_permissions (role_id, permission) SELECT id, ? FROM roles WHERE name = 'mcptest-console'")
+                    .bind(p)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+        }
+    };
+    set_role_perms(&["console.view", "mcp.access"]).await;
+    grant_role(&pool, "mcptest-staff-id", "mcptest-console").await;
+
+    let mut state = test_state(pool.clone());
+    state.config.mcp_enabled = true;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(state))
+            .app_data(web::Data::new(api_rd::middleware::rate_limit::RateLimiter::new(10_000, 60)))
+            .configure(configure_api),
+    )
+    .await;
+
+    let admin = session_cookie("mcptest_admin", "mcptest-admin-id");
+    let staff = session_cookie("mcptest_staff", "mcptest-staff-id");
+    let plain = session_cookie("mcptest_plain", "mcptest-plain-id");
+
+    let create = |cookie: &actix_web::cookie::Cookie<'static>, body: Value| {
+        test::TestRequest::post()
+            .uri("/api/account/mcp/tokens")
+            .cookie(cookie.clone())
+            .insert_header(("X-RD-Panel", "1"))
+            .set_json(body)
+            .to_request()
+    };
+    let staff_token = |perms: Value| {
+        json!({ "name": "Claude Code (test)", "permissions": perms, "expiresInDays": 7, "password": "staff password" })
+    };
+
+    // Who may make a token, and with what.
+    let refused = [
+        (create(&plain, json!({ "name": "x", "permissions": [] })), StatusCode::FORBIDDEN, "no mcp.access"),
+        (create(&staff, staff_token(json!(["users.view"]))), StatusCode::FORBIDDEN, "a permission not held"),
+        (create(&staff, staff_token(json!(["console.command"]))), StatusCode::BAD_REQUEST, "a permission no tool needs"),
+        (create(&staff, staff_token(json!(["console.veiw"]))), StatusCode::BAD_REQUEST, "a typo"),
+        (
+            create(&staff, json!({ "name": "x", "permissions": ["console.view"], "password": "wrong" })),
+            StatusCode::UNAUTHORIZED,
+            "the wrong password",
+        ),
+        (
+            create(&staff, json!({ "name": "x", "permissions": ["console.view"] })),
+            StatusCode::BAD_REQUEST,
+            "no password",
+        ),
+        (
+            create(&staff, json!({ "name": "x", "permissions": [], "password": "staff password", "expiresInDays": 365 })),
+            StatusCode::BAD_REQUEST,
+            "too long a life",
+        ),
+        (
+            test::TestRequest::post()
+                .uri("/api/account/mcp/tokens")
+                .cookie(staff.clone())
+                .set_json(staff_token(json!(["console.view"])))
+                .to_request(),
+            StatusCode::FORBIDDEN,
+            "no panel header",
+        ),
+    ];
+    for (req, want, why) in refused {
+        assert_eq!(test::call_service(&app, req).await.status(), want, "creating a token with {why}");
+    }
+
+    let resp = test::call_service(&app, create(&staff, staff_token(json!(["console.view"])))).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let made: Value = test::read_body_json(resp).await;
+    let token = made["token"].as_str().unwrap().to_string();
+    assert!(api_rd::mcp::token::well_formed(&token));
+    assert_eq!(made["status"], "active");
+    assert_eq!(made["permissions"], json!(["console.view"]));
+
+    // Only the hash is kept.
+    let (by_hash,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM mcp_tokens WHERE token_hash = ?")
+        .bind(api_rd::mcp::token::hash(&token))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(by_hash, 1);
+    let (in_clear,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM mcp_tokens WHERE token_hash = ? OR hint = ? OR permissions = ?")
+            .bind(&token)
+            .bind(&token)
+            .bind(&token)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(in_clear, 0);
+
+    let rpc = |token: &str, method: &str, params: Value| {
+        test::TestRequest::post()
+            .uri("/api/mcp")
+            .insert_header(("Authorization", format!("Bearer {token}")))
+            .insert_header(("MCP-Protocol-Version", "2025-06-18"))
+            .set_json(json!({ "jsonrpc": "2.0", "id": 7, "method": method, "params": params }))
+            .to_request()
+    };
+    macro_rules! call_json {
+        ($req:expr) => {{
+            let resp = test::call_service(&app, $req).await;
+            assert_eq!(resp.status(), StatusCode::OK);
+            let body: Value = test::read_body_json(resp).await;
+            body
+        }};
+    }
+    let tool_names = |listed: &Value| -> Vec<String> {
+        listed["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect()
+    };
+
+    let init = call_json!(rpc(&token, "initialize", json!({ "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "test", "version": "1" } })));
+    assert_eq!(init["id"], 7);
+    assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
+
+    let notified = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri("/api/mcp")
+            .insert_header(("Authorization", format!("Bearer {token}")))
+            .set_json(json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(notified.status(), StatusCode::ACCEPTED);
+
+    let listed = call_json!(rpc(&token, "tools/list", json!({})));
+    let names = tool_names(&listed);
+    assert!(names.contains(&"read_console_log".to_string()), "{names:?}");
+    assert!(!names.contains(&"list_users".to_string()), "{names:?}");
+
+    let log = call_json!(rpc(&token, "tools/call", json!({ "name": "read_console_log", "arguments": { "lines": 5 } })));
+    assert_eq!(log["result"]["isError"], false, "{log}");
+    assert_eq!(log["result"]["structuredContent"]["lines"], json!([]));
+
+    // A tool the token was not given, though the account could have.
+    let users = call_json!(rpc(&token, "tools/call", json!({ "name": "list_users" })));
+    assert_eq!(users["result"]["isError"], true);
+    assert!(users["result"]["content"][0]["text"].as_str().unwrap().contains("users.view"));
+
+    let bad_args = call_json!(rpc(&token, "tools/call", json!({ "name": "read_console_log", "arguments": { "lines": 5000 } })));
+    assert_eq!(bad_args["result"]["isError"], true);
+
+    let unknown = call_json!(rpc(&token, "tools/call", json!({ "name": "run_command", "arguments": { "command": "op me" } })));
+    assert_eq!(unknown["error"]["code"], -32602);
+    let missing = call_json!(rpc(&token, "resources/list", json!({})));
+    assert_eq!(missing["error"]["code"], -32601);
+
+    let old_version = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri("/api/mcp")
+            .insert_header(("Authorization", format!("Bearer {token}")))
+            .insert_header(("MCP-Protocol-Version", "1999-01-01"))
+            .set_json(mcp_message("tools/list"))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(old_version.status(), StatusCode::BAD_REQUEST);
+
+    // Every call is on the record, refusals included.
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::get().uri("/api/account/mcp/activity").cookie(staff.clone()).to_request(),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let activity: Value = test::read_body_json(resp).await;
+    let outcomes: Vec<(String, String)> = activity["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| (e["tool"].as_str().unwrap().to_string(), e["outcome"].as_str().unwrap().to_string()))
+        .collect();
+    assert!(outcomes.contains(&("read_console_log".into(), "ok".into())), "{outcomes:?}");
+    assert!(outcomes.contains(&("list_users".into(), "refused".into())), "{outcomes:?}");
+    assert!(outcomes.contains(&("read_console_log".into(), "failed".into())), "{outcomes:?}");
+
+    // An administrator's token is still only what it lists: never a superuser.
+    let resp = test::call_service(
+        &app,
+        create(&admin, json!({ "name": "admin assistant", "permissions": ["users.view"] })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED, "an account without a password needs none");
+    let admin_token = test::read_body_json::<Value, _>(resp).await["token"].as_str().unwrap().to_string();
+    let names = tool_names(&call_json!(rpc(&admin_token, "tools/list", json!({}))));
+    assert!(names.contains(&"list_users".to_string()), "{names:?}");
+    assert!(!names.contains(&"read_console_log".to_string()), "{names:?}");
+    let users = call_json!(rpc(&admin_token, "tools/call", json!({ "name": "list_users", "arguments": { "search": "mcptest_" } })));
+    assert_eq!(users["result"]["isError"], false, "{users}");
+
+    // Taking a permission away narrows the token on its next request...
+    set_role_perms(&["mcp.access"]).await;
+    let names = tool_names(&call_json!(rpc(&token, "tools/list", json!({}))));
+    assert!(!names.contains(&"read_console_log".to_string()), "{names:?}");
+    let log = call_json!(rpc(&token, "tools/call", json!({ "name": "read_console_log" })));
+    assert_eq!(log["result"]["isError"], true);
+
+    // ...and taking mcp.access away ends it.
+    set_role_perms(&["console.view"]).await;
+    let resp = test::call_service(&app, rpc(&token, "tools/list", json!({}))).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    set_role_perms(&["console.view", "mcp.access"]).await;
+    let resp = test::call_service(&app, rpc(&token, "tools/list", json!({}))).await;
+    assert_eq!(resp.status(), StatusCode::OK, "restoring access restores the token");
+
+    // Revoked: gone at once. Someone else's token cannot be revoked.
+    let resp = test::call_service(&app, create(&staff, staff_token(json!(["console.view"])))).await;
+    let second: Value = test::read_body_json(resp).await;
+    let second_id = second["id"].as_i64().unwrap();
+    let revoke = |cookie: &actix_web::cookie::Cookie<'static>, id: i64| {
+        test::TestRequest::delete()
+            .uri(&format!("/api/account/mcp/tokens/{id}"))
+            .cookie(cookie.clone())
+            .insert_header(("X-RD-Panel", "1"))
+            .to_request()
+    };
+    assert_eq!(test::call_service(&app, revoke(&admin, second_id)).await.status(), StatusCode::NOT_FOUND);
+    assert_eq!(test::call_service(&app, revoke(&staff, second_id)).await.status(), StatusCode::OK);
+    let resp = test::call_service(&app, rpc(second["token"].as_str().unwrap(), "tools/list", json!({}))).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // Expired: refused.
+    sqlx::query("UPDATE mcp_tokens SET expires_at = UTC_TIMESTAMP(3) - INTERVAL 1 MINUTE WHERE token_hash = ?")
+        .bind(api_rd::mcp::token::hash(&admin_token))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let resp = test::call_service(&app, rpc(&admin_token, "tools/list", json!({}))).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // The overview shows what the owner needs to manage them.
+    let resp = test::call_service(&app, test::TestRequest::get().uri("/api/account/mcp").cookie(staff.clone()).to_request()).await;
+    let overview: Value = test::read_body_json(resp).await;
+    assert_eq!(overview["enabled"], true);
+    assert_eq!(overview["canCreate"], true);
+    assert_eq!(overview["tokens"].as_array().unwrap().len(), 1);
+    assert!(overview["tokens"][0].get("token").is_none(), "the token itself is never shown again");
+    let grantable: Vec<&str> =
+        overview["grantable"].as_array().unwrap().iter().map(|g| g["permission"].as_str().unwrap()).collect();
+    assert_eq!(grantable, ["console.view"]);
+
+    // "Sign out everywhere" (or a password change) ends tokens too.
+    sqlx::query("UPDATE users SET session_version = session_version + 1 WHERE id = 'mcptest-staff-id'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let resp = test::call_service(&app, rpc(&token, "tools/list", json!({}))).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // Creating and revoking are in the access audit trail.
+    let (logged,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM access_audit WHERE actor LIKE 'mcptest\\_%' AND action IN ('mcp.token.create', 'mcp.token.revoke')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(logged, 4, "three tokens made and one revoked");
+
+    clean(pool.clone()).await;
+}

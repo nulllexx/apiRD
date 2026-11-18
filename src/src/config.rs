@@ -122,6 +122,18 @@ pub struct AppConfig {
     pub email_from: String,
     /// Base URL of the website, used to build the links in emails.
     pub public_site_url: String,
+    /// Whether `/api/mcp` answers at all. Off unless `MCP_ENABLED` is `true`
+    /// or `1`: the endpoint accepts credentials that live outside a browser,
+    /// so it is something a deployment opts into, not something it inherits.
+    /// While off, the endpoint is a 404 and no new tokens can be issued;
+    /// existing ones can still be listed and revoked.
+    pub mcp_enabled: bool,
+    /// Browser origins allowed to call `/api/mcp`, comma-separated in
+    /// `MCP_ALLOWED_ORIGINS`. Empty by default, which refuses every request
+    /// that carries an `Origin` header -- MCP clients are programs, not web
+    /// pages, and refusing pages is what stops DNS rebinding and cross-site
+    /// requests from reaching the endpoint.
+    pub mcp_allowed_origins: Vec<String>,
 }
 
 /// A comma-separated list of patterns, blanks dropped.
@@ -284,6 +296,12 @@ impl AppConfig {
             public_site_url: optional("PUBLIC_SITE_URL", "https://bakosmp.go.ro")
                 .trim_end_matches('/')
                 .to_string(),
+            mcp_enabled: get("MCP_ENABLED")
+                .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "true" | "1"))
+                .unwrap_or(false),
+            mcp_allowed_origins: get("MCP_ALLOWED_ORIGINS")
+                .map(|v| patterns(&v).into_iter().map(|o| o.trim_end_matches('/').to_string()).collect())
+                .unwrap_or_default(),
         })
     }
 
@@ -533,5 +551,25 @@ mod tests {
         assert_eq!(build_with("0"), 50);
         assert_eq!(build_with("999999"), 10_000);
         assert_eq!(build_with("not-a-number"), 500);
+    }
+
+    #[test]
+    fn mcp_is_off_unless_switched_on() {
+        let off = AppConfig::build(lookup(&required_pairs())).unwrap();
+        assert!(!off.mcp_enabled);
+        assert!(off.mcp_allowed_origins.is_empty());
+
+        for (raw, want) in [("true", true), ("1", true), (" TRUE ", true), ("yes", false), ("0", false), ("", false)] {
+            let mut pairs = required_pairs();
+            pairs.push(("MCP_ENABLED", raw));
+            assert_eq!(AppConfig::build(lookup(&pairs)).unwrap().mcp_enabled, want, "MCP_ENABLED={raw:?}");
+        }
+
+        let mut pairs = required_pairs();
+        pairs.push(("MCP_ALLOWED_ORIGINS", " https://a.example/ ,, https://b.example"));
+        assert_eq!(
+            AppConfig::build(lookup(&pairs)).unwrap().mcp_allowed_origins,
+            vec!["https://a.example".to_string(), "https://b.example".to_string()]
+        );
     }
 }

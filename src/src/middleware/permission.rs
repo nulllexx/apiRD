@@ -131,6 +131,19 @@ pub struct Require<P: PermissionMarker> {
 }
 
 impl<P: PermissionMarker> Require<P> {
+    /// For callers that established the principal some other way than the
+    /// session cookie: the MCP endpoint, whose principal comes from an access
+    /// token and holds only what that token was issued for. Applies the same
+    /// check as the extractor, so a `Require<P>` still always means the
+    /// principal holds `P`.
+    pub(crate) fn check(principal: Principal) -> Result<Self, AppError> {
+        if !principal.has(P::PERMISSION) {
+            log::info!("{} refused: lacks {}", principal.username, P::PERMISSION);
+            return Err(forbidden(P::PERMISSION));
+        }
+        Ok(Require { principal, _p: PhantomData })
+    }
+
     pub fn into_inner(self) -> Principal {
         self.principal
     }

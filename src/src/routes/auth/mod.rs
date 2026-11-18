@@ -23,6 +23,8 @@ use skins::*;
 use wiki::*;
 
 pub use dashboard::{serve_dashboard, serve_polls, serve_rdadmin};
+// Called by the MCP tools (crate::mcp::tools), with the same permission check.
+pub(crate) use admin::{admin_list_users, moderation_list, ListUsersQuery};
 
 pub fn configure(cfg: &mut web::ServiceConfig) {
     // Auth routes are registered directly (no sub-scope) because in the

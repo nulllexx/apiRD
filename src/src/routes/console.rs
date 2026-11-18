@@ -479,7 +479,7 @@ async fn online_now(state: &AppState) -> (Vec<String>, Option<String>) {
 /// Split out from `/stats` precisely because it is cheap: the UI polls this
 /// often enough to feel live, which would be unaffordable for anything that
 /// costs an RCON command.
-async fn online_players(
+pub(crate) async fn online_players(
     state: web::Data<AppState>,
     _admin: Require<perm::ConsoleView>,
 ) -> Result<HttpResponse, AppError> {
@@ -499,7 +499,7 @@ async fn online_players(
 /// Three sources merged into one payload so the panel is a single poll: the
 /// sidecar's container stats, the sidecar's power state, and a cached probe of
 /// the game server itself.
-async fn server_stats(
+pub(crate) async fn server_stats(
     state: web::Data<AppState>,
     _admin: Require<perm::ConsoleView>,
 ) -> Result<HttpResponse, AppError> {
@@ -522,7 +522,7 @@ async fn server_stats(
 }
 
 /// GET /api/admin/console/players — everyone who has ever joined.
-async fn list_players(
+pub(crate) async fn list_players(
     state: web::Data<AppState>,
     _admin: Require<perm::ConsoleView>,
 ) -> Result<HttpResponse, AppError> {
@@ -1073,13 +1073,16 @@ fn server_files(state: &AppState) -> ServerFiles {
 /// allows no custom headers at all. `Sec-Fetch-Site`, where the browser sends
 /// it, must also say same-origin.
 pub(crate) fn require_panel_request(req: &actix_web::HttpRequest) -> Result<(), AppError> {
+    require_panel_header(req, "File changes are only accepted from the admin panel")
+}
+
+/// [`require_panel_request`] with the refusal worded for the caller.
+pub(crate) fn require_panel_header(req: &actix_web::HttpRequest, refusal: &str) -> Result<(), AppError> {
     let headers = req.headers();
     let marked = headers.get("x-rd-panel").and_then(|v| v.to_str().ok()) == Some("1");
     let site = headers.get("sec-fetch-site").and_then(|v| v.to_str().ok());
     if !marked || site.is_some_and(|s| s != "same-origin") {
-        return Err(AppError::Forbidden(
-            "File changes are only accepted from the admin panel".to_string(),
-        ));
+        return Err(AppError::Forbidden(refusal.to_string()));
     }
     Ok(())
 }

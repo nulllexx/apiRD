@@ -355,7 +355,7 @@ pub(super) async fn admin_unban(
 }
 
 /// GET /api/moderation-list
-pub(super) async fn moderation_list(
+pub(crate) async fn moderation_list(
     req: HttpRequest,
     state: web::Data<AppState>,
     limiter: web::Data<RateLimiter>,
@@ -393,7 +393,7 @@ pub(super) async fn moderation_list(
 }
 
 /// GET /admin/list-users
-pub(super) async fn admin_list_users(
+pub(crate) async fn admin_list_users(
     req: HttpRequest,
     state: web::Data<AppState>,
     limiter: web::Data<RateLimiter>,

@@ -208,6 +208,7 @@ jobs:
             GMAIL_CLIENT_SECRET=${{ secrets.GMAIL_CLIENT_SECRET }}
             GMAIL_REFRESH_TOKEN=${{ secrets.GMAIL_REFRESH_TOKEN }}
             EMAIL_FROM=${{ vars.EMAIL_FROM }}
+            MCP_ENABLED=${{ vars.MCP_ENABLED }}
             RCON_PASSWORD=${{ secrets.RCON_PASSWORD }}
             EOF
 

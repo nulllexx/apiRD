@@ -322,6 +322,51 @@ async fn setup_database(pool: &MySqlPool) -> Result<(), sqlx::Error> {
             INDEX idx_email_tokens_user (user_id, purpose, created_at),
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         ) ENGINE=InnoDB"#,
+        // --------------------------------------------------------------- mcp
+        //
+        // Personal access tokens for the MCP endpoint (see crate::mcp). As
+        // with email links, only the SHA-256 of a token is stored; `hint` is
+        // its first few characters, so the owner can tell tokens apart.
+        //
+        // `permissions` is the comma-separated list the token was issued
+        // for. It is a ceiling, not a grant: every request intersects it with
+        // what the account holds at that moment. `session_version` ties the
+        // token to the account's sessions, so a password change or "Sign out
+        // everywhere" ends it too. Times are UTC and only compared in SQL.
+        //
+        // No charset clause, like email_tokens: the foreign key needs
+        // `user_id` to match `users.id`, which takes the server default.
+        r#"CREATE TABLE IF NOT EXISTS mcp_tokens (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            user_id VARCHAR(255) NOT NULL,
+            name VARCHAR(64) NOT NULL,
+            token_hash CHAR(64) NOT NULL UNIQUE,
+            hint VARCHAR(16) NOT NULL,
+            permissions TEXT NOT NULL,
+            session_version INT UNSIGNED NOT NULL,
+            created_at DATETIME(3) NOT NULL,
+            expires_at DATETIME(3) NOT NULL,
+            last_used_at DATETIME(3) NULL,
+            INDEX idx_mcp_tokens_user (user_id),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB"#,
+        // Every tool an assistant called, by whom and with which token.
+        // Written before the tool runs, then given its outcome, the way
+        // console_audit is. No foreign keys, for the same reason: the record
+        // outlives the token and the account.
+        r#"CREATE TABLE IF NOT EXISTS mcp_audit (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            at DATETIME(3) NOT NULL,
+            username VARCHAR(255) NOT NULL,
+            token_id BIGINT NOT NULL,
+            token_name VARCHAR(64) NOT NULL,
+            tool VARCHAR(64) NOT NULL,
+            arguments TEXT NULL,
+            outcome VARCHAR(16) NOT NULL,
+            detail TEXT NULL,
+            INDEX idx_mcp_audit_at (at),
+            INDEX idx_mcp_audit_user (username, id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"#,
     ];
 
     for create_table in &tables {

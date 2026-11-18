@@ -15,6 +15,7 @@ pub mod console;
 pub mod db;
 pub mod email;
 pub mod error;
+pub mod mcp;
 pub mod middleware;
 pub mod models;
 pub mod polls;
@@ -76,7 +77,8 @@ pub fn configure_api(cfg: &mut web::ServiceConfig) {
             .configure(routes::polls::configure)
             .configure(routes::chat_prompt::configure)
             .configure(routes::roles::configure)
-            .configure(routes::oauth_google::configure),
+            .configure(routes::oauth_google::configure)
+            .configure(routes::mcp::configure),
     )
     .route("/dashboard.html", web::get().to(routes::auth::serve_dashboard))
     .route("/dashboard", web::get().to(routes::auth::serve_dashboard))

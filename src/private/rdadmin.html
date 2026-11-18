@@ -2088,6 +2088,59 @@
             .cprompt-btn-row .cprompt-value-slot:has(> [hidden]) { display: none; }
         }
 
+        /* ------------------------------------------------------ AI access */
+
+        .mcp-layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1.3fr) minmax(300px, 1fr);
+            gap: 20px;
+            align-items: start;
+        }
+        .mcp-layout > .card { min-width: 0; }
+        .mcp-new { border-color: var(--accent) !important; }
+        .mcp-secret {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .mcp-secret code, .mcp-secret pre {
+            flex: 1;
+            min-width: 0;
+            margin: 0;
+            padding: 10px 12px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--line) !important;
+            background: var(--bg-raised) !important;
+            color: var(--text) !important;
+            font-family: "JetBrains Mono", Consolas, monospace;
+            font-size: 0.8rem;
+            overflow-wrap: anywhere;
+            white-space: pre-wrap;
+            user-select: all;
+        }
+        .mcp-secret button { margin: 0; flex-shrink: 0; }
+        .mcp-perm { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 10px; }
+        .mcp-perm code { font-family: "JetBrains Mono", Consolas, monospace; font-size: 0.82rem; color: var(--text) !important; }
+        .mcp-perm-tools { display: block; color: var(--text-faint) !important; font-size: 0.78rem; margin-top: 2px; }
+        .mcp-token { padding: 14px 0; border-bottom: 1px solid var(--line-soft) !important; }
+        .mcp-token:last-child { border-bottom: none !important; }
+        .mcp-token-name { font-weight: 600; color: var(--text) !important; }
+        .mcp-token-hint { font-family: "JetBrains Mono", Consolas, monospace; font-size: 0.8rem; color: var(--text-faint) !important; }
+        .mcp-token-meta { margin: 6px 0 0; font-size: 0.78rem; color: var(--text-muted) !important; }
+        .mcp-token .role-item-perms { margin-top: 8px; }
+        .badge-perm.mcp-perm-inactive { text-decoration: line-through; opacity: 0.6; }
+        .mcp-outcome-ok { color: var(--accent) !important; }
+        .mcp-outcome-failed, .mcp-outcome-refused { color: var(--danger) !important; }
+        .roles-audit td.mcp-args { font-family: "JetBrains Mono", Consolas, monospace; font-size: 0.78rem; overflow-wrap: anywhere; }
+
+        @media (max-width: 900px) {
+            .mcp-layout { grid-template-columns: minmax(0, 1fr); }
+        }
+        @media (max-width: 640px) {
+            .mcp-secret { flex-direction: column; align-items: stretch; }
+        }
+
         /* ------------------------------------------------------------ Roles */
 
         /* Tabs the signed-in account has no permission for. */
@@ -2213,6 +2266,7 @@
         <div class="tab" data-tab="minecraft">Minecraft Server</div>
         <div class="tab" data-tab="polls">Polls</div>
         <div class="tab" data-tab="chatprompt">Chat Prompt</div>
+        <div class="tab" data-tab="mcp">AI Access</div>
     </div>
 
     <!-- USERS TAB -->
@@ -2903,6 +2957,95 @@
             </div>
         </div>
     </div><!-- /chatprompt-tab -->
+
+    <!-- AI ACCESS (MCP) TAB -->
+    <div class="tab-content" id="mcp-tab">
+        <h1>AI Access</h1>
+        <p class="page-hint">Let an AI assistant such as Claude read what this panel shows, over MCP. Each assistant gets its own access token. A token can only <em>read</em>: no tool can run a command, change a setting or touch an account. It holds only the permissions you tick, never more than you hold yourself, and it stops working when it expires, when you revoke it, when you lose the access it relies on, or when you change your password or sign out everywhere.</p>
+
+        <div id="mcp-alert"></div>
+
+        <div class="card mcp-off" id="mcpOff" hidden>
+            <h2 class="card-title">MCP is turned off on this server</h2>
+            <p class="page-hint">The endpoint answers only when the API runs with <code>MCP_ENABLED=true</code>. You can still see and revoke tokens made while it was on.</p>
+        </div>
+
+        <div class="card mcp-new" id="mcpNew" hidden>
+            <h2 class="card-title">Your new token</h2>
+            <p class="page-hint">Copy it now: it is not shown again. Anyone who has it can read what it allows until it expires or you revoke it, so keep it out of chats, screenshots and shared repositories.</p>
+            <div class="mcp-secret">
+                <code id="mcpNewToken"></code>
+                <button type="button" class="btn btn-outline" id="mcpCopyToken">Copy</button>
+            </div>
+            <h4>Claude Code</h4>
+            <div class="mcp-secret">
+                <code id="mcpSnippetCli"></code>
+                <button type="button" class="btn btn-outline" id="mcpCopyCli">Copy</button>
+            </div>
+            <h4>Other MCP clients</h4>
+            <div class="mcp-secret">
+                <pre id="mcpSnippetJson"></pre>
+                <button type="button" class="btn btn-outline" id="mcpCopyJson">Copy</button>
+            </div>
+            <div class="role-form-actions">
+                <button type="button" class="btn btn-primary" id="mcpDone">Done, I have copied it</button>
+            </div>
+        </div>
+
+        <div class="mcp-layout">
+            <div class="card">
+                <h2 class="card-title">Your tokens</h2>
+                <div id="mcpTokens"><p class="page-hint">Loading&hellip;</p></div>
+            </div>
+
+            <div class="card" id="mcpCreateCard">
+                <h2 class="card-title">Create a token</h2>
+                <form id="mcpForm" autocomplete="off">
+                    <div class="form-group">
+                        <label for="mcpName">Name</label>
+                        <input type="text" id="mcpName" class="form-control" maxlength="64"
+                               placeholder="Claude Code (laptop)" required>
+                        <p class="poll-note">What the token is for. Letters, digits, spaces and - _ . ( )</p>
+                    </div>
+                    <div class="form-group">
+                        <label>What it can read</label>
+                        <div id="mcpPermissions"></div>
+                        <p class="poll-note">Always available: <span id="mcpAlways">&hellip;</span></p>
+                    </div>
+                    <div class="form-group">
+                        <label for="mcpExpiry">Expires after</label>
+                        <select id="mcpExpiry" class="form-control">
+                            <option value="7">7 days</option>
+                            <option value="30" selected>30 days</option>
+                            <option value="90">90 days</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="mcpPassword">Your password</label>
+                        <input type="password" id="mcpPassword" class="form-control" autocomplete="current-password">
+                        <p class="poll-note">A token is a new way in, so making one needs your password. Leave it blank if you only sign in with Google.</p>
+                    </div>
+                    <div class="role-form-actions">
+                        <span class="poll-note" id="mcpLimitNote"></span>
+                        <button type="submit" class="btn btn-primary" id="mcpSubmit">Create token</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2 class="card-title">Recent activity</h2>
+            <p class="page-hint">Every tool your tokens called, newest first, refused calls included.</p>
+            <div class="roles-audit-wrap">
+                <table class="roles-audit">
+                    <thead>
+                        <tr><th>When</th><th>Token</th><th>Tool</th><th>Arguments</th><th>Outcome</th></tr>
+                    </thead>
+                    <tbody id="mcpActivityBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div><!-- /mcp-tab -->
 </div>
 
 <!-- Overlay for messages -->
@@ -7439,7 +7582,8 @@
         // gated on its own below.
         minecraft: ['console.view', 'console.files', 'season.end', 'season.archives'],
         polls: 'polls.manage',
-        chatprompt: 'chat_prompt.manage'
+        chatprompt: 'chat_prompt.manage',
+        mcp: 'mcp.access'
     };
 
     function escapeHtml(value) {
@@ -8864,6 +9008,298 @@
         loadCprompt();
     }
 
+    /* --------------------------------------------------------- AI access (MCP) */
+
+    /* Personal access tokens for the MCP endpoint (routes/mcp.rs). A new
+       token is shown once, in the "Your new token" card, and is cleared from
+       the page when that card is closed: nothing here stores it. */
+    const MCP_STATUS_LABELS = {
+        active: 'Active',
+        expired: 'Expired',
+        signed_out: 'Ended: password changed or signed out everywhere',
+        no_access: 'Paused: your account no longer has mcp.access'
+    };
+
+    let mcpInited = false;
+    let mcpOverview = null;
+
+    function mcpAlert(message, type = 'success') {
+        const box = document.getElementById('mcp-alert');
+        if (!box) return;
+        box.textContent = '';
+        if (!message) return;
+        const alert = document.createElement('div');
+        alert.className = `alert alert-${type}`;
+        const icon = document.createElement('i');
+        icon.className = `fas ${type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'}`;
+        alert.appendChild(icon);
+        const text = document.createElement('span');
+        text.textContent = message;
+        alert.appendChild(text);
+        box.appendChild(alert);
+    }
+
+    /* JSON in and out, throwing the server's own message. Changes carry
+       X-RD-Panel, which the server requires for making and revoking tokens. */
+    async function mcpFetch(url, options = {}) {
+        const init = { credentials: 'include', method: options.method || 'GET' };
+        if (init.method !== 'GET') init.headers = { 'X-RD-Panel': '1' };
+        if (options.body !== undefined) {
+            init.headers['Content-Type'] = 'application/json';
+            init.body = JSON.stringify(options.body);
+        }
+        const res = await fetch(url, init);
+        let data = null;
+        try { data = await res.json(); } catch (_) { /* empty body */ }
+        if (!res.ok) {
+            throw new Error((data && data.error) || `Request failed (${res.status})`);
+        }
+        return data;
+    }
+
+    function mcpEndpointUrl() {
+        const origin = typeof location !== 'undefined' && location.origin ? location.origin : '';
+        return origin + ((mcpOverview && mcpOverview.endpoint) || '/api/mcp');
+    }
+
+    /* What to paste into an assistant's configuration. */
+    function mcpSnippets(token, url = mcpEndpointUrl()) {
+        const header = `Bearer ${token}`;
+        return {
+            cli: `claude mcp add --transport http raindrippy ${url} --header "Authorization: ${header}"`,
+            json: JSON.stringify(
+                { mcpServers: { raindrippy: { type: 'http', url, headers: { Authorization: header } } } },
+                null,
+                2
+            )
+        };
+    }
+
+    function mcpDate(iso) {
+        if (!iso) return 'never';
+        const d = new Date(iso);
+        return isNaN(d.getTime()) ? String(iso) : d.toLocaleString();
+    }
+
+    function mcpEl(tag, className, text) {
+        const el = document.createElement(tag);
+        if (className) el.className = className;
+        if (text !== undefined) el.textContent = text;
+        return el;
+    }
+
+    function renderMcpPermissions(grantable) {
+        const box = document.getElementById('mcpPermissions');
+        box.textContent = '';
+        if (!grantable.length) {
+            box.appendChild(mcpEl('p', 'poll-note',
+                'You hold no permissions that unlock tools, so a token would see only the ones that are always available.'));
+            return;
+        }
+        grantable.forEach(g => {
+            const label = mcpEl('label', 'poll-check mcp-perm');
+            const tick = mcpEl('input', 'mcp-perm-box');
+            tick.type = 'checkbox';
+            tick.value = g.permission;
+            label.appendChild(tick);
+            const text = mcpEl('span');
+            text.appendChild(mcpEl('code', '', g.permission));
+            text.appendChild(document.createTextNode(` ${g.description}`));
+            text.appendChild(mcpEl('small', 'mcp-perm-tools', `Tools: ${(g.tools || []).join(', ')}`));
+            label.appendChild(text);
+            box.appendChild(label);
+        });
+    }
+
+    function renderMcpTokens(tokens) {
+        const list = document.getElementById('mcpTokens');
+        list.textContent = '';
+        if (!tokens.length) {
+            list.appendChild(mcpEl('p', 'page-hint', 'No tokens yet.'));
+            return;
+        }
+        tokens.forEach(t => {
+            const item = mcpEl('div', 'mcp-token');
+            item.dataset.id = String(t.id);
+
+            const head = mcpEl('div', 'role-item-head');
+            head.appendChild(mcpEl('span', 'mcp-token-name', t.name));
+            head.appendChild(mcpEl('span', 'mcp-token-hint', `${t.hint}…`));
+            head.appendChild(mcpEl('span', `badge ${t.status === 'active' ? 'badge-role' : 'badge-role-super'} mcp-status`,
+                MCP_STATUS_LABELS[t.status] || t.status));
+            head.appendChild(mcpEl('span', 'spacer'));
+            const revoke = mcpEl('button', 'btn btn-outline btn-danger mcp-revoke', 'Revoke');
+            revoke.type = 'button';
+            revoke.addEventListener('click', () => revokeMcpToken(t));
+            head.appendChild(revoke);
+            item.appendChild(head);
+
+            const perms = mcpEl('div', 'role-item-perms');
+            const effective = t.effective || [];
+            if (!t.permissions.length) {
+                perms.appendChild(mcpEl('span', 'badge badge-perm', 'always-available tools only'));
+            }
+            t.permissions.forEach(p => {
+                const held = effective.includes(p);
+                const badge = mcpEl('span', `badge badge-perm${held ? '' : ' mcp-perm-inactive'}`, p);
+                if (!held) badge.title = 'You no longer hold this, so the token cannot use it';
+                perms.appendChild(badge);
+            });
+            item.appendChild(perms);
+
+            item.appendChild(mcpEl('p', 'mcp-token-meta',
+                `Created ${mcpDate(t.createdAt)} · Expires ${mcpDate(t.expiresAt)} · Last used ${mcpDate(t.lastUsedAt)}`));
+            list.appendChild(item);
+        });
+    }
+
+    function renderMcpActivity(entries) {
+        const body = document.getElementById('mcpActivityBody');
+        body.textContent = '';
+        if (!entries.length) {
+            const row = mcpEl('tr');
+            const cell = mcpEl('td', '', 'Nothing yet.');
+            cell.setAttribute('colspan', '5');
+            row.appendChild(cell);
+            body.appendChild(row);
+            return;
+        }
+        entries.forEach(e => {
+            const row = mcpEl('tr');
+            row.appendChild(mcpEl('td', '', mcpDate(e.at)));
+            row.appendChild(mcpEl('td', '', e.tokenName));
+            row.appendChild(mcpEl('td', '', e.tool));
+            row.appendChild(mcpEl('td', 'mcp-args', e.arguments || ''));
+            const outcome = mcpEl('td', `mcp-outcome-${e.outcome}`, e.outcome);
+            if (e.detail) outcome.title = e.detail;
+            row.appendChild(outcome);
+            body.appendChild(row);
+        });
+    }
+
+    function renderMcp(data) {
+        mcpOverview = data;
+        const full = data.tokens.length >= data.limits.maxTokens;
+        document.getElementById('mcpOff').hidden = !!data.enabled;
+        document.getElementById('mcpCreateCard').hidden = !data.canCreate;
+        document.getElementById('mcpSubmit').disabled = !data.enabled || full;
+        document.getElementById('mcpLimitNote').textContent = full
+            ? `You have the most tokens allowed (${data.limits.maxTokens}); revoke one first.`
+            : `${data.tokens.length} of ${data.limits.maxTokens} tokens`;
+        document.getElementById('mcpAlways').textContent = (data.alwaysAvailable || []).join(', ');
+        renderMcpPermissions(data.grantable || []);
+        renderMcpTokens(data.tokens);
+    }
+
+    async function loadMcp() {
+        try {
+            const [data, activity] = await Promise.all([
+                mcpFetch('/api/account/mcp'),
+                mcpFetch('/api/account/mcp/activity?limit=50')
+            ]);
+            renderMcp(data);
+            renderMcpActivity((activity && activity.entries) || []);
+        } catch (err) {
+            mcpAlert(err.message || 'Could not load your tokens', 'error');
+        }
+    }
+
+    /* The request body for a new token, or throws what is missing. */
+    function mcpFormBody() {
+        const name = document.getElementById('mcpName').value.trim();
+        if (!name) throw new Error('Give the token a name, such as the assistant it is for.');
+        const permissions = Array.from(document.querySelectorAll('#mcpPermissions .mcp-perm-box'))
+            .filter(box => box.checked)
+            .map(box => box.value);
+        const body = {
+            name,
+            permissions,
+            expiresInDays: Number(document.getElementById('mcpExpiry').value) || 30
+        };
+        const password = document.getElementById('mcpPassword').value;
+        if (password) body.password = password;
+        return body;
+    }
+
+    function showMcpToken(made) {
+        const snippets = mcpSnippets(made.token);
+        document.getElementById('mcpNewToken').textContent = made.token;
+        document.getElementById('mcpSnippetCli').textContent = snippets.cli;
+        document.getElementById('mcpSnippetJson').textContent = snippets.json;
+        const card = document.getElementById('mcpNew');
+        card.hidden = false;
+        if (card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function hideMcpToken() {
+        ['mcpNewToken', 'mcpSnippetCli', 'mcpSnippetJson'].forEach(id => {
+            document.getElementById(id).textContent = '';
+        });
+        document.getElementById('mcpNew').hidden = true;
+    }
+
+    async function createMcpToken(event) {
+        if (event && event.preventDefault) event.preventDefault();
+        let body;
+        try {
+            body = mcpFormBody();
+        } catch (err) {
+            mcpAlert(err.message, 'error');
+            return;
+        }
+        const submit = document.getElementById('mcpSubmit');
+        const password = document.getElementById('mcpPassword');
+        submit.disabled = true;
+        try {
+            const made = await mcpFetch('/api/account/mcp/tokens', { method: 'POST', body });
+            document.getElementById('mcpName').value = '';
+            showMcpToken(made);
+            mcpAlert(`Created "${made.name}". Copy the token now: it is not shown again.`);
+            await loadMcp();
+        } catch (err) {
+            mcpAlert(err.message || 'Could not create the token', 'error');
+            submit.disabled = false;
+        } finally {
+            password.value = '';
+        }
+    }
+
+    async function revokeMcpToken(t) {
+        if (!confirm(`Revoke "${t.name}"? Anything using it loses access at once.`)) return;
+        try {
+            await mcpFetch(`/api/account/mcp/tokens/${encodeURIComponent(t.id)}`, { method: 'DELETE' });
+            mcpAlert(`Revoked "${t.name}".`);
+            await loadMcp();
+        } catch (err) {
+            mcpAlert(err.message || 'Could not revoke the token', 'error');
+        }
+    }
+
+    async function mcpCopy(sourceId, button) {
+        const text = document.getElementById(sourceId).textContent;
+        try {
+            await navigator.clipboard.writeText(text);
+            button.textContent = 'Copied';
+        } catch (_) {
+            button.textContent = 'Select it and copy';
+        }
+        setTimeout(() => { button.textContent = 'Copy'; }, 2000);
+    }
+
+    function initMcp() {
+        if (!mcpInited) {
+            mcpInited = true;
+            document.getElementById('mcpForm').addEventListener('submit', createMcpToken);
+            document.getElementById('mcpDone').addEventListener('click', hideMcpToken);
+            [['mcpCopyToken', 'mcpNewToken'], ['mcpCopyCli', 'mcpSnippetCli'], ['mcpCopyJson', 'mcpSnippetJson']]
+                .forEach(([buttonId, sourceId]) => {
+                    const button = document.getElementById(buttonId);
+                    button.addEventListener('click', () => mcpCopy(sourceId, button));
+                });
+        }
+        loadMcp();
+    }
+
     /* --------------------------------------------------------- Tab Routing Implementation */
 
     /* The Minecraft Server tab's views. Each is also a page name of its own,
@@ -8964,6 +9400,10 @@
 
         if (activeTabName === 'roles') {
             initRoles();
+        }
+
+        if (activeTabName === 'mcp') {
+            initMcp();
         }
 
         if (updateUrl) {

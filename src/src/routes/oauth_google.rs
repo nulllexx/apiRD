@@ -362,7 +362,7 @@ fn link_return_url(site: &str, return_to: Option<&str>, outcome: &str) -> String
 }
 
 /// Confirms the caller knows the account's password, when it has one.
-fn confirm_password(password_hash: &str, given: Option<&str>) -> Result<(), AppError> {
+pub(crate) fn confirm_password(password_hash: &str, given: Option<&str>) -> Result<(), AppError> {
     if password_hash.is_empty() {
         return Ok(());
     }
