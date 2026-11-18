@@ -127,6 +127,8 @@ Accounts are also still linked automatically on Google sign-in when Google's ver
 claude mcp add --transport http raindrippy https://<api host>/api/mcp --header "Authorization: Bearer rdmcp_…"
 ```
 
+The chat app's AI (`ai_gc_app_RD`) connects through its agent's `mcp.json`, with the token in the agent's env file and the server limited to chosen encrypted rooms. See "Tools from RainDrippy" in that repository's README.
+
 | Route | Credential | |
 |---|---|---|
 | `POST /api/mcp` | token | One JSON-RPC message: `initialize`, `ping`, `tools/list`, `tools/call` |
